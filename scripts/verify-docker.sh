@@ -10,10 +10,14 @@ fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAILED=1; }
 FAILED=0
 step() { printf '\n== %s\n' "$1"; }
 abort() { printf '\n\033[31m%s\033[0m\n' "$1"; exit 1; }
-# expect_denied "<description>" "<sql>" "<regex the error must match>"  (a failure for the WRONG reason is a FAIL)
+# expect_denied "<description>" "<sql>" "<regex the error must match>" [psql-prefix]
+# A failure for the WRONG reason is a FAIL. The probe must be CAPTURED before grepping:
+# under `set -o pipefail` a pipeline like "psql | grep" is tainted by psql's *expected*
+# non-zero exit, and grep -q on a long stream can SIGPIPE the producer - both yield false FAILs.
 expect_denied() {
-  local out; out=$($APP -c "$2" 2>&1) && { fail "$1: statement unexpectedly succeeded"; return; }
-  echo "$out" | grep -Eqi "$3" && pass "$1" || fail "$1: failed for an unexpected reason: $out"
+  local prefix="${4:-$APP}" out
+  out=$( $prefix -c "$2" 2>&1 ) && { fail "$1: statement unexpectedly succeeded"; return; }
+  grep -Eqi "$3" <<< "$out" && pass "$1" || fail "$1: failed for an unexpected reason: $out"
 }
 
 step "Docker"
@@ -186,10 +190,15 @@ step "Phase 7 hardening (reporting role, key material, runtime posture)"
 REP="docker compose exec -T -e PGPASSWORD=$POSTGRES_REPORTING_PASSWORD postgres psql -h localhost -U yalli_reporting -d yalli -tA"
 [ "$($REP -c "SELECT count(*) >= 0 FROM orders" 2>&1)" = "t" ] && pass "reporting role can aggregate orders" || fail "reporting role cannot read the report columns"
 for t in "SELECT contact_email FROM orders" "SELECT * FROM orders" "SELECT password_hash FROM users" "SELECT * FROM audit_logs" "SELECT * FROM mfa_methods"; do
-  $REP -c "$t" 2>&1 | grep -qi "permission denied" && pass "reporting role denied: $t" || fail "reporting role was NOT denied: $t"
+  expect_denied "reporting role denied: $t" "$t" "permission denied" "$REP"
 done
-$REP -c "UPDATE orders SET status = status" 2>&1 | grep -qi "permission denied\|read-only" && pass "reporting role cannot write" || fail "reporting role can write"
-docker compose --profile app logs app 2>&1 | grep -q "read-only reporting role" && pass "app container reports through the reporting role" || fail "app container is not using REPORTING_DATABASE_URL"
+expect_denied "reporting role cannot write" "UPDATE orders SET status = status" "permission denied|read-only" "$REP"
+# Logs are JSON; the ReportingDb banner says "Reports use the read-only reporting role". The app
+# only prints it when REPORTING_DATABASE_URL is set, so its presence proves the role is in use.
+# Capture the stream first: grep -q exits on the first match, the log streamer then dies with
+# SIGPIPE, and under `set -o pipefail` that would read as a failed pipeline even on a true match.
+APP_LOGS=$(docker compose --profile app logs app 2>&1 || true)
+grep -q "Reports use the read-only reporting role" <<< "$APP_LOGS" && pass "app container reports through the reporting role" || fail "app container is not using REPORTING_DATABASE_URL"
 [ "$(docker compose --profile app exec -T app printenv MFA_ENCRYPTION_KEY_ID 2>/dev/null | tr -d '[:space:]')" != "" ] && pass "MFA key id is set (rotation is traceable)" || fail "MFA_ENCRYPTION_KEY_ID missing"
 docker compose --profile app exec -T app sh -c "awk '\$2==\"/\" {print \$4}' /proc/mounts" 2>/dev/null | grep -q '^ro' && pass "application root filesystem is mounted read-only" || fail "application root filesystem is writable"
 docker compose --profile app exec -T app node dist/cli/rotate-mfa-key.js --help >/dev/null 2>&1 && pass "rotate-mfa-key command ships in the image" || fail "rotate-mfa-key command missing from the image"

@@ -33,6 +33,10 @@ Flow, invariants, operations runbook and the honest list of what is not yet veri
 Authentication, authorization and audit are documented in [docs/security/phase-3-security-foundation.md](docs/security/phase-3-security-foundation.md)
 and [docs/architecture/auth-flows.md](docs/architecture/auth-flows.md). Tests run against a real PostgreSQL (embedded) with the production role split.
 
+## Frontend
+Feature map of everything this API supports (storefront, checkout, account, admin portal) with endpoint
+references and API conventions: [docs/frontend/README.md](docs/frontend/README.md).
+
 ## Layout
 `src/common` (envelope, filters, middleware) · `src/config` (validated env) · `src/infrastructure` (Prisma, Redis) ·
 `src/health` · `prisma/` (schema + hand-written SQL migrations) · `infra/` (docker, later nginx/monitoring/ci) · `docs/`
