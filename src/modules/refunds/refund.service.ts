@@ -1,0 +1,551 @@
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
+import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
+import { ErrorCode } from '../../common/exceptions/error-codes.js';
+import { PrismaService } from '../../infrastructure/database/prisma.service.js';
+import type {
+  PaymentStatus,
+  Prisma,
+  Refund,
+  RefundKind,
+} from '../../generated/prisma/client.js';
+import { AuditAction } from '../audit/audit-actions.js';
+import { AuditService, type RequestContext } from '../audit/audit.service.js';
+import { OrderLifecycleService } from '../orders/order-lifecycle.service.js';
+import { REFUNDABLE } from '../orders/order-state-machine.js';
+import { OutboxService } from '../outbox/outbox.service.js';
+import {
+  PaymentProvider,
+  PaymentProviderError,
+  type ProviderRefund,
+} from '../payments/payment-provider.js';
+import {
+  assertPaymentTransition,
+  MONEY_HELD_STATUSES,
+} from '../payments/payment-state-machine.js';
+
+type Tx = Prisma.TransactionClient;
+
+export interface RefundRequest {
+  paymentId: string;
+  kind: RefundKind;
+  amountMinor: number;
+  reason: string;
+  /** null = raised by the system (customer cancelling a paid order, late capture). */
+  requestedById: string | null;
+  autoApprove: boolean;
+  idempotencyKey: string;
+  returnRequestId?: string | undefined;
+}
+
+const OPEN: Refund['status'][] = ['PENDING_APPROVAL', 'APPROVED', 'PROCESSING'];
+
+/**
+ * Refund safety, in layers:
+ *  1. `payments.refunded_minor` is bumped by ONE conditional UPDATE (`... + x <= captured_minor`), so two concurrent
+ *     requests can never refund more than was captured; a DB CHECK repeats the rule.
+ *  2. Human-requested refunds need a DIFFERENT person with refunds.approve (application check + DB CHECK).
+ *  3. Provider calls carry our unique `receipt`; an ambiguous failure (timeout) is resolved by looking the receipt up at
+ *     the provider before anything is retried, so a refund is never sent twice.
+ *  4. Every state change is audited, evented and visible in the payment's immutable event log.
+ */
+@Injectable()
+export class RefundService {
+  private readonly logger = new Logger(RefundService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly provider: PaymentProvider,
+    private readonly lifecycle: OrderLifecycleService,
+    private readonly outbox: OutboxService,
+    private readonly audit: AuditService,
+  ) {}
+
+  // ------------------------------------------------------------------------------- request
+
+  /** Joins the caller's transaction (so e.g. "cancel order" and "request refund" commit together). Idempotent per key. */
+  async requestInTx(tx: Tx, input: RefundRequest): Promise<Refund> {
+    const existing = await tx.refund.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+    });
+    if (existing) return existing;
+    if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor < 1)
+      throw new ConflictException({
+        message: 'Refund amount must be a positive number of paise',
+        code: ErrorCode.ValidationFailed,
+      });
+
+    // Lock order is always ORDER then PAYMENT (same as the payment webhook path), so the two can never deadlock.
+    const pre = await tx.payment.findUnique({
+      where: { id: input.paymentId },
+      select: { orderId: true },
+    });
+    if (!pre) throw new NotFoundException('Payment not found');
+    const order = await this.lifecycle.lock(tx, pre.orderId);
+    await tx.$queryRaw`SELECT id FROM payments WHERE id = ${input.paymentId}::uuid FOR UPDATE`;
+    const payment = await tx.payment.findUniqueOrThrow({
+      where: { id: input.paymentId },
+    });
+
+    if (!MONEY_HELD_STATUSES.includes(payment.status))
+      throw new ConflictException({
+        message: 'There is no captured payment to refund',
+        code: 'NOTHING_TO_REFUND',
+      });
+    if (order.status !== 'CANCELLED' && !REFUNDABLE.includes(order.status)) {
+      throw new ConflictException({
+        message: `An order that is ${order.status} cannot be refunded`,
+        code: 'ORDER_NOT_REFUNDABLE',
+      });
+    }
+
+    // Claim the refundable capacity atomically. Zero rows = it would exceed what was captured.
+    const claimed = await tx.$executeRaw`
+      UPDATE payments SET refunded_minor = refunded_minor + ${input.amountMinor}, updated_at = now()
+      WHERE id = ${input.paymentId}::uuid AND refunded_minor + ${input.amountMinor} <= captured_minor`;
+    if (claimed !== 1) {
+      throw new ConflictException({
+        message: `Refund exceeds the refundable balance (${payment.capturedMinor - payment.refundedMinor} paise left)`,
+        code: 'REFUND_EXCEEDS_CAPTURED',
+      });
+    }
+
+    const refund = await tx.refund.create({
+      data: {
+        orderId: order.id,
+        paymentId: payment.id,
+        returnRequestId: input.returnRequestId ?? null,
+        kind: input.kind,
+        amountMinor: input.amountMinor,
+        reason: input.reason.slice(0, 200),
+        status: input.autoApprove ? 'APPROVED' : 'PENDING_APPROVAL',
+        requestedById: input.requestedById,
+        receipt: `RF-${randomBytes(8).toString('hex')}`,
+        idempotencyKey: input.idempotencyKey,
+      },
+    });
+    await this.recompute(tx, order.id, payment.id);
+    await this.outbox.add(tx, {
+      aggregateType: 'refund',
+      aggregateId: refund.id,
+      eventType: input.autoApprove ? 'refund.approved' : 'refund.requested',
+      payload: {
+        refundId: refund.id,
+        orderId: order.id,
+        amountMinor: refund.amountMinor,
+        kind: refund.kind,
+      },
+    });
+    return refund;
+  }
+
+  // ------------------------------------------------------------------------------- decisions
+
+  async approve(
+    actor: AuthPrincipal,
+    refundId: string,
+    ctx: RequestContext,
+  ): Promise<Refund> {
+    const refund = await this.prisma.$transaction(async (tx) => {
+      const r = await tx.refund.findUnique({ where: { id: refundId } });
+      if (!r) throw new NotFoundException('Refund not found');
+      if (r.requestedById === actor.userId) {
+        throw new ForbiddenException({
+          message:
+            'A refund must be approved by someone other than the person who requested it',
+          code: 'FOUR_EYES_REQUIRED',
+        });
+      }
+      const moved = await tx.refund.updateMany({
+        where: { id: refundId, status: 'PENDING_APPROVAL' },
+        data: { status: 'APPROVED', approvedById: actor.userId },
+      });
+      if (moved.count !== 1)
+        throw new ConflictException({
+          message: 'This refund is no longer awaiting approval',
+          code: ErrorCode.Conflict,
+        });
+      await this.outbox.add(tx, {
+        aggregateType: 'refund',
+        aggregateId: refundId,
+        eventType: 'refund.approved',
+        payload: {
+          refundId,
+          orderId: r.orderId,
+          amountMinor: r.amountMinor,
+          approvedById: actor.userId,
+        },
+      });
+      return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
+    });
+    await this.audit.record({
+      action: AuditAction.RefundApproved,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...ctx,
+      resourceType: 'refund',
+      resourceId: refundId,
+      metadata: { amountMinor: refund.amountMinor, orderId: refund.orderId },
+    });
+    await this.execute(refundId); // best effort now; the worker retries if this fails
+    return this.prisma.refund.findUniqueOrThrow({ where: { id: refundId } });
+  }
+
+  async reject(
+    actor: AuthPrincipal,
+    refundId: string,
+    reason: string,
+    ctx: RequestContext,
+  ): Promise<Refund> {
+    const refund = await this.prisma.$transaction(async (tx) => {
+      const r = await tx.refund.findUnique({ where: { id: refundId } });
+      if (!r) throw new NotFoundException('Refund not found');
+      const moved = await tx.refund.updateMany({
+        where: { id: refundId, status: 'PENDING_APPROVAL' },
+        data: {
+          status: 'REJECTED',
+          rejectionReason: reason.slice(0, 200),
+          approvedById: null,
+        },
+      });
+      if (moved.count !== 1)
+        throw new ConflictException({
+          message: 'This refund is no longer awaiting approval',
+          code: ErrorCode.Conflict,
+        });
+      await this.releaseCapacity(tx, r);
+      await this.outbox.add(tx, {
+        aggregateType: 'refund',
+        aggregateId: refundId,
+        eventType: 'refund.rejected',
+        payload: { refundId, orderId: r.orderId },
+      });
+      return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
+    });
+    await this.audit.record({
+      action: AuditAction.RefundRejected,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...ctx,
+      resourceType: 'refund',
+      resourceId: refundId,
+      metadata: { reason },
+    });
+    return refund;
+  }
+
+  // ------------------------------------------------------------------------------ execution
+
+  /** Sends an APPROVED refund to the provider. Safe to call repeatedly and from many instances. */
+  async execute(refundId: string): Promise<void> {
+    const claimed = await this.prisma.refund.updateMany({
+      where: { id: refundId, status: 'APPROVED' },
+      data: { status: 'PROCESSING' },
+    });
+    if (claimed.count !== 1) return; // someone else has it, or it is already finished
+    const refund = await this.prisma.refund.findUniqueOrThrow({
+      where: { id: refundId },
+      include: { payment: true },
+    });
+    if (!refund.payment.providerPaymentId) {
+      await this.fail(refundId, 'The payment has no provider payment id');
+      return;
+    }
+    try {
+      const pr = await this.provider.createRefund({
+        providerPaymentId: refund.payment.providerPaymentId,
+        amountMinor: refund.amountMinor,
+        receipt: refund.receipt,
+        notes: { refundId, orderId: refund.orderId },
+      });
+      await this.applyProviderRefund(pr);
+    } catch (err) {
+      if (err instanceof PaymentProviderError && err.definitive) {
+        await this.fail(
+          refundId,
+          `Rejected by the payment provider (${err.code ?? 'error'})`,
+        );
+      } else {
+        // Outcome UNKNOWN: it may or may not have reached the provider. Stay PROCESSING; reconcile() resolves it by receipt.
+        this.logger.warn(
+          { refundId, err: (err as Error).message },
+          'Refund outcome unknown; will reconcile',
+        );
+      }
+    }
+  }
+
+  /** Marks a refund finished by the provider (immediate response, webhook or reconciliation). Idempotent. */
+  async applyProviderRefund(
+    pr: ProviderRefund,
+  ): Promise<'processed' | 'failed' | 'pending' | 'unknown'> {
+    let mismatchRefundId: string | undefined;
+    const result = await this.prisma.$transaction(async (tx) => {
+      const refund = await tx.refund.findFirst({
+        where: {
+          OR: [
+            { providerRefundId: pr.id },
+            { receipt: pr.receipt ?? '__none__' },
+          ],
+        },
+      });
+      if (!refund) return 'unknown';
+      if (pr.amountMinor !== refund.amountMinor) {
+        this.logger.error(
+          {
+            refundId: refund.id,
+            expected: refund.amountMinor,
+            got: pr.amountMinor,
+          },
+          'Provider refund amount mismatch',
+        );
+        mismatchRefundId = refund.id; // audited AFTER the transaction (never take a second connection inside one)
+        return 'unknown';
+      }
+      if (!refund.providerRefundId)
+        await tx.refund.update({
+          where: { id: refund.id },
+          data: { providerRefundId: pr.id },
+        });
+      if (pr.status === 'processed') {
+        await this.finishProcessed(tx, refund); // idempotent: a repeat is a no-op
+        return 'processed';
+      }
+      if (pr.status === 'failed') {
+        await this.finishFailed(
+          tx,
+          refund,
+          'The payment provider reported the refund as failed',
+        );
+        return 'failed';
+      }
+      return 'pending';
+    });
+    if (mismatchRefundId)
+      await this.audit.record({
+        action: AuditAction.RefundFailed,
+        outcome: 'FAILURE',
+        resourceType: 'refund',
+        resourceId: mismatchRefundId,
+        metadata: { reason: 'amount_mismatch' },
+      });
+    return result;
+  }
+
+  private async fail(refundId: string, reason: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const refund = await tx.refund.findUniqueOrThrow({
+        where: { id: refundId },
+      });
+      await this.finishFailed(tx, refund, reason);
+    });
+  }
+
+  private async finishProcessed(tx: Tx, refund: Refund): Promise<boolean> {
+    const done = await tx.refund.updateMany({
+      where: { id: refund.id, status: { in: ['PROCESSING', 'APPROVED'] } },
+      data: { status: 'PROCESSED', processedAt: new Date() },
+    });
+    if (done.count !== 1) return false; // already finished: idempotent
+    if (refund.returnRequestId)
+      await tx.returnRequest.updateMany({
+        where: {
+          id: refund.returnRequestId,
+          status: { in: ['APPROVED', 'RECEIVED'] },
+        },
+        data: { status: 'REFUNDED' },
+      });
+    await this.recompute(tx, refund.orderId, refund.paymentId);
+    await tx.paymentEvent.create({
+      data: {
+        paymentId: refund.paymentId,
+        provider: this.provider.name,
+        type: 'refund.processed',
+        source: 'SYSTEM',
+        data: { refundId: refund.id, amountMinor: refund.amountMinor },
+      },
+    });
+    await this.outbox.add(tx, {
+      aggregateType: 'refund',
+      aggregateId: refund.id,
+      eventType: 'refund.processed',
+      payload: {
+        refundId: refund.id,
+        orderId: refund.orderId,
+        amountMinor: refund.amountMinor,
+      },
+    });
+    return true;
+  }
+
+  private async finishFailed(
+    tx: Tx,
+    refund: Refund,
+    reason: string,
+  ): Promise<void> {
+    const done = await tx.refund.updateMany({
+      where: { id: refund.id, status: { in: ['PROCESSING', 'APPROVED'] } },
+      data: { status: 'FAILED', failureReason: reason.slice(0, 300) },
+    });
+    if (done.count !== 1) return;
+    await this.releaseCapacity(tx, refund);
+    await tx.paymentEvent.create({
+      data: {
+        paymentId: refund.paymentId,
+        provider: this.provider.name,
+        type: 'refund.failed',
+        source: 'SYSTEM',
+        data: { refundId: refund.id, reason: reason.slice(0, 200) },
+      },
+    });
+    await this.outbox.add(tx, {
+      aggregateType: 'refund',
+      aggregateId: refund.id,
+      eventType: 'refund.failed',
+      payload: {
+        refundId: refund.id,
+        orderId: refund.orderId,
+        amountMinor: refund.amountMinor,
+      },
+    });
+  }
+
+  /** A rejected/failed refund gives its reserved capacity back so another refund can be raised. */
+  private async releaseCapacity(tx: Tx, refund: Refund): Promise<void> {
+    await tx.$executeRaw`UPDATE payments SET refunded_minor = refunded_minor - ${refund.amountMinor}, updated_at = now() WHERE id = ${refund.paymentId}::uuid AND refunded_minor >= ${refund.amountMinor}`;
+    await this.recompute(tx, refund.orderId, refund.paymentId);
+  }
+
+  // ----------------------------------------------------------------------- derived states
+
+  /** Brings payment and order status in line with the refunds that exist (single source of truth: the refunds table). */
+  async recompute(tx: Tx, orderId: string, paymentId: string): Promise<void> {
+    const order = await this.lifecycle.lock(tx, orderId);
+    const payment = await tx.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+    });
+    const refunds = await tx.refund.findMany({
+      where: { paymentId },
+      select: { status: true, amountMinor: true },
+    });
+    const processed = refunds
+      .filter((r) => r.status === 'PROCESSED')
+      .reduce((n, r) => n + r.amountMinor, 0);
+    const open = refunds
+      .filter((r) => OPEN.includes(r.status))
+      .reduce((n, r) => n + r.amountMinor, 0);
+
+    let paymentStatus: PaymentStatus;
+    if (processed >= payment.capturedMinor && payment.capturedMinor > 0)
+      paymentStatus = 'REFUNDED';
+    else if (open > 0) paymentStatus = 'REFUND_PENDING';
+    else if (processed > 0) paymentStatus = 'PARTIALLY_REFUNDED';
+    else paymentStatus = 'CAPTURED';
+    if (payment.status !== paymentStatus) {
+      assertPaymentTransition(payment.status, paymentStatus);
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { status: paymentStatus },
+      });
+    }
+
+    if (order.status === 'CANCELLED') return; // late-capture refunds do not reopen a cancelled order
+    const actor = { type: 'SYSTEM' as const };
+    if (open > 0) {
+      if (order.status !== 'REFUND_PENDING') {
+        await this.lifecycle.transition(tx, orderId, 'REFUND_PENDING', actor, {
+          reason: 'refund requested',
+          extras: { statusBeforeRefund: order.status },
+        });
+      }
+    } else if (
+      order.status === 'REFUND_PENDING' ||
+      order.status === 'PARTIALLY_REFUNDED'
+    ) {
+      if (paymentStatus === 'REFUNDED')
+        await this.lifecycle.transition(tx, orderId, 'REFUNDED', actor, {
+          reason: 'fully refunded',
+          event: { type: 'order.refunded' },
+        });
+      else if (paymentStatus === 'PARTIALLY_REFUNDED')
+        await this.lifecycle.transition(
+          tx,
+          orderId,
+          'PARTIALLY_REFUNDED',
+          actor,
+          {
+            reason: 'partially refunded',
+            event: { type: 'order.partially_refunded' },
+          },
+        );
+      else if (order.status === 'REFUND_PENDING' && order.cancelledAt) {
+        // A CANCELLED order whose refund failed must NOT return to a shippable state: the goods are already back on the
+        // shelf. It stays REFUND_PENDING (visible to finance) until a refund for the money succeeds.
+        this.logger.warn(
+          { orderId },
+          'Refund for a cancelled order failed; the order is waiting for a manual refund',
+        );
+      } else if (order.status === 'REFUND_PENDING')
+        await this.lifecycle.transition(
+          tx,
+          orderId,
+          order.statusBeforeRefund ?? 'PAID',
+          actor,
+          { reason: 'refund did not complete' },
+        );
+    }
+  }
+
+  // ------------------------------------------------------------------------ reconciliation
+
+  /** Resolves refunds stuck in APPROVED/PROCESSING (crash, timeout, missed webhook). Returns how many it touched. */
+  async reconcile(olderThanSeconds = 60): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanSeconds * 1000);
+    let touched = 0;
+    for (const r of await this.prisma.refund.findMany({
+      where: { status: 'APPROVED', updatedAt: { lt: cutoff } },
+      take: 50,
+    })) {
+      await this.execute(r.id);
+      touched++;
+    }
+    for (const r of await this.prisma.refund.findMany({
+      where: { status: 'PROCESSING', updatedAt: { lt: cutoff } },
+      include: { payment: true },
+      take: 50,
+    })) {
+      const providerPaymentId = r.payment.providerPaymentId;
+      if (!providerPaymentId) continue;
+      try {
+        const found = (await this.provider.listRefunds(providerPaymentId)).find(
+          (x) => x.id === r.providerRefundId || x.receipt === r.receipt,
+        );
+        if (found) await this.applyProviderRefund(found);
+        else if (Date.now() - r.updatedAt.getTime() > 5 * 60_000) {
+          // The provider has NO record of our receipt: the earlier call never landed, so re-sending cannot double-refund.
+          await this.prisma.refund.updateMany({
+            where: { id: r.id, status: 'PROCESSING', providerRefundId: null },
+            data: { status: 'APPROVED' },
+          });
+        }
+        touched++;
+      } catch (err) {
+        this.logger.warn(
+          { refundId: r.id, err: (err as Error).message },
+          'Refund reconciliation could not reach the provider',
+        );
+      }
+    }
+    return touched;
+  }
+
+  get(id: string) {
+    return this.prisma.refund.findUnique({ where: { id } });
+  }
+}
