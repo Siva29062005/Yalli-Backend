@@ -1,9 +1,10 @@
 'use client';
 
 import React from 'react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ADMIN_SCREENS, canOpen } from '@/lib/admin-access';
 import {
   LayoutDashboard,
   Package,
@@ -17,59 +18,17 @@ import {
   LogOut,
 } from 'lucide-react';
 
-interface AdminNavItem {
-  name: string;
-  href: string;
-  icon: React.ReactNode;
-}
-
-const ADMIN_NAV: AdminNavItem[] = [
-  {
-    name: 'Overview',
-    href: '/admin/analytics',
-    icon: <LayoutDashboard className="w-5 h-5" />,
-  },
-  {
-    name: 'Products',
-    href: '/admin/products',
-    icon: <Package className="w-5 h-5" />,
-  },
-  {
-    name: 'Categories',
-    href: '/admin/categories',
-    icon: <FolderTree className="w-5 h-5" />,
-  },
-  {
-    name: 'Inventory',
-    href: '/admin/inventory',
-    icon: <Boxes className="w-5 h-5" />,
-  },
-  {
-    name: 'Orders',
-    href: '/admin/orders',
-    icon: <ShoppingCart className="w-5 h-5" />,
-  },
-  {
-    name: 'Refunds & returns',
-    href: '/admin/refunds',
-    icon: <RotateCcw className="w-5 h-5" />,
-  },
-  {
-    name: 'Users & roles',
-    href: '/admin/users',
-    icon: <Users className="w-5 h-5" />,
-  },
-  {
-    name: 'Coupons',
-    href: '/admin/coupons',
-    icon: <Ticket className="w-5 h-5" />,
-  },
-  {
-    name: 'Shipping',
-    href: '/admin/shipping',
-    icon: <Truck className="w-5 h-5" />,
-  },
-];
+const ICONS: Record<string, React.ReactNode> = {
+  '/admin/analytics': <LayoutDashboard className="w-5 h-5" />,
+  '/admin/products': <Package className="w-5 h-5" />,
+  '/admin/categories': <FolderTree className="w-5 h-5" />,
+  '/admin/inventory': <Boxes className="w-5 h-5" />,
+  '/admin/orders': <ShoppingCart className="w-5 h-5" />,
+  '/admin/refunds': <RotateCcw className="w-5 h-5" />,
+  '/admin/users': <Users className="w-5 h-5" />,
+  '/admin/coupons': <Ticket className="w-5 h-5" />,
+  '/admin/shipping': <Truck className="w-5 h-5" />,
+};
 
 export function AdminSidebar() {
   const pathname = usePathname();
@@ -96,7 +55,7 @@ export function AdminSidebar() {
           <span className="text-[11px] font-bold text-white/40 uppercase tracking-wider block px-3 mb-2">
             Workspace
           </span>
-          {ADMIN_NAV.map((item) => {
+          {ADMIN_SCREENS.filter((item) => canOpen(identity.permissions, item)).map((item) => {
             const isActive = pathname.startsWith(item.href);
             return (
               <Link
@@ -108,7 +67,7 @@ export function AdminSidebar() {
                     : 'text-white/70 hover:text-white hover:bg-white/5'
                 }`}
               >
-                {item.icon}
+                {ICONS[item.href]}
                 <span>{item.name}</span>
               </Link>
             );

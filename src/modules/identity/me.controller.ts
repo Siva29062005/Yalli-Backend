@@ -47,6 +47,9 @@ export class MeController {
       lastName: user.customer?.lastName ?? null,
       newsletterSubscribed: user.customer?.newsletterSubscribed ?? false,
       roles: principal.roles.map((r) => r.name),
+      // The caller's OWN effective permissions (from the database, never the token): lets the staff UI hide screens it
+      // cannot use. Hiding is cosmetic; every route still enforces its permission on the server.
+      permissions: [...principal.permissions].sort(),
       createdAt: user.createdAt,
     };
   }

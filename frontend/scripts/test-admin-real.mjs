@@ -30,11 +30,12 @@ function code(secret, step) {
   const o = h[19] & 15;
   return String(((h[o] & 127) << 24 | h[o + 1] << 16 | h[o + 2] << 8 | h[o + 3]) % 1_000_000).padStart(6, '0');
 }
-const used = new Set(info.usedSteps);
-async function nextCode() {
+const usedSteps = { admin: new Set(info.usedSteps), support: new Set(info.usedSteps) };
+async function nextCode(who = 'admin') {
+  const used = usedSteps[who];
   for (;;) {
     const cur = Math.floor(Date.now() / 30000);
-    for (const st of [cur, cur + 1, cur - 1]) if (!used.has(st)) { used.add(st); return code(info.admin.secret, st); }
+    for (const st of [cur, cur + 1, cur - 1]) if (!used.has(st)) { used.add(st); return code(info[who].secret, st); }
     await new Promise((r) => setTimeout(r, 1000));
   }
 }
@@ -44,8 +45,13 @@ const page = await browser.newPage();
 page.on('dialog', (d) => void d.accept());
 const pageErrors = [];
 const serverErrors = [];
+const forbidden = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
-page.on('response', (r) => { if (r.url().includes('/api/v1/') && r.status() >= 500) serverErrors.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
+page.on('response', (r) => {
+  if (!r.url().includes('/api/v1/')) return;
+  if (r.status() >= 500) serverErrors.push(`${r.status()} ${r.request().method()} ${r.url()}`);
+  if (r.status() === 403) forbidden.push(`${r.request().method()} ${new URL(r.url()).pathname}`);
+});
 await page.route('**/api/v1/**', (route) => {
   const u = new URL(route.request().url());
   return route.continue({ url: `${BACKEND}${u.pathname}${u.search}` });
@@ -296,6 +302,56 @@ try {
   const own = page.locator('li').filter({ hasText: info.admin.email });
   await own.getByText('(you)').waitFor();
   assert.equal(await own.getByRole('button', { name: /Give a role|Suspend/ }).count(), 0, 'no role or suspend actions on your own account');
+
+  // ------------------------------------------------------------------------------------------------- limited role
+  console.log('customer support (limited role)');
+  assert.deepEqual(forbidden, [], `the admin session triggered 403s: ${forbidden}`);
+  await page.getByRole('button', { name: 'Sign out of admin' }).click();
+  await page.getByLabel('Work email').waitFor();
+  await page.getByLabel('Work email').fill(info.support.email);
+  await page.getByLabel('Password', { exact: true }).fill(info.support.password);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Authenticator code').fill(await nextCode('support'));
+  await page.getByRole('button', { name: 'Verify and continue' }).click();
+  await page.getByRole('heading', { name: 'Products', exact: true, level: 1 }).waitFor();
+  const links = (await page.locator('aside a').allInnerTexts()).map((t) => t.trim()).filter((t) => ['Overview', 'Products', 'Categories', 'Inventory', 'Orders', 'Refunds & returns', 'Users & roles', 'Coupons', 'Shipping'].includes(t));
+  assert.deepEqual(links, ['Products', 'Categories', 'Orders', 'Refunds & returns']);
+  step(`landed on Products; menu shows only: ${links.join(', ')}`);
+  assert.equal(await page.getByRole('link', { name: 'Add product' }).count(), 0);
+  await page.getByRole('link', { name: 'Momo Steamer 2 Tier XL' }).click();
+  await page.getByText('View only: your role can see this product but not change it.').waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Save changes' }).isDisabled(), true);
+  // client-side navigation: a full reload would drop the session, because API calls are redirected at the browser level
+  // and the refresh cookie therefore never reaches this origin
+  await page.evaluate(() => window.next.router.push('/admin/users'));
+  await page.getByText(/cannot open this area/).waitFor();
+  step('product editor is view-only; /admin/users is blocked for this role');
+  await go('Orders', 'Orders & fulfilment');
+  await page.getByRole('button', { name: info.orders.c, exact: true }).click();
+  await page.getByText('View only: your role can see this order but not change it.').waitFor();
+  assert.equal(await page.getByText('Razorpay pay_').count(), 0, 'no payment details without payments.read');
+  await go('Refunds & returns', 'Refunds & returns');
+  await page.getByText(/You can request a refund here/).waitFor();
+  await page.getByRole('button', { name: 'Request a refund' }).click();
+  await page.getByLabel('Find the order').fill(info.orders.c);
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByRole('button', { name: new RegExp(info.orders.c) }).click();
+  await page.getByLabel('Amount to refund').fill('75');
+  await page.getByLabel('Reason', { exact: false }).fill('Customer called about a scratch');
+  await page.getByRole('button', { name: 'Request refund' }).click();
+  await page.getByText(/Refund requested/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Approve' }).count(), 0);
+  step('support can request a refund (real refunds.create) but cannot list or approve');
+  assert.deepEqual(forbidden, [], `UI made requests the role is forbidden to make: ${forbidden}`);
+  step('no forbidden (403) API calls were triggered by the limited role UI');
+  await page.getByRole('button', { name: 'Sign out of admin' }).click();
+  await page.getByLabel('Work email').waitFor();
+  await page.getByLabel('Work email').fill(info.admin.email);
+  await page.getByLabel('Password', { exact: true }).fill(info.admin.password);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Authenticator code').fill(await nextCode('admin'));
+  await page.getByRole('button', { name: 'Verify and continue' }).click();
+  await page.getByRole('heading', { name: 'The everyday, at a glance.', level: 1 }).waitFor();
 
   // ------------------------------------------------------------------------------------------------- final
   console.log('overview again + phone layout');

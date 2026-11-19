@@ -1,23 +1,21 @@
 'use client';
 
-import React, { useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, CheckCircle2 } from 'lucide-react';
+import { BUSINESS, sellerName } from '@/lib/business';
 import { BRAND } from '@/lib/constants';
 import { useCategories } from '@/components/CategoryProvider';
 
+const HELP_LINKS = [
+  { href: '/help', label: 'Help & FAQs' },
+  { href: '/shipping', label: 'Shipping & delivery' },
+  { href: '/returns', label: 'Returns & refunds' },
+  { href: '/privacy', label: 'Privacy policy' },
+  { href: '/terms', label: 'Terms of use & sale' },
+  { href: '/contact', label: 'Contact us' },
+] as const;
+
 export function Footer() {
   const { categories: CATEGORIES } = useCategories();
-  const [email, setEmail] = useState('');
-  const [subscribed, setSubscribed] = useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (email.trim()) {
-      setSubscribed(true);
-      setEmail('');
-    }
-  };
 
   return (
     <footer className="bg-[#113322] text-white mt-auto">
@@ -43,61 +41,44 @@ export function Footer() {
 
       {/* Main Footer Row */}
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-10 md:py-12">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Left: Brand & Copyright */}
           <div className="lg:col-span-4 space-y-2">
             <span className="font-heading text-[32px] font-bold text-white tracking-tight">
               {BRAND.name}
             </span>
             <p className="text-[13px] text-white/70">
-              Made for the joy of home. © 2026 Yalli
+              Made for the joy of home. © {new Date().getFullYear()} {sellerName()}
             </p>
+            {BUSINESS.gstin && <p className="text-[12px] text-white/60">GSTIN: {BUSINESS.gstin}</p>}
           </div>
 
-          {/* Center: Legal & Help Links */}
-          <div className="lg:col-span-4 flex flex-wrap gap-6 text-[14px] text-white/80">
-            <Link href="/help" className="hover:text-white transition">
-              Help & FAQs
-            </Link>
-            <Link href="/shipping" className="hover:text-white transition">
-              Shipping & returns
-            </Link>
-            <Link href="/privacy" className="hover:text-white transition">
-              Privacy
-            </Link>
-          </div>
-
-          {/* Right: Newsletter Signup matching Figma */}
-          <div className="lg:col-span-4">
-            <div className="space-y-2">
-              <span className="text-[13px] text-white/90 font-medium block">
-                A little goodness in your inbox
-              </span>
-              {subscribed ? (
-                <div className="flex items-center gap-2 text-[#EEFFEE] text-[13px]">
-                  <CheckCircle2 className="w-4 h-4 text-[#FF9900]" />
-                  <span>Thank you for subscribing to Yalli updates!</span>
-                </div>
-              ) : (
-                <form onSubmit={handleSubmit} className="flex gap-2">
-                  <input
-                    type="email"
-                    required
-                    placeholder="Your email address"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="min-w-0 flex-1 bg-white/10 border border-white/20 rounded-md px-3.5 py-2 text-[13px] text-white placeholder-white/40 focus:outline-none focus:border-white/50 transition"
-                  />
-                  <button
-                    type="submit"
-                    className="bg-[#FF9900] text-[#113322] font-semibold text-[13px] px-4 py-2 rounded-md hover:bg-[#e68a00] transition flex items-center gap-1.5 shrink-0"
+          {/* Center: Help & policies */}
+          <nav aria-label="Help and policies" className="lg:col-span-4">
+            <ul className="grid grid-cols-2 gap-x-6 gap-y-2 text-[14px] text-white/80">
+              {HELP_LINKS.map((link) => (
+                <li key={link.href}>
+                  <Link
+                    href={link.href}
+                    className="hover:text-white transition focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                   >
-                    <span>Sign up</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </form>
-              )}
-            </div>
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+
+          {/* Right: email offers are a per-account choice, not a separate sign-up */}
+          <div className="lg:col-span-4 space-y-2">
+            <span className="text-[13px] text-white/90 font-medium block">Offers and new arrivals</span>
+            <p className="text-[13px] text-white/70">
+              Want them by email? Sign in and tick the box in{' '}
+              <Link href="/account/profile" className="text-[#FF9900] underline underline-offset-2 hover:text-white">
+                My profile
+              </Link>
+              . You can switch it off any time.
+            </p>
           </div>
         </div>
       </div>

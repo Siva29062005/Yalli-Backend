@@ -72,10 +72,8 @@ export const CATEGORIES: Category[] = [
 export const BRAND = {
   name: "yalli",
   tagline: "Thoughtfully home.",
-  announcement:
-    "THE EVERYDAY JOY SALE · Up to 40% off top favourites · Free shipping above ₹499",
-  supportEmail: "care@yalli.in",
-  supportPhone: "+91 98765 43210",
-  freeShippingThresholdPaise: 49900, // ₹499.00
+  // Only say what the shop really does: secure online payment and the 7-day return window.
+  announcement: "Secure online payments with Razorpay · Easy returns within 7 days of delivery",
+  // Contact details live in src/lib/business.ts (NEXT_PUBLIC_BUSINESS_*), never here.
   currencySymbol: "₹",
 };

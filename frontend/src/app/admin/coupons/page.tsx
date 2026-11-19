@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { adminGet, adminList, adminPatch, adminPost, paiseToRupees, rupeesToPaise } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';

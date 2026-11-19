@@ -222,7 +222,7 @@ export function renderEmail(
         heading: 'Your refund was processed',
         paragraphs: [
           hi,
-          `We refunded ${formatInr(m.amountMinor)} for order ${m.orderNumber}. Banks usually take 5-7 working days to show it.`,
+          `We refunded ${formatInr(m.amountMinor)} for order ${m.orderNumber}. Depending on your bank or payment method it can take up to 10 working days to show.`,
         ],
       });
     case 'RETURN_UPDATE':

@@ -12,6 +12,8 @@ export interface AdminIdentity {
   email: string;
   roles: string[];
   mfaEnabled: boolean;
+  /** Effective permissions of this account (from the server); null when an older backend does not report them. Cosmetic: the API enforces them. */
+  permissions: string[] | null;
 }
 
 export const restoreAdminSession = session.restore;

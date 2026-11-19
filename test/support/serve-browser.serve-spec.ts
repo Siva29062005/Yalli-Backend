@@ -118,6 +118,11 @@ it('serves the real app for browser checks', async () => {
           password: admin.password,
           secret: admin.secret,
         },
+        support: {
+          email: support.email,
+          password: support.password,
+          secret: support.secret,
+        },
         usedSteps: [step - 1, step],
         customers: { c1: c1.email, c2: c2.email, c3: c3.email, c4: c4.email },
         orders: {

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Search } from 'lucide-react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { adminDelete, adminGet, adminList, adminPatch, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
@@ -32,7 +32,7 @@ const roleLabel = (r: string) => r.toLowerCase().replaceAll('_', ' ');
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong. Please try again.');
 
 export default function AdminUsersPage() {
-  const { identity, withStepUp } = useAdminSession();
+  const { identity, withStepUp, can } = useAdminSession();
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   const [role, setRole] = useState('');
@@ -156,7 +156,7 @@ export default function AdminUsersPage() {
                     ) : (
                       <div className="flex flex-wrap gap-2">
                         <button className={adminGhostButton} disabled={available.length === 0 || busyId === u.id} onClick={() => setGranting({ id: u.id, role: '' })}>Give a role…</button>
-                        {u.status === 'SUSPENDED' ? (
+                        {!can('customers.suspend') ? null : u.status === 'SUSPENDED' ? (
                           <button className={adminButton} disabled={busyId === u.id} onClick={() => void act(u.id, `${u.email} restored.`, () => adminPatch(`/admin/users/${u.id}/status`, { status: 'ACTIVE' }))}>Restore account</button>
                         ) : u.status === 'ACTIVE' ? (
                           <button className={adminGhostButton} disabled={busyId === u.id} onClick={() => setSuspending({ id: u.id, reason: '' })}>Suspend…</button>

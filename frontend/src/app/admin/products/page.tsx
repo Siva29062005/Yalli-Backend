@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Plus, Search } from 'lucide-react';
 import { Alert, AdminPage, DataState, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { adminDelete, adminList, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
 import { formatIndianDate } from '@/lib/formatters';
@@ -24,7 +24,7 @@ const STATUS_TONE = { PUBLISHED: 'green', DRAFT: 'amber', ARCHIVED: 'gray' } as 
 const STATUS_LABEL = { PUBLISHED: 'Published', DRAFT: 'Draft', ARCHIVED: 'Archived' } as const;
 
 export default function AdminProductsPage() {
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
@@ -60,9 +60,11 @@ export default function AdminProductsPage() {
       title="Products"
       subtitle="Manage your collection, from first draft to everyday favourite."
       actions={
-        <Link href="/admin/products/new" className={`${adminButton} inline-flex items-center gap-1.5`}>
-          <Plus className="h-4 w-4" /> Add product
-        </Link>
+        can('products.create') ? (
+          <Link href="/admin/products/new" className={`${adminButton} inline-flex items-center gap-1.5`}>
+            <Plus className="h-4 w-4" /> Add product
+          </Link>
+        ) : undefined
       }
     >
       {error && <Alert kind="error">{error}</Alert>}
@@ -133,16 +135,18 @@ export default function AdminProductsPage() {
                     <td className="p-4 whitespace-nowrap">{formatIndianDate(row.updatedAt)}</td>
                     <td className="p-4">
                       <div className="flex flex-wrap justify-end gap-2">
-                        <Link href={`/admin/products/${row.id}`} className={adminGhostButton}>Edit</Link>
-                        {row.status === 'PUBLISHED' ? (
+                        <Link href={`/admin/products/${row.id}`} className={adminGhostButton}>{can('products.update') ? 'Edit' : 'View'}</Link>
+                        {!can('products.publish') ? null : row.status === 'PUBLISHED' ? (
                           <button className={adminGhostButton} disabled={busyId === row.id} onClick={() => void act(row, 'unpublish')}>Unpublish</button>
                         ) : row.status === 'DRAFT' ? (
                           <button className={adminButton} disabled={busyId === row.id} onClick={() => void act(row, 'publish')}>Publish</button>
                         ) : null}
-                        {row.status !== 'ARCHIVED' && (
+                        {can('products.publish') && row.status !== 'ARCHIVED' && (
                           <button className={adminGhostButton} disabled={busyId === row.id} onClick={() => void act(row, 'archive')}>Archive</button>
                         )}
-                        <button className={adminDangerButton} disabled={busyId === row.id} onClick={() => void act(row, 'delete')}>Delete</button>
+                        {can('products.delete') && (
+                          <button className={adminDangerButton} disabled={busyId === row.id} onClick={() => void act(row, 'delete')}>Delete</button>
+                        )}
                       </div>
                     </td>
                   </tr>

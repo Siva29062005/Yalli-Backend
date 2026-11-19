@@ -182,7 +182,11 @@ export function RegisterForm() {
               }}
               className="mt-1 rounded text-[#116644]"
             />
-            <span className="text-[#4A5550]">I accept the Privacy Policy and Terms of Service.</span>
+            <span className="text-[#4A5550]">
+              I accept the{' '}
+              <Link href="/privacy" target="_blank" className="font-medium text-[#116644] underline">Privacy Policy</Link> and{' '}
+              <Link href="/terms" target="_blank" className="font-medium text-[#116644] underline">Terms of Use &amp; Sale</Link>.
+            </span>
           </label>
           <FieldError id="acceptPrivacyPolicy-error" message={errors.acceptPrivacyPolicy} />
         </div>

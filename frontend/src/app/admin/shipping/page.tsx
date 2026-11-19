@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, DataState, Field, Pill, adminButton, adminCard, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { adminGet, adminPatch, adminPost, paiseToRupees, rupeesToPaise } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
@@ -166,6 +166,13 @@ function MethodForm({
         </Field>
         <Field label="Name shown to customers"><input required minLength={2} maxLength={80} className={adminInput} value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <Field label="Delivery fee (₹)" hint="Use 0 for free delivery."><input required inputMode="decimal" className={adminInput} value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
+        {(rupeesToPaise(fee) ?? 0) > 0 && (
+          <div className="sm:col-span-2">
+            <Alert kind="warning">
+              GST on delivery charges is not calculated on invoices yet. In India a delivery charge billed with the goods is generally taxed at the goods&apos; GST rate, so keep delivery free until that is added, or confirm the treatment with your accountant first.
+            </Alert>
+          </div>
+        )}
         <Field label="Free above order value (₹, optional)" hint="Delivery becomes free once the items total reaches this."><input inputMode="decimal" className={adminInput} value={freeAbove} onChange={(e) => setFreeAbove(e.target.value)} /></Field>
         <Field label="Quickest delivery (days)"><input required inputMode="numeric" className={adminInput} value={etaMin} onChange={(e) => setEtaMin(e.target.value)} /></Field>
         <Field label="Longest delivery (days)"><input required inputMode="numeric" className={adminInput} value={etaMax} onChange={(e) => setEtaMax(e.target.value)} /></Field>

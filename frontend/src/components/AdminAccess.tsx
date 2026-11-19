@@ -1,33 +1,23 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { adminLogin, adminLogout, adminRequest, adminStepUp, adminVerify, clearAdminSession, restoreAdminSession, type AdminIdentity } from '@/lib/admin-session';
 import { ApiError } from '@/lib/http';
-
-interface AdminSession {
-  identity: AdminIdentity;
-  signOut: () => Promise<void>;
-  /**
-   * Runs an admin API call. When the server asks for a fresh MFA step-up, shows the authenticator prompt,
-   * and retries the call once after the staff member verifies. Cancelling rejects with a plain Error.
-   */
-  withStepUp: <T>(call: () => Promise<T>) => Promise<T>;
-}
+import { canOpen, screenFor } from '@/lib/admin-access';
+import { AdminContext } from './AdminContext';
+import { AdminNoAccess } from './AdminNoAccess';
 
 interface StepUpWaiter {
   resolve: () => void;
   reject: (error: Error) => void;
 }
 
-const AdminContext = createContext<AdminSession | null>(null);
+export { useAdminSession } from './AdminContext';
 
-export function useAdminSession() {
-  const session = useContext(AdminContext);
-  if (!session) throw new Error('Staff authentication is required.');
-  return session;
-}
+/** `/me` for a staff account; `permissions` is null when an older backend does not send it (nothing is hidden then). */
+const toIdentity = (user: AdminIdentity): AdminIdentity => ({ ...user, permissions: Array.isArray(user.permissions) ? user.permissions : null });
 
 const staffRoles = ['SUPER_ADMIN', 'ADMIN', 'PRODUCT_MANAGER', 'INVENTORY_MANAGER', 'ORDER_MANAGER', 'FINANCE_MANAGER', 'CUSTOMER_SUPPORT'];
 const inputClass = 'mt-1 w-full min-w-0 rounded-xl border border-[#DCE3DE] bg-white px-3 py-2.5 text-sm';
@@ -54,8 +44,8 @@ export function AdminAccess({ children }: { children: React.ReactNode }) {
         const user = await adminRequest<AdminIdentity>('/me');
         if (!active) return;
         if (user.mfaEnabled && user.roles.some((role) => staffRoles.includes(role))) {
-          setIdentity(user);
-          if (pathname === '/admin/login') router.replace('/admin/categories');
+          setIdentity(toIdentity(user));
+          if (pathname === '/admin/login') router.replace('/admin');
         } else {
           await adminLogout().catch(() => clearAdminSession());
         }
@@ -127,7 +117,7 @@ export function AdminAccess({ children }: { children: React.ReactNode }) {
   }, [stepUpPrompt]);
 
   const session = useMemo(
-    () => (identity ? { identity, signOut, withStepUp } : null),
+    () => (identity ? { identity, signOut, withStepUp, can: (permission: string) => identity.permissions === null || identity.permissions.includes(permission) } : null),
     // signOut only closes over stable setters and the router.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [identity, withStepUp],
@@ -154,10 +144,10 @@ export function AdminAccess({ children }: { children: React.ReactNode }) {
         await adminLogout().catch(() => clearAdminSession());
         throw new Error('This account does not have staff access with MFA enabled.');
       }
-      setIdentity(user);
+      setIdentity(toIdentity(user));
       setChallenge('');
       setCode('');
-      if (pathname === '/admin/login' || pathname === '/admin') router.replace('/admin/categories');
+      if (pathname === '/admin/login') router.replace('/admin');
     } catch (error) {
       clearAdminSession();
       setCode('');
@@ -168,10 +158,11 @@ export function AdminAccess({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const screen = screenFor(pathname);
   if (session) {
     return (
       <AdminContext.Provider value={session}>
-        {children}
+        {screen && !canOpen(session.identity.permissions, screen) ? <AdminNoAccess screen={screen} /> : children}
         {stepUpWaiter && (
           <StepUpDialog
             onVerified={() => {

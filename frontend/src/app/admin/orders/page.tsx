@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Search } from 'lucide-react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { adminGet, adminList, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
@@ -127,11 +127,12 @@ export default function AdminOrdersPage() {
 }
 
 function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
   const order = useAdminQuery(() => adminGet<AdminOrder>(`/admin/orders/${id}`), [id]);
   const tracking = useAdminQuery(() => adminGet<{ shipment: Shipment | null }>(`/admin/orders/${id}/tracking`), [id]);
-  // Payment details need a separate permission: a 403 simply hides this block.
-  const payments = useAdminQuery(() => adminGet<PaymentRow[]>(`/admin/orders/${id}/payments`).catch(() => null), [id]);
+  // Payment details need payments.read: without it the request is not even made.
+  const canSeePayments = can('payments.read');
+  const payments = useAdminQuery(() => (canSeePayments ? adminGet<PaymentRow[]>(`/admin/orders/${id}/payments`).catch(() => null) : Promise.resolve(null)), [id, canSeePayments]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -220,10 +221,10 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
           {/* Fulfilment: one forward step at a time; the server enforces the order of steps. */}
           <div className="space-y-3 border-t border-[#E6EAE7] pt-4">
             <h3 className="font-semibold">Fulfilment</h3>
-            {o.status === 'PAID' && (
+            {can('orders.update') && o.status === 'PAID' && (
               <button className={adminButton} disabled={busy} onClick={() => void act('Order moved to packing.', () => adminPost(`/admin/orders/${id}/fulfilment`, { status: 'PROCESSING' }))}>Start packing</button>
             )}
-            {o.status === 'PROCESSING' && (
+            {can('orders.update') && o.status === 'PROCESSING' && (
               <form
                 className="space-y-3"
                 onSubmit={(e) => {
@@ -242,8 +243,8 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
             )}
             {o.status === 'SHIPPED' && (
               <>
-                <button className={adminButton} disabled={busy} onClick={() => void act('Order marked as delivered.', () => adminPost(`/admin/orders/${id}/fulfilment`, { status: 'DELIVERED' }))}>Mark as delivered</button>
-                <form
+                {can('orders.update') && <button className={adminButton} disabled={busy} onClick={() => void act('Order marked as delivered.', () => adminPost(`/admin/orders/${id}/fulfilment`, { status: 'DELIVERED' }))}>Mark as delivered</button>}
+                {can('shipments.manage') && <form
                   className="space-y-3 rounded-xl border border-[#E6EAE7] p-3"
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -258,10 +259,11 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
                   <input aria-label="Location" placeholder="Location (optional)" minLength={2} maxLength={120} className={adminInput} value={location} onChange={(e) => setLocation(e.target.value)} />
                   <input aria-label="Note" placeholder="Note (optional)" minLength={2} maxLength={200} className={adminInput} value={note} onChange={(e) => setNote(e.target.value)} />
                   <button className={adminGhostButton} disabled={busy}>Add update</button>
-                </form>
+                </form>}
               </>
             )}
-            {!['PAID', 'PROCESSING', 'SHIPPED'].includes(o.status) && <p className="text-sm text-[#4A5550]">No fulfilment step is available while the order is “{ORDER_STATUS_LABEL[o.status].toLowerCase()}”.</p>}
+            {!can('orders.update') && <p className="text-sm text-[#4A5550]">View only: your role can see this order but not change it.</p>}
+            {can('orders.update') && !['PAID', 'PROCESSING', 'SHIPPED'].includes(o.status) && <p className="text-sm text-[#4A5550]">No fulfilment step is available while the order is “{ORDER_STATUS_LABEL[o.status].toLowerCase()}”.</p>}
             {shipment && (
               <div className="rounded-xl bg-[#F7F9F8] p-3 text-sm">
                 <p className="break-all font-semibold">{shipment.carrier} · {shipment.trackingNumber}</p>
@@ -272,7 +274,7 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
             )}
           </div>
 
-          {CANCELLABLE.includes(o.status) && (
+          {can('orders.update') && CANCELLABLE.includes(o.status) && (
             <div className="space-y-3 border-t border-[#E6EAE7] pt-4">
               {!cancelling ? (
                 <button className={adminDangerButton} onClick={() => setCancelling(true)}>Cancel order…</button>

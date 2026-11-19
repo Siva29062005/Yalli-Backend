@@ -126,6 +126,8 @@ export const envSchema = z
     /** Returns are accepted this many days after delivery (policy value: confirm with the business). */
     RETURN_WINDOW_DAYS: z.coerce.number().int().min(0).max(90).default(7),
     /** Seller state decides CGST+SGST (same state) vs IGST (other states) on invoices. */
+    /** Name printed as the seller on invoices: the registered legal name (as on the GST registration). */
+    SELLER_LEGAL_NAME: z.string().min(2).max(120).default('Yalli'),
     SELLER_STATE: z.string().min(2).max(60).default('Tamil Nadu'),
     SELLER_GSTIN: z
       .string()

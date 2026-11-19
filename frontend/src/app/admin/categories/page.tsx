@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FolderTree, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { AdminSidebar } from '@/components/AdminSidebar';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { useCategories } from '@/components/CategoryProvider';
 import {
   adminRequest,
@@ -31,8 +31,9 @@ const emptyForm = {
 
 export default function CategoriesPage() {
   const { refresh } = useCategories();
-  const { identity, signOut } = useAdminSession();
-  const canManage = identity.roles.some((role) => ['ADMIN', 'SUPER_ADMIN', 'PRODUCT_MANAGER'].includes(role));
+  const { identity, signOut, can } = useAdminSession();
+  // Reading is gated by the screen itself (products.read); changing needs products.update, deleting products.delete.
+  const canManage = can('products.update');
   const [categories, setCategories] = useState<AdminCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -146,9 +147,7 @@ export default function CategoriesPage() {
     }
   }
 
-  const canDelete = identity?.roles.some((role) =>
-    ['ADMIN', 'SUPER_ADMIN'].includes(role),
-  );
+  const canDelete = can('products.delete');
   const filtered = categories.filter(
     (category) =>
       `${category.name} ${category.slug}`

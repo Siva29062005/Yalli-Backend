@@ -14,7 +14,12 @@ const base = process.env.FRONTEND_URL || 'http://localhost:3101';
 const page = await browser.newPage();
 page.on('dialog', (dialog) => void dialog.accept()); // window.confirm
 
-const ME = { id: 'staff-1', email: 'admin@example.test', roles: ['SUPER_ADMIN'], mfaEnabled: true };
+const ALL_PERMISSIONS = ['analytics.read', 'products.read', 'products.create', 'products.update', 'products.delete', 'products.publish', 'inventory.read', 'inventory.adjust', 'orders.read', 'orders.update', 'shipments.manage', 'payments.read', 'refunds.create', 'refunds.approve', 'coupons.manage', 'users.manage', 'customers.suspend'];
+const SUPPORT_PERMISSIONS = ['products.read', 'orders.read', 'refunds.create', 'customers.read', 'reviews.moderate'];
+let signedInAs = 'admin';
+const meFor = () => signedInAs === 'support'
+  ? { id: 'staff-2', email: 'support@example.test', roles: ['CUSTOMER_SUPPORT'], mfaEnabled: true, permissions: SUPPORT_PERMISSIONS }
+  : { id: 'staff-1', email: 'admin@example.test', roles: ['SUPER_ADMIN'], mfaEnabled: true, permissions: ALL_PERMISSIONS };
 const calls = [];
 const ok = (data, meta) => ({ status: 200, json: { success: true, data, ...(meta ? { meta } : {}) } });
 const list = (items) => ok(items, { page: 1, pageSize: 20, total: items.length, totalPages: 1 });
@@ -54,7 +59,8 @@ function handle(method, path, request) {
     state.stepUpPending = false;
     return ok({ accessToken: 'access-stepped' });
   }
-  if (m === 'GET /me') return ok(ME);
+  if (m === 'POST /auth/refresh') return ok({ accessToken: state.token, csrfToken: 'csrf' });
+  if (m === 'GET /me') return ok(meFor());
   if (m === 'GET /catalog/categories') return ok([]);
 
   if (path.startsWith('/admin/') && state.stepUpPending && path === '/admin/inventory') return fail(403, 'Recent multi-factor verification is required', 'STEP_UP_REQUIRED');
@@ -265,6 +271,51 @@ try {
   assert.equal(product.gstRateBps, 1800);
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
   await page.getByText('Product is live.').waitFor();
+
+  // ----------------------------------------------------------------------------------------------- limited role
+  await page.getByRole('button', { name: 'Sign out of admin' }).click();
+  await page.getByLabel('Work email').waitFor();
+  signedInAs = 'support';
+  await page.getByLabel('Work email').fill('support@example.test');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Authenticator code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and continue' }).click();
+  // lands on the first screen the role can use, not on a screen it cannot
+  await page.getByRole('heading', { name: 'Products', exact: true, level: 1 }).waitFor();
+  const nav = await page.locator('aside nav a, aside a').allInnerTexts();
+  const links = nav.map((t) => t.trim()).filter((t) => ['Overview', 'Products', 'Categories', 'Inventory', 'Orders', 'Refunds & returns', 'Users & roles', 'Coupons', 'Shipping'].includes(t));
+  assert.deepEqual(links, ['Products', 'Categories', 'Orders', 'Refunds & returns'], `support sees only its screens, got ${links}`);
+  assert.equal(await page.getByRole('link', { name: 'Add product' }).count(), 0, 'no Add product without products.create');
+  assert.equal(await page.getByRole('button', { name: 'Delete' }).count(), 0, 'no Delete without products.delete');
+  assert.equal(await page.getByRole('button', { name: 'Publish' }).count(), 0, 'no Publish without products.publish');
+  await page.getByRole('link', { name: 'Momo Steamer' }).waitFor();
+  const beforeInventory = calls.length;
+  await page.goto(`${base}/admin/inventory`);
+  await page.getByText(/cannot open this area/).waitFor();
+  assert.equal(calls.slice(beforeInventory).some((c) => c.path === '/admin/inventory'), false, 'a blocked screen makes no API calls');
+  const paymentsMark = calls.length;
+  await go('Orders', 'Orders & fulfilment');
+  await page.getByRole('button', { name: 'YL26-000001' }).click();
+  await page.getByText('View only: your role can see this order but not change it.').waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Start packing' }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Cancel order…' }).count(), 0);
+  assert.equal(calls.slice(paymentsMark).some((c) => c.path === '/admin/orders/o1/payments'), false, 'support never asks for payment details');
+  await go('Refunds & returns', 'Refunds & returns');
+  await page.getByText(/You can request a refund here/).waitFor();
+  await page.getByRole('button', { name: 'Request a refund' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Approve' }).count(), 0);
+
+  // back to the administrator for the layout checks
+  await page.getByRole('button', { name: 'Sign out of admin' }).click();
+  await page.getByLabel('Work email').waitFor();
+  signedInAs = 'admin';
+  await page.getByLabel('Work email').fill('admin@example.test');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Authenticator code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and continue' }).click();
+  await page.getByRole('heading', { name: 'The everyday, at a glance.', exact: true, level: 1 }).waitFor();
 
   // ----------------------------------------------------------------------------------------------- phone layout
   await page.setViewportSize({ width: 375, height: 800 });

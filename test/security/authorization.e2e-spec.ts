@@ -1,6 +1,7 @@
 import { Controller, Get, Logger, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module.js';
+import { ROLE_DEFINITIONS } from '../../src/modules/access/permissions.js';
 import { InMemoryEphemeralStore } from '../../src/infrastructure/cache/in-memory-ephemeral-store.js';
 import { EphemeralStore } from '../../src/infrastructure/cache/ephemeral-store.js';
 import { RedisService } from '../../src/infrastructure/cache/redis.service.js';
@@ -176,6 +177,28 @@ describe('vertical privilege escalation (BFLA): customers and low roles cannot r
     expect(
       (await ctx.http().get('/api/v1/admin/users').set(as(pm))).status,
     ).toBe(403);
+  });
+
+  it("/me reports the caller's own effective permissions: a role's exact set for staff, none for a customer", async () => {
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const fromApi = (await ctx.http().get('/api/v1/me').set(as(pm)).expect(200))
+      .body.data.permissions as string[];
+    expect(fromApi).toEqual(
+      [...ROLE_DEFINITIONS.PRODUCT_MANAGER.permissions].sort(),
+    );
+    expect(fromApi).toContain('products.read');
+    expect(fromApi).not.toContain('users.manage');
+    const customer = await s.session();
+    expect(
+      (await ctx.http().get('/api/v1/me').set(as(customer)).expect(200)).body
+        .data.permissions,
+    ).toEqual([]);
+    // revoking access takes effect immediately, as everywhere else (database-backed, not token-backed)
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    expect(
+      (await ctx.http().get('/api/v1/me').set(as(support)).expect(200)).body
+        .data.permissions,
+    ).not.toContain('analytics.read');
   });
 
   it('the staff user list is searchable and filterable, and never exposes credentials or contact numbers', async () => {

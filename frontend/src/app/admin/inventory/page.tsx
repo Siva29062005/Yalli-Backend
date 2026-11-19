@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { AlertTriangle, Search } from 'lucide-react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { adminGet, adminList, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
@@ -47,7 +47,7 @@ const signed = (n: number) => (n > 0 ? `+${n}` : String(n));
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong. Please try again.');
 
 export default function AdminInventoryPage() {
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
   const [search, setSearch] = useState('');
   const [sku, setSku] = useState('');
   const [lowOnly, setLowOnly] = useState(false);
@@ -100,7 +100,7 @@ export default function AdminInventoryPage() {
             Low stock only
           </label>
           <button className={adminGhostButton}>Search</button>
-          <button type="button" className={adminButton} onClick={() => setAdjusting({ sku: '' })}>Adjust stock</button>
+          {can('inventory.adjust') && <button type="button" className={adminButton} onClick={() => setAdjusting({ sku: '' })}>Adjust stock</button>}
         </form>
 
         <DataState loading={list.loading && !list.data} error={list.error} empty={rows.length === 0} emptyTitle="No stock records found" emptyHint={sku || lowOnly ? 'Try another SKU or clear the low-stock filter.' : 'Stock appears here once a variant has received stock.'}>
@@ -133,7 +133,7 @@ export default function AdminInventoryPage() {
                       <td className="p-4">
                         <div className="flex justify-end gap-2">
                           <button className={adminGhostButton} onClick={() => setHistory(r.sku)}>History</button>
-                          <button className={adminButton} onClick={() => setAdjusting({ sku: r.sku })}>Adjust</button>
+                          {can('inventory.adjust') && <button className={adminButton} onClick={() => setAdjusting({ sku: r.sku })}>Adjust</button>}
                         </div>
                       </td>
                     </tr>

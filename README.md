@@ -20,6 +20,20 @@ docker compose --profile tools run --rm seed     # roles + permissions (+ first 
 npm run start:dev                # http://localhost:3000  (health: /health/live, /health/ready; Swagger: /docs in dev)
 ```
 
+## Rebuild the Docker app image after code changes
+The `app` service (profile `app`) runs the compiled image, so it does not see new code until it is rebuilt. Migrations are
+only needed when `prisma/migrations` changed. From the repo root, with the infrastructure running:
+```bash
+docker compose --profile app up -d --build --wait app
+```
+Then check it is the new code (an unauthenticated call must answer 401, not 404) and look at the log:
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/api/v1/admin/users
+docker compose --profile app logs --tail 30 app
+```
+If a release adds a migration, run `docker compose --profile tools run --build --rm migrate` first; if it changes roles or
+permissions, run `docker compose --profile tools run --rm seed` after. `./scripts/verify-docker.sh` runs the whole chain.
+
 ## Quality gate
 ```bash
 npm run check    # prettier, oxlint (type-aware), tsc, unit tests, e2e tests, build

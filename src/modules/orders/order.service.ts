@@ -39,6 +39,7 @@ const FULFILMENT_FLOW: Record<
 
 @Injectable()
 export class OrderService {
+  private readonly sellerName: string;
   private readonly sellerState: string;
   private readonly sellerGstin: string | undefined;
 
@@ -54,6 +55,7 @@ export class OrderService {
     private readonly outbox: OutboxService,
     private readonly shipping: ShippingService,
   ) {
+    this.sellerName = config.get('SELLER_LEGAL_NAME', { infer: true });
     this.sellerState = config.get('SELLER_STATE', { infer: true });
     this.sellerGstin = config.get('SELLER_GSTIN', { infer: true });
   }
@@ -237,7 +239,7 @@ export class OrderService {
       orderNumber: o.orderNumber,
       taxInvoice: this.sellerGstin !== undefined, // not a valid tax invoice until the seller GSTIN is configured
       seller: {
-        name: 'Yalli Marketing',
+        name: this.sellerName,
         state: this.sellerState,
         gstin: this.sellerGstin ?? null,
       },

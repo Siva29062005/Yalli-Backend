@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { adminList, adminPost, newIdempotencyKey, rupeesToPaise } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
@@ -55,16 +55,22 @@ const RETURN_TONE = { REQUESTED: 'amber', APPROVED: 'blue', REJECTED: 'gray', RE
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong. Please try again.');
 
 export default function AdminRefundsPage() {
-  const [tab, setTab] = useState<'refunds' | 'returns'>('refunds');
+  const { can } = useAdminSession();
+  // Finance sees the refund list; support can request refunds without listing them; order staff see returns.
+  const tabs = (['refunds', 'returns'] as const).filter((t) => (t === 'refunds' ? can('payments.read') || can('refunds.create') : can('orders.read')));
+  const [chosen, setChosen] = useState<'refunds' | 'returns'>('refunds');
+  const tab = tabs.includes(chosen) ? chosen : (tabs[0] ?? 'refunds');
   return (
     <AdminPage eyebrow="Finance" title="Refunds & returns" subtitle="Money moves only after a second person approves it. Returns are checked before any refund is raised.">
-      <div role="tablist" aria-label="Refunds and returns" className="flex gap-2">
-        {(['refunds', 'returns'] as const).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={tab === t ? adminButton : adminGhostButton}>
-            {t === 'refunds' ? 'Refunds' : 'Return requests'}
-          </button>
-        ))}
-      </div>
+      {tabs.length > 1 && (
+        <div role="tablist" aria-label="Refunds and returns" className="flex gap-2">
+          {tabs.map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} onClick={() => setChosen(t)} className={tab === t ? adminButton : adminGhostButton}>
+              {t === 'refunds' ? 'Refunds' : 'Return requests'}
+            </button>
+          ))}
+        </div>
+      )}
       {tab === 'refunds' ? <RefundsTab /> : <ReturnsTab />}
     </AdminPage>
   );
@@ -73,7 +79,8 @@ export default function AdminRefundsPage() {
 // ------------------------------------------------------------------------------------------------ refunds
 
 function RefundsTab() {
-  const { withStepUp, identity } = useAdminSession();
+  const { withStepUp, identity, can } = useAdminSession();
+  const canList = can('payments.read');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
@@ -81,7 +88,10 @@ function RefundsTab() {
   const [rejecting, setRejecting] = useState<{ id: string; reason: string } | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const list = useAdminQuery(() => adminList<RefundRow>('/admin/refunds', { status, page, pageSize: 20 }), [status, page]);
+  const list = useAdminQuery(
+    () => (canList ? adminList<RefundRow>('/admin/refunds', { status, page, pageSize: 20 }) : Promise.resolve({ items: [] as RefundRow[], meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 } })),
+    [status, page, canList],
+  );
   const rows = list.data?.items ?? [];
 
   async function decide(id: string, action: 'approve' | 'reject', reason?: string) {
@@ -106,11 +116,15 @@ function RefundsTab() {
       {notice && <Alert kind="success">{notice}</Alert>}
       <section className={`${adminCard} min-w-0`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E6EAE7] p-4">
-          <select aria-label="Filter by status" className="rounded-xl border border-[#DCE3DE] bg-white p-2 text-sm" value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }}>
-            <option value="">All refunds</option>
-            {(Object.keys(REFUND_LABEL) as RefundStatus[]).map((s) => <option key={s} value={s}>{REFUND_LABEL[s]}</option>)}
-          </select>
-          <button className={adminButton} onClick={() => setCreating((c) => !c)}>{creating ? 'Close form' : 'Request a refund'}</button>
+          {canList ? (
+            <select aria-label="Filter by status" className="rounded-xl border border-[#DCE3DE] bg-white p-2 text-sm" value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }}>
+              <option value="">All refunds</option>
+              {(Object.keys(REFUND_LABEL) as RefundStatus[]).map((s) => <option key={s} value={s}>{REFUND_LABEL[s]}</option>)}
+            </select>
+          ) : (
+            <p className="text-sm text-[#4A5550]">You can request a refund here. A finance manager approves it and sees the full list.</p>
+          )}
+          {can('refunds.create') && <button className={adminButton} onClick={() => setCreating((c) => !c)}>{creating ? 'Close form' : 'Request a refund'}</button>}
         </div>
         {creating && (
           <CreateRefund
@@ -121,7 +135,7 @@ function RefundsTab() {
             }}
           />
         )}
-        <DataState loading={list.loading && !list.data} error={list.error} empty={rows.length === 0} emptyTitle="No refunds" emptyHint={status ? 'No refunds with this status.' : 'Refund requests will show up here.'}>
+        {canList && <DataState loading={list.loading && !list.data} error={list.error} empty={rows.length === 0} emptyTitle="No refunds" emptyHint={status ? 'No refunds with this status.' : 'Refund requests will show up here.'}>
           <ul className="divide-y divide-[#E6EAE7]">
             {rows.map((r) => (
               <li key={r.id} className="space-y-3 p-4">
@@ -144,7 +158,7 @@ function RefundsTab() {
                       <button type="button" className={adminGhostButton} onClick={() => setRejecting(null)}>Cancel</button>
                     </form>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
+                    can('refunds.approve') && <div className="flex flex-wrap gap-2">
                       {/* The server also refuses self-approval; hiding the button just avoids a pointless error. */}
                       {r.requestedById !== null && r.requestedById === identity.id ? (
                         <p className="text-xs text-[#4A5550]">You requested this refund, so another person must approve it.</p>
@@ -159,7 +173,7 @@ function RefundsTab() {
             ))}
           </ul>
           {list.data && <Pager meta={list.data.meta} onPage={setPage} />}
-        </DataState>
+        </DataState>}
       </section>
     </>
   );
@@ -261,7 +275,8 @@ function CreateRefund({ onDone }: { onDone: () => void }) {
 // ------------------------------------------------------------------------------------------------ returns
 
 function ReturnsTab() {
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
+  const canDecide = can('orders.update');
   const [page, setPage] = useState(1);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<Record<string, string>>({});
@@ -306,14 +321,14 @@ function ReturnsTab() {
                     </div>
                     <Pill tone={RETURN_TONE[r.status]}>{r.status.toLowerCase()}</Pill>
                   </div>
-                  {r.status === 'REQUESTED' && (
+                  {canDecide && r.status === 'REQUESTED' && (
                     <div className="flex flex-wrap items-end gap-2">
                       <input aria-label="Note for the customer (optional)" placeholder="Note (optional)" maxLength={300} className={`${adminInput} max-w-xs`} value={note[r.id] ?? ''} onChange={(e) => setNote((n) => ({ ...n, [r.id]: e.target.value }))} />
                       <button className={adminButton} disabled={busyId === r.id} onClick={() => void act(r.id, 'Return approved.', () => adminPost(`/admin/returns/${r.id}/decision`, { decision: 'APPROVED', ...(note[r.id]?.trim() ? { note: note[r.id]!.trim() } : {}) }))}>Approve</button>
                       <button className={adminGhostButton} disabled={busyId === r.id} onClick={() => void act(r.id, 'Return rejected.', () => adminPost(`/admin/returns/${r.id}/decision`, { decision: 'REJECTED', ...(note[r.id]?.trim() ? { note: note[r.id]!.trim() } : {}) }))}>Reject</button>
                     </div>
                   )}
-                  {r.status === 'APPROVED' && (
+                  {canDecide && r.status === 'APPROVED' && (
                     <div className="flex flex-wrap items-end gap-2">
                       <Field label="Refund amount (₹)" hint="Leave blank to refund the item price automatically.">
                         <input inputMode="decimal" className={adminInput} value={amount[r.id] ?? ''} onChange={(e) => setAmount((a) => ({ ...a, [r.id]: e.target.value }))} />

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, Upload } from 'lucide-react';
-import { useAdminSession } from '@/components/AdminAccess';
+import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, Field, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { adminDelete, adminGet, adminPatch, adminPost, paiseToRupees, rupeesToPaise } from '@/lib/admin-api';
 import { adminRequest } from '@/lib/admin-session';
@@ -104,7 +104,9 @@ function EditorBody({
   onChanged: () => void;
 }) {
   const router = useRouter();
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
+  // Roles that can read products but not change them (inventory, orders, support) get a view-only editor.
+  const readOnly = product ? !can('products.update') : !can('products.create');
   const [name, setName] = useState(product?.name ?? '');
   const [slug, setSlug] = useState(product?.slug ?? '');
   const [summary, setSummary] = useState(product?.summary ?? '');
@@ -179,6 +181,7 @@ function EditorBody({
     <div className="space-y-6">
       {error && <Alert kind="error">{error}</Alert>}
       {notice && <Alert kind="success">{notice}</Alert>}
+      {readOnly && <Alert kind="warning">View only: your role can see this product but not change it.</Alert>}
 
       {product && (
         <div className={`${adminCard} flex flex-wrap items-center justify-between gap-3 p-4`}>
@@ -187,20 +190,21 @@ function EditorBody({
             <span className="break-all text-sm text-[#4A5550]">/{product.slug}</span>
           </div>
           <div className="flex flex-wrap gap-2">
-            {product.status !== 'PUBLISHED' && product.status !== 'ARCHIVED' && (
+            {can('products.publish') && product.status !== 'PUBLISHED' && product.status !== 'ARCHIVED' && (
               <button className={adminButton} disabled={busy} onClick={() => void setStatus('publish')}>Publish</button>
             )}
-            {product.status === 'PUBLISHED' && (
+            {can('products.publish') && product.status === 'PUBLISHED' && (
               <button className={adminGhostButton} disabled={busy} onClick={() => void setStatus('unpublish')}>Unpublish</button>
             )}
-            {product.status !== 'ARCHIVED' && (
+            {can('products.publish') && product.status !== 'ARCHIVED' && (
               <button className={adminGhostButton} disabled={busy} onClick={() => void setStatus('archive')}>Archive</button>
             )}
           </div>
         </div>
       )}
 
-      <form onSubmit={saveProduct} className={`${adminCard} space-y-5 p-6`}>
+      <form onSubmit={saveProduct} className={`${adminCard} p-6`}>
+       <fieldset disabled={readOnly} className="min-w-0 space-y-5">
         <h2 className="font-heading text-xl font-bold">The essentials</h2>
         <Field label="Product name">
           <input required maxLength={200} className={adminInput} value={name} onChange={(e) => setName(e.target.value)} />
@@ -292,10 +296,11 @@ function EditorBody({
           <Link href="/admin/products" className={adminGhostButton}>Back to products</Link>
           <button className={adminButton} disabled={busy}>{busy ? 'Saving…' : product ? 'Save changes' : 'Create draft'}</button>
         </div>
+       </fieldset>
       </form>
 
-      {product && <VariantsPanel product={product} onChanged={onChanged} />}
-      {product && <ImagesPanel product={product} onChanged={onChanged} />}
+      {product && <fieldset disabled={readOnly} className="min-w-0"><VariantsPanel product={product} onChanged={onChanged} /></fieldset>}
+      {product && <fieldset disabled={readOnly} className="min-w-0"><ImagesPanel product={product} onChanged={onChanged} /></fieldset>}
     </div>
   );
 }
