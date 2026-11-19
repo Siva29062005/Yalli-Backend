@@ -17,6 +17,7 @@
     "lint": "oxlint --type-aware src/ test/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "serve:browser": "vitest run --config vitest.config.serve.ts",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",

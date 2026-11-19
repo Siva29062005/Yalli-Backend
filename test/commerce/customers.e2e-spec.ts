@@ -104,6 +104,24 @@ describe('address book', () => {
     expect(list[0]).toMatchObject({ id: b.id, isDefault: true });
   });
 
+  it('clears optional fields sent as empty/null but keeps omitted ones', async () => {
+    const u = await s.session();
+    const a = (
+      await addAddress(u, { landmark: 'Near the temple', line2: 'Anna Nagar' })
+    ).body.data;
+    const updated = (
+      await ctx
+        .http()
+        .patch(`/api/v1/me/addresses/${a.id}`)
+        .set(authed(u))
+        .send({ landmark: '', label: null })
+        .expect(200)
+    ).body.data;
+    expect(updated.landmark).toBeNull();
+    expect(updated.label).toBeNull();
+    expect(updated.line2).toBe('Anna Nagar');
+  });
+
   it('validates Indian addresses (state list, 6-digit PIN, phone) and rejects extra fields', async () => {
     const u = await s.session();
     expect((await addAddress(u, { postalCode: '012345' })).status).toBe(400);

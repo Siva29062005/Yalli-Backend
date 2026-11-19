@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-brand-deep: #113322;
+  --color-brand-primary: #116644;
+  --color-brand-accent: #ff9900;
+  --color-brand-mint: #eeffee;
+  --color-brand-surface: #fffffe;
+  --color-brand-muted: #8a958e;
+  --color-brand-offwhite: #fafafa;
+  --color-brand-border: #e6eae7;
+
+  --font-display: 'Poppins', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+:root {
+  --background: #fafafa;
+  --foreground: #113322;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+.font-heading {
+  font-family: 'Poppins', sans-serif;
+}

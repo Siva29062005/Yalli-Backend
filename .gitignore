@@ -17,4 +17,6 @@ reference/
 .turbo/
 postgres-data/
 docker-compose.override.yml
-reference/
+
+# Design handoff archive (30 MB); keep it outside git
+Figma Design.zip

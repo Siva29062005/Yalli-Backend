@@ -64,6 +64,16 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 - Key rotation: MFA keys via `MFA_RETIRED_KEYS_JSON` + `rotate-mfa-key`; never swap the current key without the retired entry.
 - Runbooks and the DR drill live in `docs/ops/`; security review record in `docs/security/phase-7-hardening.md`.
 
+## Frontend (`frontend/`)
+- Next.js 16.4 / React 19.3 / Tailwind 4.3.5 / zustand. This Next version has breaking changes: read `frontend/node_modules/next/dist/docs/` before writing Next code (see `frontend/AGENTS.md`).
+- Dev: backend on :3000, frontend with `npm run dev -- --port 3001` (backend `FRONTEND_BASE_URL` defaults to :3001). Next rewrites proxy `/api/v1/*` to `API_INTERNAL_URL` (default `http://127.0.0.1:3000/api/v1`), so the browser stays same-origin.
+- Storefront, `/auth/*`, `/account/*` and ALL admin screens use the real API (no demo data; never add demo/fallback data). Admin goes through `AdminAccess` + `admin-session` (staff password + MFA, access token in memory only). Frontend role checks are not an authorization boundary.
+- Admin screen pattern: wrap in `AdminPage` (`components/AdminKit.tsx`), load with `useAdminQuery` + `adminList/adminGet` (`lib/admin-api.ts`), mutate through `withStepUp(() => adminPost(...))` from `useAdminSession()` (one shared MFA step-up prompt, then auto-retry). Money typed by staff goes through `rupeesToPaise` (no floats); unsafe endpoints (refund create) send an `Idempotency-Key`. Paginated lists need `adminList` (it keeps `meta`).
+- Backend added for the screens: `GET /admin/brands`, `GET /admin/users` (users.manage), `order.orderNumber` on `GET /admin/refunds`. Admin screens are verified against the REAL backend (isolated DB) via the opt-in harness below; the dev Docker stack has not been used for this.
+- `npm run check` does not cover the frontend yet. In `frontend/` run `npx tsc --noEmit`, `npm run lint`, `npm run build`; from the root `npx vitest run frontend/src`. Browser regressions are Playwright scripts in `frontend/scripts/test-*.mjs` against fake backends (`FRONTEND_URL`, `PLAYWRIGHT_MODULE`; port 3101 may already be taken by a stale `next start`, use another port).
+- Real-backend browser run (opt-in, not in `npm run check`): `npm run serve:browser` boots the real app + embedded PostgreSQL + fixtures + a SUPER_ADMIN with MFA (info file in the OS temp dir; stop by creating `yalli-serve.stop` there), then `frontend/scripts/test-admin-real.mjs` drives every staff screen (browser `/api/v1` calls are redirected to it, so the frontend's baked proxy target is irrelevant). Restart `serve:browser` before every run (TOTP steps and fixtures are single-use). Never point such tests at the dev database: they create shipping methods, coupons and refunds.
+- Design references: `Figma Design.zip` (36 screens, untracked), `docs/frontend/canva-prompts.md` (brand kit), `reference/` (old OpenCart site).
+
 ## Non-negotiable rules
 - Deny by default: every route needs authentication and an explicit permission unless marked public. Never trust client-supplied roles, prices, totals or customer ids; customer-owned data is always queried by the authenticated customer's id (404, not 403, on a miss).
 - Money is integer paise plus currency in the database and code; no floating-point arithmetic. The server computes every price, discount, tax and total.
@@ -78,8 +88,10 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 - Phases: 2 foundation (done) → 3 security (done; see docs/security/phase-3-security-foundation.md) → 4 core commerce (done; see docs/architecture/phase-4-commerce-core.md) → 5 checkout/payments (done; see docs/architecture/phase-5-checkout-payments.md) → 6 extras (done; see docs/architecture/phase-6-extras.md) → 7 hardening (done; see docs/security/phase-7-hardening.md and docs/ops/). Each phase ends with check + security review + a report of changed files, finished functionality and open risks.
 - Nest's first-party `@nestjs/outbox`, `idempotency`, `webhooks`, `authentication`, `authorization` are not adopted yet; evaluate against the security requirements in the phase that needs them.
 - Add or update tests with every change, including negative authorization tests for security-relevant endpoints. Update docs when behaviour or architecture changes.
+- Open work lives in `docs/PENDING.md` (P0 launch blockers / P1 / P2). Read it before starting a task; tick items done (with the date) and add anything new you find.
+- ALWAYS update this CLAUDE.md as part of every change (user rule, 2026-11-19): new or changed commands, conventions, rules, current state, or a stale statement. Keep it a concise guide, not a changelog; history goes in git and `docs/PENDING.md`.
 
 ## Environment notes (developer machine)
 - Docker runs through Colima (no Docker Desktop; endpoint security removes it). `~/.docker/config.json` must not contain `credsStore: desktop`.
 - Claude's shell cannot see `/Applications`; use the Docker CLI from a normal terminal or ask before running Docker steps.
-- Not yet a git repository; the user will create the remote and push later. Do not commit or push unless asked.
+- Git repository on `main` with no remote yet; the user will create the remote and push later. Do not commit or push unless asked. CI was removed (commit `043ee10`) until the remote exists.

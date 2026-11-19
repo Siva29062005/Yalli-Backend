@@ -123,6 +123,7 @@ describe('vertical privilege escalation (BFLA): customers and low roles cannot r
     for (const [method, path, body] of [
       ['get', '/api/v1/admin/roles', undefined],
       ['get', '/api/v1/admin/permissions', undefined],
+      ['get', '/api/v1/admin/users', undefined],
       ['post', `/api/v1/admin/users/${target}/roles`, { role: 'ADMIN' }],
       ['delete', `/api/v1/admin/users/${target}/roles/ADMIN`, undefined],
       [
@@ -172,6 +173,47 @@ describe('vertical privilege escalation (BFLA): customers and low roles cannot r
     expect(
       (await ctx.http().get('/api/v1/admin/permissions').set(as(pm))).status,
     ).toBe(403);
+    expect(
+      (await ctx.http().get('/api/v1/admin/users').set(as(pm))).status,
+    ).toBe(403);
+  });
+
+  it('the staff user list is searchable and filterable, and never exposes credentials or contact numbers', async () => {
+    const admin = await s.staff('ADMIN');
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const listed = await ctx
+      .http()
+      .get('/api/v1/admin/users')
+      .query({ q: support.email, role: 'CUSTOMER_SUPPORT' })
+      .set(as(admin))
+      .expect(200);
+    expect(listed.body.data).toEqual([
+      expect.objectContaining({
+        id: support.userId,
+        email: support.email,
+        mfaEnabled: true,
+        status: 'ACTIVE',
+        roles: expect.arrayContaining(['CUSTOMER_SUPPORT']),
+      }),
+    ]);
+    expect(listed.body.meta).toMatchObject({ page: 1, total: 1 });
+    expect(JSON.stringify(listed.body)).not.toMatch(
+      /passwordHash|password_hash|secret|phone/i,
+    );
+    // strict query: unknown parameters and unknown roles are refused
+    await ctx
+      .http()
+      .get('/api/v1/admin/users')
+      .query({ sort: 'email' })
+      .set(as(admin))
+      .expect(400);
+    await ctx
+      .http()
+      .get('/api/v1/admin/users')
+      .query({ role: 'GOD' })
+      .set(as(admin))
+      .expect(400);
+    await ctx.http().get('/api/v1/admin/users').expect(401);
   });
 
   it('an ADMIN lacks roles.manage/permissions.manage: cannot list the permission catalogue', async () => {

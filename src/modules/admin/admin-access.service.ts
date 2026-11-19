@@ -5,8 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
+import {
+  paginated,
+  type PaginationInput,
+} from '../../common/http/pagination.js';
 import { ErrorCode } from '../../common/exceptions/error-codes.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
+import type { Prisma } from '../../generated/prisma/client.js';
 import { AuthorizationService } from '../access/authorization.service.js';
 import { RoleName, STAFF_ROLE_RANK_THRESHOLD } from '../access/permissions.js';
 import {
@@ -69,6 +74,73 @@ export class AdminAccessService {
           permissions: r.permissions.map((p) => p.permission.name).sort(),
         })),
       );
+  }
+
+  /** Staff view of accounts: identity, state and roles only (never credentials, tokens or phone numbers). */
+  async listUsers(
+    q: PaginationInput & {
+      q?: string | undefined;
+      role?: string | undefined;
+      status?: 'PENDING_VERIFICATION' | 'ACTIVE' | 'SUSPENDED' | undefined;
+    },
+  ) {
+    const where: Prisma.UserWhereInput = {
+      status: q.status ? q.status : { not: 'DELETED' },
+      ...(q.role ? { roles: { some: { role: { name: q.role } } } } : {}),
+      ...(q.q
+        ? {
+            OR: [
+              { email: { contains: q.q, mode: 'insensitive' } },
+              {
+                customer: {
+                  OR: [
+                    { firstName: { contains: q.q, mode: 'insensitive' } },
+                    { lastName: { contains: q.q, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        skip: (q.page - 1) * q.pageSize,
+        take: q.pageSize,
+        select: {
+          id: true,
+          email: true,
+          status: true,
+          mfaEnabled: true,
+          createdAt: true,
+          lastLoginAt: true,
+          customer: { select: { firstName: true, lastName: true } },
+          roles: { select: { role: { select: { name: true, rank: true } } } },
+        },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+    return paginated(
+      rows.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.customer
+          ? `${u.customer.firstName} ${u.customer.lastName}`.trim()
+          : null,
+        status: u.status,
+        mfaEnabled: u.mfaEnabled,
+        createdAt: u.createdAt,
+        lastLoginAt: u.lastLoginAt,
+        roles: u.roles
+          .map((r) => r.role)
+          .sort((a, b) => b.rank - a.rank)
+          .map((r) => r.name),
+      })),
+      total,
+      q,
+    );
   }
 
   listPermissions() {

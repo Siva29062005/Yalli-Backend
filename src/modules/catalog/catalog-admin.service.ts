@@ -56,6 +56,14 @@ export class CatalogAdminService {
 
   // ----------------------------------------------------------------------------------- brands
 
+  /** Staff brand picker: includes ids (the public list has none) and brands with no published products. */
+  async listBrands() {
+    return this.prisma.brand.findMany({
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      select: { id: true, name: true, slug: true },
+    });
+  }
+
   async createBrand(
     actor: AuthPrincipal,
     dto: { name: string; slug?: string | undefined },
@@ -87,6 +95,21 @@ export class CatalogAdminService {
   }
 
   // ------------------------------------------------------------------------------- categories
+
+  async listCategories() {
+    return this.prisma.category.findMany({
+      orderBy: [{ position: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        parentId: true,
+        position: true,
+        isActive: true,
+        _count: { select: { products: true, children: true } },
+      },
+    });
+  }
 
   async createCategory(
     actor: AuthPrincipal,

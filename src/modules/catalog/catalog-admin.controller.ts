@@ -60,6 +60,18 @@ export class CatalogAdminController {
   constructor(private readonly admin: CatalogAdminService) {}
 
   // brands / categories
+  @Get('categories')
+  @RequirePermissions(Permission.ProductsRead)
+  categories() {
+    return this.admin.listCategories();
+  }
+
+  @Get('brands')
+  @RequirePermissions(Permission.ProductsRead)
+  brands() {
+    return this.admin.listBrands();
+  }
+
   @Post('brands')
   @RequirePermissions(Permission.ProductsUpdate)
   createBrand(

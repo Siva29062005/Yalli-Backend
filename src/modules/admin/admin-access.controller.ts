@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
@@ -18,6 +19,7 @@ import {
   RequirePermissions,
   RequireStepUp,
 } from '../../common/decorators/access.decorators.js';
+import { paginationSchema } from '../../common/http/pagination.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import { ResponseMessage } from '../../common/decorators/response.decorators.js';
 import { Permission, ROLE_DEFINITIONS } from '../access/permissions.js';
@@ -28,6 +30,13 @@ const roleNames = Object.keys(ROLE_DEFINITIONS) as [string, ...string[]];
 const userIdParam = z.uuid();
 const roleParam = z.enum(roleNames);
 const assignSchema = z.object({ role: z.enum(roleNames) }).strict();
+const listUsersSchema = paginationSchema
+  .extend({
+    q: z.string().trim().min(1).max(100).optional(),
+    role: roleParam.optional(),
+    status: z.enum(['PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED']).optional(),
+  })
+  .strict();
 const statusSchema = z
   .object({
     status: z.enum(['ACTIVE', 'SUSPENDED']),
@@ -55,6 +64,14 @@ export class AdminAccessController {
   @RequirePermissions(Permission.UsersManage)
   roles() {
     return this.access.listRoles();
+  }
+
+  @Get('users')
+  @RequirePermissions(Permission.UsersManage)
+  users(
+    @Query({ schema: listUsersSchema }) q: z.infer<typeof listUsersSchema>,
+  ) {
+    return this.access.listUsers(q);
   }
 
   @Get('permissions')

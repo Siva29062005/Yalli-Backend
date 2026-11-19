@@ -75,19 +75,25 @@ const addressFields = {
   isDefault: z.boolean().optional(),
 };
 export const createAddressSchema = z.object(addressFields).strict();
+/** On update, optional text fields may be cleared: `null` or `''` stores NULL; omitting the field keeps it. */
+const clearableText = (max: number) =>
+  z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+    z.string().trim().max(max).nullable().optional(),
+  );
 export const updateAddressSchema = z
-  .object(
-    Object.fromEntries(
-      Object.entries(addressFields).map(([k, v]) => [
-        k,
-        (v as z.ZodType).optional(),
-      ]),
-    ) as {
-      [K in keyof typeof addressFields]: z.ZodOptional<
-        (typeof addressFields)[K]
-      >;
-    },
-  )
+  .object({
+    label: clearableText(40),
+    fullName: addressFields.fullName.optional(),
+    phone: addressFields.phone.optional(),
+    line1: addressFields.line1.optional(),
+    line2: clearableText(200),
+    landmark: clearableText(120),
+    city: addressFields.city.optional(),
+    state: addressFields.state.optional(),
+    postalCode: addressFields.postalCode.optional(),
+    isDefault: addressFields.isDefault,
+  })
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 export type CreateAddressDto = z.infer<typeof createAddressSchema>;

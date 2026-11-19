@@ -617,6 +617,7 @@ export class AdminRefundsController {
           createdAt: true,
           processedAt: true,
           failureReason: true,
+          order: { select: { orderNumber: true } },
         },
       }),
       this.prisma.refund.count({ where }),

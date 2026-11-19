@@ -90,7 +90,7 @@ export const envSchema = z
     HIBP_ENABLED: bool,
     /** `console` prints links/codes to stdout for local development ONLY. */
     /** Base URL of the storefront; used to build verification / reset links. */
-    FRONTEND_BASE_URL: z.url().default('http://localhost:5173'),
+    FRONTEND_BASE_URL: z.url().default('http://localhost:3001'),
     NOTIFICATIONS_DRIVER: z.enum(['console', 'ses_msg91']).default('console'),
     /** `ses_msg91`: email through Amazon SES (IAM role / default AWS credential chain), OTP SMS through MSG91. */
     AWS_REGION: z.string().min(5).max(30).default('ap-south-1'),

@@ -320,6 +320,18 @@ describe('admin refunds: four-eyes approval', () => {
     expect((await payOf(order.id)).refundedMinor).toBe(0);
     expect((await shop.dbOrder(order.id)).status).toBe('PAID'); // reverted: nothing was refunded
     expect((await approve(finance, rejected.body.data.id)).status).toBe(409);
+    // the staff list shows the order number, so nobody has to match raw ids
+    const listed = await ctx
+      .http()
+      .get('/api/v1/admin/refunds')
+      .set(authed(finance))
+      .expect(200);
+    expect(listed.body.data).toContainEqual(
+      expect.objectContaining({
+        id: rejected.body.data.id,
+        order: { orderNumber: (await shop.dbOrder(order.id)).orderNumber },
+      }),
+    );
 
     const ok = await requestRefund(support, {
       orderId: order.id,

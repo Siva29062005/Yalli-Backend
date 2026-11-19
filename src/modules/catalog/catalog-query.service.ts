@@ -21,6 +21,8 @@ interface ListingRow {
   on_sale: boolean;
   available: number;
   image_key: string | null;
+  rating_avg: number | null;
+  rating_count: number;
   total: number;
 }
 
@@ -124,11 +126,16 @@ export class CatalogQueryService {
       SELECT p.id, p.slug, p.name, p.summary, b.name AS brand_name, b.slug AS brand_slug,
              v.min_price, v.compare_at, v.on_sale, COALESCE(a.available, 0)::int AS available,
              (SELECT pi.storage_key FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.position, pi.created_at LIMIT 1) AS image_key,
+             r.rating_avg, COALESCE(r.rating_count, 0)::int AS rating_count,
              COUNT(*) OVER ()::int AS total
       FROM products p
       JOIN v ON v.product_id = p.id
       LEFT JOIN a ON a.product_id = p.id
       LEFT JOIN brands b ON b.id = p.brand_id
+      LEFT JOIN LATERAL (
+        SELECT ROUND(AVG(pr.rating)::numeric, 1)::float8 AS rating_avg, COUNT(*)::int AS rating_count
+        FROM product_reviews pr WHERE pr.product_id = p.id AND pr.status = 'APPROVED'
+      ) r ON true
       WHERE ${Prisma.join(where, ' AND ')}
       ORDER BY ${orderBy}
       LIMIT ${q.pageSize} OFFSET ${(q.page - 1) * q.pageSize}`;
@@ -150,6 +157,10 @@ export class CatalogQueryService {
         },
         inStock: r.available > 0,
         imageUrl: this.imageUrl(r.image_key),
+        rating: {
+          average: r.rating_count ? r.rating_avg : null,
+          count: r.rating_count,
+        },
       })),
       total,
       q,
