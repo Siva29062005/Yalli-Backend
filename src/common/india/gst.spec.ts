@@ -23,10 +23,16 @@ describe('GSTIN check', () => {
     expect(checkGstin('27AAPFU0939F1Z')).toMatchObject({ ok: false });
     expect(checkGstin('27AAPFU0939F1YV')).toMatchObject({ ok: false }); // 14th character must be Z
     expect(checkGstin('2AAAPFU0939F1ZV')).toMatchObject({ ok: false });
-    const bad = '25AAPFU0939F1Z';
+    const bad = '99AAPFU0939F1Z';
     expect(checkGstin(bad + gstinCheckChar(bad))).toMatchObject({
       ok: false,
-      reason: expect.stringMatching(/state code 25/),
+      reason: expect.stringMatching(/state code 99/),
+    });
+    // the old Daman and Diu code (merged into 26 in 2020) is still valid on older registrations
+    const legacy = '25AAPFU0939F1Z';
+    expect(checkGstin(legacy + gstinCheckChar(legacy))).toMatchObject({
+      ok: true,
+      state: 'Dadra and Nagar Haveli and Daman and Diu',
     });
   });
 });

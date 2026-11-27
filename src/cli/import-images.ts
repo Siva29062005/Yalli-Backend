@@ -8,12 +8,18 @@ import { PrismaService } from '../infrastructure/database/prisma.service.js';
 import { AuthorizationService } from '../modules/access/authorization.service.js';
 import { Permission } from '../modules/access/permissions.js';
 import { CatalogAdminService } from '../modules/catalog/catalog-admin.service.js';
-import { resolveInside } from '../modules/catalog/import/image-paths.js';
+import {
+  readNoFollow,
+  resolveInside,
+} from '../modules/catalog/import/image-paths.js';
+import { detectImageType } from '../modules/catalog/media/image-validation.js';
 
 /**
  * Uploads product images from a LOCAL copy of OpenCart's image folder (no URL is ever fetched: no SSRF), through the
  * same validated path as the console upload (content sniffing, size limit, server-generated names, audit record).
- * Idempotent: a product that already has images is skipped, so a re-run continues where it stopped.
+ * Re-runnable: a product that already has all its images is skipped; one that was only partly uploaded is reported (finish
+ * it in the console: uploading the list again would duplicate images). A product whose slug matches but whose SKUs do not
+ * (made by hand before the migration) is never touched.
  */
 const USAGE = `Usage: node dist/cli/import-images.js --manifest <images.json> --dir <opencart image folder> [--apply --as <staff-email>]
 
@@ -27,6 +33,8 @@ const manifestSchema = z
     z
       .object({
         productSlug: z.string().min(1).max(160),
+        /** The product's SKUs (from convert:opencart): a product with this slug but none of them is someone else's. */
+        skus: z.array(z.string().min(1).max(64)).max(50).optional(),
         images: z
           .array(
             z
@@ -115,7 +123,11 @@ async function main(): Promise<number> {
     for (const entry of parsed.data) {
       const product = await prisma.product.findFirst({
         where: { slug: entry.productSlug, deletedAt: null },
-        select: { id: true, _count: { select: { images: true } } },
+        select: {
+          id: true,
+          _count: { select: { images: true } },
+          variants: { select: { sku: true } },
+        },
       });
       if (!product) {
         report.missingProducts += 1;
@@ -124,9 +136,27 @@ async function main(): Promise<number> {
         );
         continue;
       }
+      // a product made by hand before the migration can have the same slug: never put OpenCart images on it
+      const own = new Set(product.variants.map((v) => v.sku.toUpperCase()));
+      if (
+        entry.skus?.length &&
+        !entry.skus.some((sku) => own.has(sku.toUpperCase()))
+      ) {
+        report.problems.push(
+          `${entry.productSlug}: this product has none of the SKUs ${entry.skus.join(', ')}: it is a different product, skipped`,
+        );
+        continue;
+      }
       report.products += 1;
+      if (product._count.images >= entry.images.length) {
+        report.skippedWithImages += 1; // done (an earlier run, or images added in the console)
+        continue;
+      }
       if (product._count.images > 0) {
-        report.skippedWithImages += 1;
+        // stopped half-way earlier: uploading the list again would duplicate the first images
+        report.problems.push(
+          `${entry.productSlug}: has ${product._count.images} of ${entry.images.length} images: add the rest in the console (Products → Images)`,
+        );
         continue;
       }
       for (const img of entry.images) {
@@ -137,8 +167,23 @@ async function main(): Promise<number> {
           );
           continue;
         }
+        let buffer: Buffer;
+        try {
+          buffer = readNoFollow(found.file);
+        } catch {
+          report.problems.push(
+            `${entry.productSlug}: ${img.path}: could not be read`,
+          );
+          continue;
+        }
+        // the same content check as the upload, in the dry run too
+        if (!detectImageType(buffer)) {
+          report.problems.push(
+            `${entry.productSlug}: ${img.path}: not a JPEG, PNG or WebP image`,
+          );
+          continue;
+        }
         if (!apply) continue;
-        const buffer = readFileSync(found.file);
         try {
           await catalog.uploadImage(
             actor!,

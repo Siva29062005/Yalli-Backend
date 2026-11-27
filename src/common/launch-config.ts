@@ -15,6 +15,15 @@ export interface LaunchCheck {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INDIAN_PHONE = /^\+91[ -]?[6-9]\d{4}[ -]?\d{5}$/;
 const v = (env: Env, key: string) => env[key]?.trim() || undefined;
+const sameState = (a: string, b: string) =>
+  a.trim().toLowerCase() === b.trim().toLowerCase();
+const originOf = (url: string): string | null => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+};
 
 export function checkLaunchConfig(backend: Env, frontend: Env): LaunchCheck {
   const errors: string[] = [];
@@ -102,14 +111,14 @@ export function checkLaunchConfig(backend: Env, frontend: Env): LaunchCheck {
     frontend: f('SELLER_STATE'),
     backend: v(backend, 'SELLER_STATE') ?? 'Tamil Nadu',
   };
-  if (states.frontend && states.frontend !== states.backend)
+  if (states.frontend && !sameState(states.frontend, states.backend))
     errors.push(
-      `the seller state differs: pages say ${states.frontend}, invoices use ${states.backend}`,
+      'the seller state on the pages (NEXT_PUBLIC_BUSINESS_SELLER_STATE) differs from the one on invoices (SELLER_STATE)',
     );
   const g = gstins.backend ? checkGstin(gstins.backend) : null;
-  if (g?.ok && g.state && g.state !== states.backend)
+  if (g?.ok && g.state && !sameState(g.state, states.backend))
     errors.push(
-      `SELLER_GSTIN is registered in ${g.state} but SELLER_STATE is ${states.backend}`,
+      'SELLER_GSTIN is registered in another state than SELLER_STATE (its first two digits are the state code)',
     );
 
   // the legal name on invoices and pages
@@ -132,18 +141,26 @@ export function checkLaunchConfig(backend: Env, frontend: Env): LaunchCheck {
     errors.push(
       'backend: FRONTEND_BASE_URL is not the public storefront address (emailed links would be broken)',
     );
-  else if (origin && new URL(base).origin !== origin)
+  else if (!originOf(base))
+    errors.push('backend: FRONTEND_BASE_URL is not a URL');
+  else if (origin && originOf(base) !== origin)
     errors.push(
-      `backend: FRONTEND_BASE_URL (${base}) is not the website address (${origin})`,
+      'backend: FRONTEND_BASE_URL is not the website address (NEXT_PUBLIC_BUSINESS_WEBSITE_URL)',
     );
   if (!v(backend, 'SUPPORT_INBOX_EMAIL'))
     warnings.push(
       'backend: SUPPORT_INBOX_EMAIL is not set (contact-form messages are only in the console)',
     );
-  if (
-    !v(backend, 'FRONTEND_SERVER_KEY') ||
-    v(backend, 'FRONTEND_SERVER_KEY') !== v(frontend, 'FRONTEND_SERVER_KEY')
-  )
+  const keys = {
+    backend: v(backend, 'FRONTEND_SERVER_KEY'),
+    frontend: v(frontend, 'FRONTEND_SERVER_KEY'),
+  };
+  if (!keys.backend) errors.push('backend: FRONTEND_SERVER_KEY is not set');
+  else if (!keys.frontend)
+    warnings.push(
+      "frontend: FRONTEND_SERVER_KEY is not in this file: if it is set in the hosting environment, make sure it is the same value as the backend's",
+    );
+  else if (keys.backend !== keys.frontend)
     errors.push(
       'FRONTEND_SERVER_KEY must be set to the same value in both apps',
     );
@@ -158,7 +175,10 @@ export function parseEnvFile(text: string): Env {
       line,
     );
     if (!m || line.trim().startsWith('#')) continue;
-    env[m[1]!] = m[2]!.replace(/^(['"])(.*)\1$/, '$2');
+    const raw = m[2]!.trim();
+    const quoted = /^(['"])(.*?)\1\s*(?:#.*)?$/.exec(raw);
+    // a quoted value keeps everything inside the quotes; an unquoted one ends at " #" (an inline comment)
+    env[m[1]!] = quoted ? quoted[2]! : raw.replace(/\s+#.*$/, '');
   }
   return env;
 }

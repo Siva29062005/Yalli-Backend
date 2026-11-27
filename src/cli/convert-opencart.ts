@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { toCsv } from '../common/utils/csv.js';
 import { parseImportFile } from '../modules/catalog/import/import-file.js';
@@ -15,6 +21,10 @@ import {
  */
 const USAGE = `Usage: node dist/cli/convert-opencart.js --in <export.json> --out <folder> [--tax <tax-sheet.csv>]
                                                 [--language-id 1] [--customer-group-id 1] [--store-id 0] [--prefix oc_]
+                                                [--prices-include-gst]
+
+  --prices-include-gst  confirm that OpenCart prices already include GST even for products with a tax class
+                        (OpenCart normally stores those WITHOUT tax; without this flag such products stop the conversion)
 
 Writes into <folder>:
   catalog.json      the import file (check it with: npm run import:catalog -- --file <folder>/catalog.json)
@@ -70,10 +80,28 @@ function main(): number {
     languageId: arg('language-id') ?? '1',
     customerGroupId: arg('customer-group-id') ?? '1',
     storeId: arg('store-id') ?? '0',
+    pricesIncludeGst: process.argv.includes('--prices-include-gst'),
     ...(tax ? { tax } : {}),
   });
 
   mkdirSync(out, { recursive: true });
+  if (r.blocking.length) {
+    // never leave an older catalog.json next to a failed conversion (it could be imported by mistake)
+    rmSync(join(out, 'catalog.json'), { force: true });
+    writeFileSync(
+      join(out, 'warnings.txt'),
+      `${[...r.blocking, ...r.warnings].join('\n')}\n`,
+    );
+    process.stderr.write(
+      `Not converted: ${r.blocking.length} problem(s) must be fixed first (no catalog.json written):\n${r.blocking
+        .slice(0, 20)
+        .map((b) => `  - ${b}`)
+        .join(
+          '\n',
+        )}${r.blocking.length > 20 ? '\n  … see warnings.txt' : ''}\n`,
+    );
+    return 1;
+  }
   writeFileSync(
     join(out, 'catalog.json'),
     `${JSON.stringify(r.file, null, 2)}\n`,

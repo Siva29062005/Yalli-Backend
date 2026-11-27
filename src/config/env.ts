@@ -171,7 +171,10 @@ export const envSchema = z
           path: ['SELLER_GSTIN'],
           message: g.reason,
         });
-      else if (g.state && g.state !== env.SELLER_STATE.trim())
+      else if (
+        g.state &&
+        g.state.toLowerCase() !== env.SELLER_STATE.trim().toLowerCase()
+      )
         ctx.addIssue({
           code: 'custom',
           path: ['SELLER_GSTIN'],

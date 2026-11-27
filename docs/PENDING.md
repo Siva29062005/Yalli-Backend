@@ -372,6 +372,13 @@ Catalogue and content
       `tax-review.csv`, import on staging, review the drafts, publish. OpenCart options become variants by hand.
 - [ ] **Owner:** business details (`NEXT_PUBLIC_BUSINESS_*`, `SELLER_*`), home banner image, and the sign-offs in
       `docs/policies/store-policies-and-tax.md` section 5; then `npm run check:launch` must report no errors.
+- [x] (2026-11-27) Review of the Phase 12 commit: fixed GST-exclusive OpenCart prices (tax class blocks the conversion
+      unless `--prices-include-gst`), sale dates carried into the import (`saleStartsAt`/`saleEndsAt`, end at the start
+      of the OpenCart end date), slugs and SKUs always valid, OpenCart 4 subcategory keywords and `20_27` redirect ids,
+      store filter, ₹1 crore and file-size limits, HSN without rate refused, image dry run checks content, partly
+      uploaded and foreign products reported, link swap refused, launch check (no crash, no values, case, runtime key),
+      state names compared without case, legacy GSTIN state 25, home hero contain / no duplicates / safe banner path,
+      runbook corrected.
 - [ ] Decorative Unsplash photos remain on the empty-cart and sign-in pages (a third-party request): replace them with
       owner images or remove them.
 - [x] Sitemap and SEO (2026-11-20): `robots.txt`, a dynamic `sitemap.xml` (static pages, categories, every published product; survives an API outage), canonical links, Open Graph defaults, Product structured data (INR price from the server, stock, rating only when reviews exist), WebSite search data, `noindex` for search/filter/paged listings, and `X-Robots-Tag: noindex` on account, cart, checkout, auth, order, compare and admin pages.

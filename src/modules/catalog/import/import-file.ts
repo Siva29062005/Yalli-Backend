@@ -35,6 +35,9 @@ const variantSchema = z
     name: text(120).optional(),
     priceMinor: paise,
     salePriceMinor: paise.optional(),
+    /** When the sale price applies (ISO time with offset); without them it applies until changed. */
+    saleStartsAt: z.iso.datetime({ offset: true }).optional(),
+    saleEndsAt: z.iso.datetime({ offset: true }).optional(),
     stock: z.number().int().min(0).max(1_000_000),
     weightGrams: z.number().int().min(0).max(1_000_000).optional(),
   })
@@ -45,6 +48,19 @@ const variantSchema = z
       message: 'salePriceMinor must be lower than priceMinor',
       path: ['salePriceMinor'],
     },
+  )
+  .refine(
+    (v) =>
+      (v.saleStartsAt === undefined && v.saleEndsAt === undefined) ||
+      v.salePriceMinor !== undefined,
+    { message: 'sale dates need a salePriceMinor', path: ['saleStartsAt'] },
+  )
+  .refine(
+    (v) =>
+      !v.saleStartsAt ||
+      !v.saleEndsAt ||
+      new Date(v.saleEndsAt) > new Date(v.saleStartsAt),
+    { message: 'saleEndsAt must be after saleStartsAt', path: ['saleEndsAt'] },
   );
 
 const productSchema = z

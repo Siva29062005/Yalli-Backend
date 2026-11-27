@@ -468,6 +468,25 @@ describe('console import (POST /admin/catalog/import)', () => {
     });
   });
 
+  it('sale dates in the file are stored with the sale price (a time-limited special stays time-limited)', async () => {
+    const file = makeFile();
+    const v = file.products[0]!.variants[0]! as Record<string, unknown>;
+    v['saleStartsAt'] = '2026-11-01T00:00:00+05:30';
+    v['saleEndsAt'] = '2026-12-05T00:00:00+05:30';
+    const report = await run(file, { apply: true });
+    expect(report.products.failed).toBe(0);
+    const stored = await ctx.prisma.productVariant.findFirstOrThrow({
+      where: { sku: v['sku'] as string },
+    });
+    expect(stored.saleEndsAt?.toISOString()).toBe('2026-12-04T18:30:00.000Z');
+    expect(stored.saleStartsAt?.toISOString()).toBe('2026-10-31T18:30:00.000Z');
+    // dates without a sale price, or an end before the start, make the file invalid
+    const bad = makeFile();
+    const b = bad.products[1]!.variants[0]! as Record<string, unknown>;
+    b['saleEndsAt'] = '2026-12-05T00:00:00+05:30';
+    expect(parseImportFile(bad).ok).toBe(false);
+  });
+
   it('confirming the same dry run twice runs the import once', async () => {
     const admin = await s.staff('ADMIN');
     const file = makeFile();

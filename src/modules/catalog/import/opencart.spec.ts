@@ -389,3 +389,283 @@ describe('helpers', () => {
     ]);
   });
 });
+
+describe('OpenCart conversion: review fixes', () => {
+  const base = (over: Record<string, unknown[]> = {}) => {
+    const t: Record<string, unknown[]> = {
+      oc_category: [
+        { category_id: '20', parent_id: '0', status: '1' },
+        { category_id: '27', parent_id: '20', status: '1' },
+      ],
+      oc_category_description: [
+        { category_id: '20', language_id: '1', name: 'Kitchen' },
+        { category_id: '27', language_id: '1', name: 'Storage' },
+      ],
+      oc_product: [
+        {
+          product_id: '1',
+          model: 'A1',
+          sku: '',
+          price: '500.0000',
+          quantity: '1',
+          status: '1',
+          image: null,
+          manufacturer_id: '0',
+          tax_class_id: '0',
+        },
+      ],
+      oc_product_description: [
+        {
+          product_id: '1',
+          language_id: '1',
+          name: 'Bowl',
+          description: '',
+          tag: '',
+          meta_description: '',
+        },
+      ],
+      oc_product_to_category: [{ product_id: '1', category_id: '27' }],
+      ...over,
+    };
+    return readPhpMyAdminJson(
+      Object.entries(t).map(([name, data]) => ({ type: 'table', name, data })),
+    );
+  };
+  const today = '2026-11-27';
+
+  it('keeps the sale window: ends at the start of its end date (as OpenCart), an upcoming sale starts later', () => {
+    const special = (
+      date_start: string,
+      date_end: string,
+      price = '400.0000',
+    ) => ({
+      product_id: '1',
+      customer_group_id: '1',
+      priority: '1',
+      price,
+      date_start,
+      date_end,
+    });
+    const variant = (rows: unknown[]) =>
+      (
+        convertOpenCart(base({ oc_product_special: rows }), { today }).file
+          .products[0] as { variants: Record<string, unknown>[] }
+      ).variants[0]!;
+    expect(variant([special('2026-11-01', '2026-12-05')])).toMatchObject({
+      salePriceMinor: 40_000,
+      saleStartsAt: '2026-11-01T00:00:00+05:30',
+      saleEndsAt: '2026-12-05T00:00:00+05:30',
+    });
+    expect(variant([special('0000-00-00', '2026-11-27')])).not.toHaveProperty(
+      'salePriceMinor',
+    ); // over today
+    expect(
+      variant([special('2026-12-10', '2026-12-20', '450.0000')]),
+    ).toMatchObject({
+      salePriceMinor: 45_000,
+      saleStartsAt: '2026-12-10T00:00:00+05:30',
+    });
+    const r = convertOpenCart(
+      base({ oc_product_special: [special('2026-11-01', '2026-12-05')] }),
+      { today },
+    );
+    const parsed = parseImportFile(r.file);
+    expect(parsed.ok).toBe(true);
+  });
+
+  it('a product with an OpenCart tax class blocks the conversion unless prices are confirmed to include GST', () => {
+    const taxed = base({
+      oc_product: [
+        {
+          product_id: '1',
+          model: 'A1',
+          sku: '',
+          price: '500.0000',
+          quantity: '1',
+          status: '1',
+          image: null,
+          manufacturer_id: '0',
+          tax_class_id: '9',
+        },
+      ],
+    });
+    expect(convertOpenCart(taxed, { today }).blocking.join('\n')).toMatch(
+      /tax class.*WITHOUT tax/,
+    );
+    expect(
+      convertOpenCart(taxed, { today, pricesIncludeGst: true }).blocking,
+    ).toEqual([]);
+  });
+
+  it('OpenCart 4 subcategory keywords (key "path", value "20_27") give the slug and the redirect', () => {
+    const r = convertOpenCart(
+      base({
+        oc_seo_url: [
+          {
+            store_id: '0',
+            language_id: '1',
+            key: 'path',
+            value: '20',
+            keyword: 'kitchen',
+          },
+          {
+            store_id: '0',
+            language_id: '1',
+            key: 'path',
+            value: '20_27',
+            keyword: 'kitchen/storage-boxes',
+          },
+        ],
+      }),
+      { today },
+    );
+    expect(r.file.categories.find((c) => c.key === 'oc-c27')?.slug).toBe(
+      'storage-boxes',
+    );
+    expect(r.redirects).toContainEqual({
+      kind: 'category',
+      id: '20_27',
+      keyword: 'kitchen/storage-boxes',
+      to: '/catalog/storage-boxes',
+    });
+  });
+
+  it('long names and long ids still give valid slugs and SKUs; huge prices are left out with a warning', () => {
+    const r = convertOpenCart(
+      base({
+        oc_product: [
+          {
+            product_id: '1',
+            model: 'X',
+            sku: '',
+            price: '10.00',
+            quantity: '1',
+            status: '1',
+            image: null,
+            manufacturer_id: '0',
+          },
+          {
+            product_id: '1234567891',
+            model: 'X',
+            sku: '',
+            price: '10.00',
+            quantity: '1',
+            status: '1',
+            image: null,
+            manufacturer_id: '0',
+          },
+          {
+            product_id: '3',
+            model: 'Y',
+            sku: '',
+            price: '20000000.0000',
+            quantity: '1',
+            status: '1',
+            image: null,
+            manufacturer_id: '0',
+          },
+        ],
+        oc_product_description: [
+          {
+            product_id: '1',
+            language_id: '1',
+            name: 'a'.repeat(109) + ' bbbbbbbbbb',
+            description: '',
+            tag: '',
+            meta_description: '',
+          },
+          {
+            product_id: '1234567891',
+            language_id: '1',
+            name: 'a'.repeat(109) + ' bbbbbbbbbb',
+            description: '',
+            tag: '',
+            meta_description: '',
+          },
+          {
+            product_id: '3',
+            language_id: '1',
+            name: 'Gold',
+            description: '',
+            tag: '',
+            meta_description: '',
+          },
+        ],
+        oc_product_to_category: [
+          { product_id: '1', category_id: '27' },
+          { product_id: '1234567891', category_id: '27' },
+          { product_id: '3', category_id: '27' },
+        ],
+      }),
+      { today },
+    );
+    const parsed = parseImportFile(r.file);
+    expect(parsed.ok ? [] : parsed.issues).toEqual([]);
+    expect(r.file.products).toHaveLength(2);
+    expect(r.warnings.join('\n')).toMatch(/above ₹1 crore/);
+  });
+
+  it('a multi-store export keeps only the chosen store; null rows are ignored', () => {
+    const r = convertOpenCart(
+      base({
+        oc_product: [
+          {
+            product_id: '1',
+            model: 'A1',
+            sku: '',
+            price: '500.0000',
+            quantity: '1',
+            status: '1',
+            image: null,
+            manufacturer_id: '0',
+          },
+          {
+            product_id: '2',
+            model: 'B1',
+            sku: '',
+            price: '500.0000',
+            quantity: '1',
+            status: '1',
+            image: null,
+            manufacturer_id: '0',
+          },
+          null,
+        ],
+        oc_product_description: [
+          {
+            product_id: '1',
+            language_id: '1',
+            name: 'Bowl',
+            description: '',
+            tag: '',
+            meta_description: '',
+          },
+          {
+            product_id: '2',
+            language_id: '1',
+            name: 'Other store',
+            description: '',
+            tag: '',
+            meta_description: '',
+          },
+        ],
+        oc_product_to_category: [
+          { product_id: '1', category_id: '27' },
+          { product_id: '2', category_id: '27' },
+        ],
+        oc_product_to_store: [
+          { product_id: '1', store_id: '0' },
+          { product_id: '2', store_id: '1' },
+        ],
+      }),
+      { today },
+    );
+    expect(r.file.products.map((p) => p['name'])).toEqual(['Bowl']);
+  });
+
+  it('an HSN code without a GST rate is a problem (it would otherwise be lost)', () => {
+    expect(
+      parseTaxSheet('sku,gst_rate_percent,hsn_code\nA1,,7323\n').problems,
+    ).toEqual(['line 2: A1: HSN code given without a GST rate']);
+  });
+});

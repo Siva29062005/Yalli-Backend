@@ -51,7 +51,7 @@ describe('launch configuration check', () => {
     expect(all).toMatch(/NEXT_PUBLIC_BUSINESS_ADDRESS is not set/);
     expect(all).toMatch(/backend: the GSTIN the check character is wrong/);
     expect(all).toMatch(/differs from the one on invoices \(SELLER_GSTIN\)/);
-    expect(all).toMatch(/seller state differs: pages say Kerala/);
+    expect(all).toMatch(/seller state on the pages .* differs/);
     expect(all).toMatch(/must use https/);
     expect(all).toMatch(/bare site address/);
     expect(all).toMatch(
@@ -73,7 +73,7 @@ describe('launch configuration check', () => {
       },
     );
     expect(r.errors.join('\n')).toMatch(
-      /registered in Karnataka but SELLER_STATE is Tamil Nadu/,
+      /registered in another state than SELLER_STATE/,
     );
     expect(r.warnings.join('\n')).toMatch(/SELLER_LEGAL_NAME is the default/);
   });
@@ -81,5 +81,33 @@ describe('launch configuration check', () => {
     expect(
       parseEnvFile('# c\nA=1\nexport B="two words"\n  C = \'x\'\nbad line\n'),
     ).toEqual({ A: '1', B: 'two words', C: 'x' });
+  });
+  it('never crashes on a broken URL, ignores state case, and accepts a runtime-only server key (with a warning)', () => {
+    const r = checkLaunchConfig(
+      { ...backend, FRONTEND_BASE_URL: 'yalli.in', SELLER_STATE: 'tamil nadu' },
+      { ...frontend, FRONTEND_SERVER_KEY: undefined },
+    );
+    expect(r.errors).toEqual(['backend: FRONTEND_BASE_URL is not a URL']);
+    expect(r.warnings.join('\n')).toMatch(
+      /FRONTEND_SERVER_KEY is not in this file/,
+    );
+  });
+  it('prints no setting values', () => {
+    const r = checkLaunchConfig(
+      {
+        ...backend,
+        FRONTEND_BASE_URL: 'https://wrong.example.test',
+        SELLER_STATE: 'Kerala',
+      },
+      frontend,
+    );
+    const out = [...r.errors, ...r.warnings].join('\n');
+    for (const value of [
+      'wrong.example.test',
+      'Kerala',
+      '33ABCDE1234F1Z7',
+      'shop.example.test',
+    ])
+      expect(out).not.toContain(value);
   });
 });

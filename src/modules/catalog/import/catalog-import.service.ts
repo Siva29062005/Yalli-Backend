@@ -288,6 +288,8 @@ export class CatalogImportService {
             name: v.name ?? null,
             priceMinor: v.priceMinor,
             salePriceMinor: v.salePriceMinor ?? null,
+            saleStartsAt: v.saleStartsAt ? new Date(v.saleStartsAt) : null,
+            saleEndsAt: v.saleEndsAt ? new Date(v.saleEndsAt) : null,
             weightGrams: v.weightGrams ?? null,
           },
         });
@@ -321,6 +323,8 @@ export class CatalogImportService {
             name: v.name ?? null,
             priceMinor: v.priceMinor,
             salePriceMinor: v.salePriceMinor ?? null,
+            saleStartsAt: v.saleStartsAt ? new Date(v.saleStartsAt) : null,
+            saleEndsAt: v.saleEndsAt ? new Date(v.saleEndsAt) : null,
             weightGrams: v.weightGrams ?? null,
             position: oldVariants.length + i,
           },

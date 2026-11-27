@@ -55,6 +55,14 @@ describe('validateEnv', () => {
         SELLER_STATE: 'Tamil Nadu',
       }),
     ).toThrow(/registered in Karnataka/);
+    // the state name is compared without regard to case
+    expect(
+      validateEnv({
+        ...base,
+        SELLER_GSTIN: '33ABCDE1234F1Z7',
+        SELLER_STATE: 'tamil nadu',
+      }).SELLER_GSTIN,
+    ).toBe('33ABCDE1234F1Z7');
     expect(() => validateEnv({ ...base, PAYMENT_WINDOW_MINUTES: '1' })).toThrow(
       /PAYMENT_WINDOW_MINUTES/,
     );

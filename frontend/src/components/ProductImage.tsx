@@ -7,12 +7,16 @@ export function ProductImage({
   alt,
   sizes,
   priority,
+  fit = 'cover',
   className = '',
 }: {
   src: string | null | undefined;
   alt: string;
   sizes: string;
+  /** Preload it (the main image of a page). Passed to next/image as `preload` (`priority` is deprecated in Next 16). */
   priority?: boolean;
+  /** cover fills the box (cards); contain shows the whole photo (hero). */
+  fit?: 'cover' | 'contain';
   className?: string;
 }) {
   if (!src) {
@@ -33,10 +37,10 @@ export function ProductImage({
       alt={alt}
       fill
       sizes={sizes}
-      priority={priority}
+      preload={priority}
       // Media is served from the configured CDN/bucket; skip the optimiser so new hosts don't need config changes.
       unoptimized={!src.startsWith('https://images.unsplash.com')}
-      className={`object-cover ${className}`}
+      className={`${fit === 'contain' ? 'object-contain' : 'object-cover'} ${className}`}
     />
   );
 }

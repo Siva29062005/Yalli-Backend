@@ -28,8 +28,11 @@ export default async function HomePage() {
     .then((p) => ({ items: p.items, total: p.meta.total }))
     .catch(() => ({ items: [], total: 0 }));
   const onSale = sale.total;
-  // The banner the owner supplied, else a real product photo (never a stock photo), else none.
-  const heroProduct = [...sale.items, ...bestsellers].find((p) => p.imageUrl);
+  // The banner the owner supplied, else a real product photo (never a stock photo), else none. A product shown in the
+  // hero is not repeated in the rows below it.
+  const heroProduct = HOME_HERO.image ? undefined : [...bestsellers, ...sale.items].find((p) => p.imageUrl);
+  const newest = bestsellers.filter((p) => p.id !== heroProduct?.id);
+  const saleRow = sale.items.filter((p) => p.id !== heroProduct?.id && !newest.some((n) => n.id === p.id));
 
   return (
     <>
@@ -77,11 +80,11 @@ export default async function HomePage() {
             {/* Right Column: the owner's banner (public/), else a real product photo linking to it */}
             {HOME_HERO.image ? (
               <div className="lg:col-span-6 relative aspect-[16/10] rounded-2xl overflow-hidden shadow-sm">
-                <Image src={HOME_HERO.image} alt={HOME_HERO.alt} fill priority sizes="(max-width: 1024px) 100vw, 50vw" className="object-cover" />
+                <Image src={HOME_HERO.image} alt={HOME_HERO.alt} fill preload sizes="(max-width: 1024px) 100vw, 50vw" className="object-cover" />
               </div>
             ) : heroProduct ? (
               <Link href={`/products/${heroProduct.slug}`} className="lg:col-span-6 relative block aspect-[16/10] rounded-2xl overflow-hidden shadow-sm bg-white">
-                <ProductImage src={heroProduct.imageUrl} alt={heroProduct.name} priority sizes="(max-width: 1024px) 100vw, 50vw" className="object-contain" />
+                <ProductImage src={heroProduct.imageUrl} alt={heroProduct.name} priority fit="contain" sizes="(max-width: 1024px) 100vw, 50vw" />
               </Link>
             ) : null}
           </div>
@@ -107,21 +110,21 @@ export default async function HomePage() {
             </Link>
           </div>
 
-          {bestsellers.length > 0 ? (
+          {newest.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {bestsellers.map((product) => (
+              {newest.map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}
             </div>
-          ) : (
+          ) : bestsellers.length === 0 ? (
             <p className="rounded-2xl border border-[#E6EAE7] bg-white p-8 text-center text-[14px] text-[#5F6B64]">
               New arrivals are on their way. <Link href="/catalog" className="font-semibold text-[#116644] hover:underline">Browse the shop</Link>
             </p>
-          )}
+          ) : null}
         </section>
 
         {/* 2b. What is on sale right now (only while something is) */}
-        {sale.items.length > 0 && (
+        {saleRow.length > 0 && (
           <section className="space-y-6" aria-labelledby="sale-h">
             <div className="flex items-end justify-between">
               <div>
@@ -134,7 +137,7 @@ export default async function HomePage() {
               </Link>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {sale.items.map((product) => (
+              {saleRow.map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}
             </div>
@@ -156,7 +159,7 @@ export default async function HomePage() {
                     {onSale === 1 ? "1 product at a special price" : `${onSale} products at special prices`}
                   </h3>
                 </div>
-                <Link href="/catalog?sale=true" className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1">
+                <Link href="/specials" className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1">
                   <span>See the offers</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </Link>

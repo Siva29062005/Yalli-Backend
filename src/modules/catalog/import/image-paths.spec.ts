@@ -7,7 +7,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveInside } from './image-paths.js';
+import { readNoFollow, resolveInside } from './image-paths.js';
 
 describe('image paths from the manifest stay inside the image folder', () => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'yalli-img-')));
@@ -51,5 +51,11 @@ describe('image paths from the manifest stay inside the image folder', () => {
     expect(resolveInside(root, 'catalog/big.jpg')).toEqual({
       error: 'larger than 5 MB',
     });
+  });
+  it('reads without following a link swapped in after the check', () => {
+    expect(readNoFollow(join(root, 'catalog', 'momo.jpg')).toString()).toBe(
+      'x',
+    );
+    expect(() => readNoFollow(join(root, 'catalog', 'link.jpg'))).toThrow();
   });
 });

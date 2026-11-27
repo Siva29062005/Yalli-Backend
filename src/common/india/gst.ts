@@ -68,9 +68,10 @@ export function checkGstin(value: string): GstinCheck {
     };
   if (gstinCheckChar(g.slice(0, 14)) !== g[14])
     return { ok: false, reason: 'the check character is wrong (a typo?)' };
+  // 25 (Daman and Diu) was merged into 26 in 2020; registrations made before keep their GSTIN
+  const code = m[1] === '25' ? '26' : m[1];
   const state =
-    Object.entries(GST_STATE_CODES).find(([, code]) => code === m[1])?.[0] ??
-    null;
+    Object.entries(GST_STATE_CODES).find(([, c]) => c === code)?.[0] ?? null;
   if (!state && m[1] !== '97')
     return {
       ok: false,

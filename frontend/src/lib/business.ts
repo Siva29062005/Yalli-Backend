@@ -30,7 +30,11 @@ export const BUSINESS = {
  */
 const heroImage = clean(process.env.NEXT_PUBLIC_HOME_HERO_IMAGE);
 export const HOME_HERO = {
-  image: heroImage && /^\/[A-Za-z0-9/_.-]+\.(webp|jpe?g|png|avif)$/i.test(heroImage) && !heroImage.includes('..') ? heroImage : undefined,
+  // a file in public/ only: not protocol-relative ("//host"), not Next's or the API's paths, no ".."
+  image:
+    heroImage && /^\/(?!\/)(?!_next\/|api\/)[A-Za-z0-9/_.-]+\.(webp|jpe?g|png|avif)$/i.test(heroImage) && !heroImage.includes('..')
+      ? heroImage
+      : undefined,
   alt: clean(process.env.NEXT_PUBLIC_HOME_HERO_ALT) ?? '',
 } as const;
 

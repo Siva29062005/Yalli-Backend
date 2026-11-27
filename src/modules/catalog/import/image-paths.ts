@@ -1,4 +1,12 @@
-import { realpathSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { isAbsolute, join, sep } from 'node:path';
 import { MAX_IMAGE_BYTES } from '../media/image-validation.js';
 
@@ -28,4 +36,20 @@ export function resolveInside(
   if (!st.isFile()) return { error: 'not a file' };
   if (st.size > MAX_IMAGE_BYTES) return { error: 'larger than 5 MB' };
   return { file };
+}
+
+/**
+ * Reads a file found by `resolveInside` WITHOUT following a link at its last component, so a file swapped for a link
+ * after the check is refused instead of read; the size limit is checked again on the opened file.
+ */
+export function readNoFollow(file: string): Buffer {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > MAX_IMAGE_BYTES)
+      throw new Error('not a readable image file');
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }

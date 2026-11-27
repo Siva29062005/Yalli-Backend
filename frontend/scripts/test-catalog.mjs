@@ -107,9 +107,13 @@ if (process.argv[2] === '--mock-api') {
   await page.goto(`${base}/`, { waitUntil: 'load' });
   await page.getByRole('heading', { name: 'Special prices', exact: true }).waitFor();
   const saleRow = page.locator('section', { has: page.getByRole('heading', { name: 'Special prices', exact: true }) });
-  assert.equal(await saleRow.locator('article').count(), 5, 'five products on sale in the row');
+  assert.ok((await saleRow.locator('article').count()) > 0, 'products on sale in the row');
   const heroLink = page.locator('section').first().locator('a[href^="/products/"]');
   assert.equal(await heroLink.count(), 1, 'the hero links to the product it shows');
+  // the whole product photo is shown (contain), and no product appears twice on the page
+  assert.equal(await heroLink.locator('img').evaluate((img) => getComputedStyle(img).objectFit), 'contain');
+  const shown = [await heroLink.getAttribute('href'), ...(await page.locator('main article').evaluateAll((cards) => cards.map((c) => c.querySelector('a[href^="/products/"]')?.getAttribute('href'))))];
+  assert.equal(new Set(shown).size, shown.length, `a product is shown twice: ${shown}`);
 
   // Listing: server-side pagination, 24 per page.
   await page.setViewportSize({ width: 1440, height: 900 });

@@ -1,5 +1,5 @@
 import { slugify } from '../../../common/utils/slug.js';
-import { GST_SLABS_BPS, decodeEntities } from './import-file.js';
+import { GST_SLABS_BPS, IMPORT_LIMITS, decodeEntities } from './import-file.js';
 
 /**
  * OpenCart (3.x / 4.0.x) -> the catalogue import file (pure, unit-tested; it never touches a database or the network).
@@ -32,12 +32,14 @@ export function readPhpMyAdminJson(raw: unknown, prefix = 'oc_'): Tables {
     const name = o.name.startsWith(prefix)
       ? o.name.slice(prefix.length)
       : o.name;
-    tables[name] = o.data.map((r) => {
-      const row: Row = {};
-      for (const [k, v] of Object.entries(r as Record<string, unknown>))
-        row[k] = v === null || v === undefined ? null : String(v);
-      return row;
-    });
+    tables[name] = o.data
+      .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+      .map((r) => {
+        const row: Row = {};
+        for (const [k, v] of Object.entries(r as Record<string, unknown>))
+          row[k] = v === null || v === undefined ? null : String(v);
+        return row;
+      });
   }
   for (const required of [
     'product',
@@ -78,6 +80,12 @@ export interface ConvertOptions {
   today: string;
   /** GST rate and HSN per SKU (from the filled-in tax sheet). */
   tax?: ReadonlyMap<string, TaxEntry>;
+  /**
+   * OpenCart stores a price WITHOUT tax when the product has a tax class (and adds tax when showing it); this shop's
+   * prices include GST. Unless the owner confirms the OpenCart prices already include GST, such products block the
+   * conversion (they would go live without their GST).
+   */
+  pricesIncludeGst?: boolean;
 }
 
 export interface RedirectEntry {
@@ -103,11 +111,15 @@ export interface ConvertResult {
   };
   images: {
     productSlug: string;
+    /** The product's SKUs: import:images refuses a product with this slug that has none of them (a different product). */
+    skus: string[];
     images: { path: string; altText?: string }[];
   }[];
   redirects: RedirectEntry[];
   taxSheet: string[][];
   warnings: string[];
+  /** Problems that make the result unusable as it is: the CLI writes no catalog.json while there are any. */
+  blocking: string[];
 }
 
 export const TAX_SHEET_COLUMNS = [
@@ -123,6 +135,8 @@ const FALLBACK_CATEGORY = {
   slug: 'more-products',
 };
 const SKU_OK = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** The import file's largest amount (₹1 crore). */
+const MAX_PAISE = 1_000_000_000;
 const ZERO_DATE = /^0000-00-00/;
 
 const text = (v: string | null | undefined, max: number) =>
@@ -137,7 +151,8 @@ const text = (v: string | null | undefined, max: number) =>
 function uniquer(): (base: string) => string {
   const seen = new Set<string>();
   return (base) => {
-    const root = (base || 'item').slice(0, 110); // room for a -NN suffix within every slug limit
+    // room for a -NN suffix within every slug limit; never end on a hyphen after cutting
+    const root = (base || 'item').slice(0, 110).replace(/-+$/, '') || 'item';
     let slug = root;
     for (let n = 2; seen.has(slug); n++) slug = `${root}-${n}`;
     seen.add(slug);
@@ -148,6 +163,8 @@ function uniquer(): (base: string) => string {
 /** SEO keywords per (key, value): OpenCart 4 (`key`/`value` columns) and 3 (`query` = "product_id=42"). */
 function seoKeywords(tables: Tables, languageId: string, storeId: string) {
   const map = new Map<string, string>();
+  /** category id -> its full OpenCart path ("20_27"), as in old category URLs */
+  const paths = new Map<string, string>();
   for (const r of tables['seo_url'] ?? []) {
     if (
       (r['language_id'] ?? languageId) !== languageId ||
@@ -156,11 +173,23 @@ function seoKeywords(tables: Tables, languageId: string, storeId: string) {
       continue;
     const keyword = (r['keyword'] ?? '').trim();
     if (!keyword) continue;
-    if (r['key'] !== undefined && r['key'] !== null)
+    if (r['key'] !== undefined && r['key'] !== null) {
       map.set(`${r['key']}=${r['value']}`, keyword);
-    else if (r['query']) map.set(r['query'], keyword);
+      // OpenCart 4.0.2+: a subcategory is key "path", value "20_27": index it by its own id too
+      if (r['key'] === 'path' && r['value']?.includes('_'))
+        map.set(`path=${r['value'].split('_').pop()}`, keyword);
+      if (r['key'] === 'path')
+        paths.set(r['value']?.split('_').pop() ?? '', r['value'] ?? '');
+    } else if (r['query']) {
+      map.set(r['query'], keyword);
+      const m = /^path=([\d_]+)$/.exec(r['query']);
+      if (m) {
+        map.set(`path=${m[1]!.split('_').pop()}`, keyword);
+        paths.set(m[1]!.split('_').pop() ?? '', m[1]!);
+      }
+    }
   }
-  return map;
+  return { map, paths };
 }
 
 export function convertOpenCart(
@@ -171,7 +200,19 @@ export function convertOpenCart(
   const group = opts.customerGroupId ?? '1';
   const store = opts.storeId ?? '0';
   const warnings: string[] = [];
-  const seo = seoKeywords(tables, lang, store);
+  const { map: seo, paths: catPaths } = seoKeywords(tables, lang, store);
+  const blocking: string[] = [];
+  // multi-store exports: only this store's products and categories (when the link tables were exported)
+  const inStore = (table: string, idCol: string) =>
+    tables[table]
+      ? new Set(
+          tables[table]!.filter((r) => (r['store_id'] ?? store) === store).map(
+            (r) => r[idCol] ?? '',
+          ),
+        )
+      : null;
+  const productsInStore = inStore('product_to_store', 'product_id');
+  const categoriesInStore = inStore('category_to_store', 'category_id');
   const byLang = (rows: Row[] | undefined, idCol: string) =>
     new Map(
       (rows ?? [])
@@ -185,6 +226,10 @@ export function convertOpenCart(
   const active = new Map(
     catRows
       .filter((c) => c['status'] !== '0')
+      .filter(
+        (c) =>
+          !categoriesInStore || categoriesInStore.has(c['category_id'] ?? ''),
+      )
       .map((c) => [c['category_id'] ?? '', c]),
   );
   for (const c of catRows)
@@ -246,11 +291,9 @@ export function convertOpenCart(
   const specials = new Map<string, Row[]>();
   for (const s of tables['product_special'] ?? []) {
     if ((s['customer_group_id'] ?? group) !== group) continue;
-    const start = s['date_start'] ?? '';
     const end = s['date_end'] ?? '';
-    if (start && !ZERO_DATE.test(start) && start.slice(0, 10) > opts.today)
-      continue;
-    if (end && !ZERO_DATE.test(end) && end.slice(0, 10) < opts.today) continue;
+    // OpenCart: a special runs while date_end > NOW(), i.e. it is over from the start of its end date
+    if (end && !ZERO_DATE.test(end) && end.slice(0, 10) <= opts.today) continue;
     specials.set(s['product_id'] ?? '', [
       ...(specials.get(s['product_id'] ?? '') ?? []),
       s,
@@ -295,7 +338,22 @@ export function convertOpenCart(
       warnings.push(`${label}: no name in language ${lang}, not imported`);
       continue;
     }
+    if (productsInStore && !productsInStore.has(id)) continue;
     const priceMinor = decimalToPaise(p['price']);
+    if (priceMinor !== null && priceMinor > MAX_PAISE) {
+      warnings.push(
+        `${label} "${name}": price ${p['price']} is above ₹1 crore, not imported`,
+      );
+      continue;
+    }
+    if (
+      p['tax_class_id'] &&
+      p['tax_class_id'] !== '0' &&
+      !opts.pricesIncludeGst
+    )
+      blocking.push(
+        `${label} "${name}": has an OpenCart tax class, so its price ${p['price']} is probably WITHOUT tax (this shop's prices include GST). Fix the prices, or confirm they already include GST (--prices-include-gst)`,
+      );
     if (priceMinor === null || priceMinor < 1) {
       warnings.push(
         `${label} "${name}": no valid price (${p['price'] ?? 'empty'}), not imported`,
@@ -309,7 +367,10 @@ export function convertOpenCart(
       .slice(0, 64);
     if (!SKU_OK.test(sku)) sku = `OC-${id}`;
     if (skus.has(sku.toUpperCase())) {
-      const unique = `${sku.slice(0, 56)}-OC${id}`;
+      const suffix = `-OC${id}`.slice(0, 30);
+      let unique = `${sku.slice(0, 64 - suffix.length)}${suffix}`;
+      for (let n = 2; skus.has(unique.toUpperCase()); n++)
+        unique = `${sku.slice(0, 64 - suffix.length - String(n).length - 1)}${suffix}-${n}`;
       warnings.push(
         `${label} "${name}": SKU ${sku} is used twice; this one becomes ${unique}`,
       );
@@ -317,12 +378,26 @@ export function convertOpenCart(
     }
     skus.add(sku.toUpperCase());
 
-    const sale = [...(specials.get(id) ?? [])].sort(
-      (a, b) =>
-        Number(a['priority'] ?? 0) - Number(b['priority'] ?? 0) ||
-        (decimalToPaise(a['price']) ?? 0) - (decimalToPaise(b['price']) ?? 0),
-    )[0];
+    // the special running today (OpenCart's choice: priority, then price); else the next one to start
+    const running = (s: Row) =>
+      !s['date_start'] ||
+      ZERO_DATE.test(s['date_start']) ||
+      s['date_start'].slice(0, 10) <= opts.today;
+    const byPriority = (a: Row, b: Row) =>
+      Number(a['priority'] ?? 0) - Number(b['priority'] ?? 0) ||
+      (decimalToPaise(a['price']) ?? 0) - (decimalToPaise(b['price']) ?? 0);
+    const all = specials.get(id) ?? [];
+    const sale =
+      [...all.filter(running)].sort(byPriority)[0] ??
+      [...all].sort((a, b) =>
+        (a['date_start'] ?? '').localeCompare(b['date_start'] ?? ''),
+      )[0];
+    const saleDates = sale ? openCartSaleWindow(sale) : {};
     let salePriceMinor = sale ? decimalToPaise(sale['price']) : null;
+    if (sale && salePriceMinor === null)
+      warnings.push(
+        `${label} "${name}": special price ${sale['price']} is not a valid amount, ignored`,
+      );
     if (
       salePriceMinor !== null &&
       (salePriceMinor < 1 || salePriceMinor >= priceMinor)
@@ -387,7 +462,7 @@ export function convertOpenCart(
         {
           sku,
           priceMinor,
-          ...(salePriceMinor !== null ? { salePriceMinor } : {}),
+          ...(salePriceMinor !== null ? { salePriceMinor, ...saleDates } : {}),
           stock:
             Number.isFinite(quantity) && quantity > 0
               ? Math.min(quantity, 1_000_000)
@@ -417,6 +492,7 @@ export function convertOpenCart(
     if (unique.length)
       images.push({
         productSlug: slug,
+        skus: [sku],
         images: unique.map((path) => ({ path, altText: name.slice(0, 200) })),
       });
     redirects.push({ kind: 'product', id, keyword, to: `/products/${slug}` });
@@ -435,8 +511,21 @@ export function convertOpenCart(
     const id = c.key.slice('oc-c'.length);
     const keyword =
       seo.get(`category_id=${id}`) ?? seo.get(`path=${id}`) ?? null;
-    redirects.push({ kind: 'category', id, keyword, to: `/catalog/${c.slug}` });
+    redirects.push({
+      kind: 'category',
+      id: catPaths.get(id) ?? id, // "20_27" as in old category URLs, when known
+      keyword,
+      to: `/catalog/${c.slug}`,
+    });
   }
+  if (products.length > IMPORT_LIMITS.products)
+    blocking.push(
+      `${products.length} products: one import file takes at most ${IMPORT_LIMITS.products}`,
+    );
+  if (categories.length > IMPORT_LIMITS.categories)
+    blocking.push(
+      `${categories.length} categories: one import file takes at most ${IMPORT_LIMITS.categories}`,
+    );
 
   return {
     file: {
@@ -449,6 +538,24 @@ export function convertOpenCart(
     redirects,
     taxSheet,
     warnings,
+    blocking,
+  };
+}
+
+/** OpenCart special dates (DATE, India) -> the sale window: from the start of date_start to the start of date_end. */
+function openCartSaleWindow(s: Row): {
+  saleStartsAt?: string;
+  saleEndsAt?: string;
+} {
+  const day = (v: string | null | undefined) =>
+    v && !ZERO_DATE.test(v) && /^\d{4}-\d{2}-\d{2}/.test(v)
+      ? `${v.slice(0, 10)}T00:00:00+05:30`
+      : undefined;
+  const start = day(s['date_start']);
+  const end = day(s['date_end']);
+  return {
+    ...(start ? { saleStartsAt: start } : {}),
+    ...(end ? { saleEndsAt: end } : {}),
   };
 }
 
@@ -477,7 +584,15 @@ export function parseTaxSheet(csv: string): {
     const sku = (r[iSku] ?? '').trim().replace(/^'/, '');
     const rate = (r[iRate] ?? '').trim();
     const hsn = (iHsn >= 0 ? (r[iHsn] ?? '') : '').trim().replace(/^'/, '');
-    if (!sku || !rate) return; // not filled in yet: the importer's default applies
+    if (!sku) return;
+    if (!rate) {
+      // an HSN code alone would be lost (the sheet is written again): ask for the rate too
+      if (hsn)
+        problems.push(
+          `line ${line}: ${sku}: HSN code given without a GST rate`,
+        );
+      return; // not filled in yet: the importer's default applies
+    }
     const m = /^(\d{1,2})(?:\.(\d{1,2}))?$/.exec(rate);
     const bps = m
       ? Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0'))
