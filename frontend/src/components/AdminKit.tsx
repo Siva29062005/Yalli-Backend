@@ -99,6 +99,15 @@ export function DataState({
   return <>{children}</>;
 }
 
+/**
+ * After the last row of the last page is approved/deleted, the reloaded page can be past the end: step back to the last
+ * page that exists. Call it in the list component's body (it adjusts that component's own state during render).
+ * `meta.page === page` makes sure the answer belongs to the page being shown, not an older request.
+ */
+export function useClampedPage(meta: PageMeta | undefined, page: number, setPage: (page: number) => void) {
+  if (meta && meta.page === page && page > 1 && meta.totalPages < page) setPage(Math.max(1, meta.totalPages));
+}
+
 export function Pager({ meta, onPage }: { meta: PageMeta; onPage: (page: number) => void }) {
   if (meta.totalPages <= 1) return null;
   return (

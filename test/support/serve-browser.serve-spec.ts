@@ -138,6 +138,24 @@ it('serves the real app for browser checks', async () => {
       .expect(201);
     // D: placed but never paid (cancellable).
     const d = await shop.order(c4, [{ variantId: bowls.variant.id }]);
+    // F: cancelled by the customer, but the provider REFUSED the refund (FAILED): staff retry it (Phase 11).
+    const c6 = await shop.customer();
+    const f = await shop.order(c6, [{ variantId: kettle.variant.id }]);
+    await shop.paid(c6, f.id);
+    ctx.razorpay.failNext.push({ match: '/refund', mode: 'reject' });
+    await http()
+      .post(`/api/v1/orders/${f.id}/cancel`)
+      .set(authed(c6))
+      .send({})
+      .expect(200);
+    // An archived product, to restore from the console.
+    const archived = await shop.fx.product({
+      name: 'Retired Brass Teapot',
+      priceMinor: 120_000,
+      stock: 0,
+      categoryIds: [kitchen.id],
+      status: 'ARCHIVED',
+    });
     await ctx.drainOutbox();
 
     await ctx.app.listen(PORT, '127.0.0.1');
@@ -173,7 +191,12 @@ it('serves the real app for browser checks', async () => {
           b: b.orderNumber,
           c: cOrder.orderNumber,
           d: d.orderNumber,
+          f: f.orderNumber,
         },
+        archivedProduct: archived.product.name,
+        customerC1Phone: (
+          await ctx.prisma.user.findUniqueOrThrow({ where: { id: c1.userId } })
+        ).phoneE164,
         products: {
           steamer: steamer.product.name,
           kettle: kettle.product.name,

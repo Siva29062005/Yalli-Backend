@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../../config/env.js';
 import { EmailTransport, type OutboundEmail } from '../ports/ports.js';
+import { buildMimeMessage } from './mime.js';
 
 /**
  * Amazon SES v2. Credentials come from the default AWS provider chain (an IAM role in production): there is NO access
@@ -30,6 +31,24 @@ export class SesEmailTransport extends EmailTransport {
   }
 
   async send(email: OutboundEmail): Promise<void> {
+    // With attachments (the credit note on a refund email), SES takes the whole MIME message.
+    if (email.attachments?.length) {
+      await this.client.send(
+        new SendEmailCommand({
+          FromEmailAddress: this.from,
+          Destination: { ToAddresses: [email.to] },
+          Content: {
+            Raw: {
+              Data: Buffer.from(buildMimeMessage(this.from, email), 'utf8'),
+            },
+          },
+          ...(this.configurationSet
+            ? { ConfigurationSetName: this.configurationSet }
+            : {}),
+        }),
+      );
+      return;
+    }
     await this.client.send(
       new SendEmailCommand({
         FromEmailAddress: this.from,

@@ -78,6 +78,18 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 - Consumers de-dupe with `runOnce` (INSERT … ON CONFLICT DO NOTHING) and read through its `tx`.
 - Rate limits: production refuses `TRUST_PROXY_HOPS=0`; browser `/api/v1` calls reach the API through CloudFront + ALB (not the Next server). The storefront server's PUBLIC GET requests carry `X-Frontend-Key` (`FRONTEND_SERVER_KEY`, server-only, same value in both apps) and get their own budget.
 
+## Phase 11 conventions (admin console; record in docs/architecture/phase-11-admin.md)
+- Paged admin lists call `useClampedPage(meta, page, setPage)` (AdminKit). Every admin screen uses `AdminPage` + `useAdminQuery` + `withStepUp` (no screen has its own sidebar or step-up prompt).
+- Variant PATCH: send only changed fields; the server ignores price fields equal to the current value (no `pricing.update`, no price audit). `GET /admin/roles` marks `assignable` (`canAssignRole`): offer only those.
+- Refund retry: a FAILED refund becomes a NEW request by the retrier (four-eyes), `refunds.retry_of_id` UNIQUE (one retry each); a cancel refund keeps the cancel key family (`cancel:<order>:<n>`).
+- Customer lookup: exact email/phone/order number only, masked contact (`common/utils/mask.ts`), no staff accounts, every search/view audited without the searched value.
+- Audit viewer reads through `ReportingDb` (column grant on `audit_logs`, no `user_agent`); periods capped at 92 days.
+- CSV exports use `common/utils/csv.ts` (quoted cells, formula prefix neutralised), paise -> rupees with integer maths, India dates, audited `finance.exported`. GSTR-1 layout lives ONLY in `orders/gstr1-export.ts`.
+- The refund email is sent on `credit_note.issued` (with the note attached, `credit-note-document.ts`) for invoiced orders, on `refund.processed` otherwise. Email attachments go through `mime.ts` (SES Raw only when attached).
+- Warehouses: default always active; no switching off with stock or reservations; thresholds via `InventoryService.setLowStockThreshold` (never write `inventory` elsewhere).
+- Console catalogue import: same service as the CLI; applying needs a dry run of the same bytes+options by the same person in 30 min; `--publish`/publish needs products.publish, stock needs inventory.adjust (CLI too). Console cap 2 MB / 500 products.
+- New admin screens: Brands, Import, Finance, Customers, Messages, Audit log (plus the rebuilt Categories). Add every new screen to `ADMIN_SCREENS`, `test-admin-access.mjs`, `test-admin-screens.mjs` and `test-admin-real.mjs`.
+
 ## Frontend (`frontend/`)
 - Next.js 16.4 / React 19.3 / Tailwind 4.3.5 / zustand. This Next version has breaking changes: read `frontend/node_modules/next/dist/docs/` before writing Next code (see `frontend/AGENTS.md`).
 - Dev: backend on :3000, frontend with `npm run dev -- --port 3001` (backend `FRONTEND_BASE_URL` defaults to :3001). Next rewrites proxy `/api/v1/*` to `API_INTERNAL_URL` (default `http://127.0.0.1:3000/api/v1`), so the browser stays same-origin.
@@ -108,7 +120,7 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 
 ## Workflow
 - Phases: 2 foundation (done) → 3 security (done; see docs/security/phase-3-security-foundation.md) → 4 core commerce (done; see docs/architecture/phase-4-commerce-core.md) → 5 checkout/payments (done; see docs/architecture/phase-5-checkout-payments.md) → 6 extras (done; see docs/architecture/phase-6-extras.md) → 7 hardening (done; see docs/security/phase-7-hardening.md and docs/ops/). Each phase ends with check + security review + a report of changed files, finished functionality and open risks.
-- Phase 8 (stabilise) and Phase 9 (launch-blocker fixes, docs/security/phase-9-fixes.md) are done (2026-11-27). Next: Phases 10-16 in `docs/ROADMAP.md` (storefront/account → admin → catalogue and business setup → AWS staging and live providers → pre-launch verification → go-live with OpenCart redirects → after launch). It orders the items in `docs/PENDING.md` and lists the owner inputs that are the critical path; keep both in step.
+- Phase 8 (stabilise), Phase 9 (launch-blocker fixes, docs/security/phase-9-fixes.md), Phase 10 (storefront/account) and Phase 11 (admin console, docs/architecture/phase-11-admin.md) are done (2026-11-27). Next: Phases 12-16 in `docs/ROADMAP.md` (catalogue and business setup → AWS staging and live providers → pre-launch verification → go-live with OpenCart redirects → after launch). It orders the items in `docs/PENDING.md` and lists the owner inputs that are the critical path; keep both in step.
 - Nest's first-party `@nestjs/outbox`, `idempotency`, `webhooks`, `authentication`, `authorization` are not adopted yet; evaluate against the security requirements in the phase that needs them.
 - Add or update tests with every change, including negative authorization tests for security-relevant endpoints. Update docs when behaviour or architecture changes.
 - Open work lives in `docs/PENDING.md` (P0 launch blockers / P1 / P2). Read it before starting a task; tick items done (with the date) and add anything new you find.

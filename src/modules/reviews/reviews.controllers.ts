@@ -46,6 +46,10 @@ const updateSchema = z
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
+/** Taking a published review down always needs a reason (the author sees it). */
+const takeDownSchema = z
+  .object({ note: z.string().trim().min(3).max(300) })
+  .strict();
 const decisionSchema = z
   .object({
     decision: z.enum(['APPROVED', 'REJECTED']),
@@ -161,6 +165,17 @@ export class ReviewsAdminController {
   @Get()
   list(@Query({ schema: adminListSchema }) q: z.infer<typeof adminListSchema>) {
     return this.reviews.adminList(q);
+  }
+
+  @Post(':id/take-down')
+  @HttpCode(200)
+  takeDown(
+    @CurrentPrincipal() a: AuthPrincipal,
+    @Param('id', { schema: uuid }) id: string,
+    @Body({ schema: takeDownSchema }) dto: z.infer<typeof takeDownSchema>,
+    @Req() req: Request,
+  ) {
+    return this.reviews.takeDown(a, id, dto.note, requestContext(req));
   }
 
   @Post(':id/decision')

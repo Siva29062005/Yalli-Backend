@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { ErrorCode } from '../../common/exceptions/error-codes.js';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env.js';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -9,6 +15,12 @@ import {
   type PaginationInput,
 } from '../../common/http/pagination.js';
 import { sameStateSupply } from './gst.js';
+import {
+  GSTR1_CREDIT_NOTE_COLUMNS,
+  creditNoteRows,
+  toCsv,
+} from './gstr1-export.js';
+import { OutboxService } from '../outbox/outbox.service.js';
 import { OrderLifecycleService } from './order-lifecycle.service.js';
 import {
   creditNoteLines,
@@ -18,6 +30,9 @@ import {
 } from './tax-documents.js';
 
 type Tx = Prisma.TransactionClient;
+
+/** Most credit notes one CSV export may hold. */
+const EXPORT_MAX = 5_000;
 
 const withLines = {
   lines: { orderBy: { position: 'asc' as const } },
@@ -41,6 +56,7 @@ export class CreditNoteService {
     config: ConfigService<Env, true>,
     private readonly prisma: PrismaService,
     private readonly lifecycle: OrderLifecycleService,
+    private readonly outbox: OutboxService,
   ) {
     this.sellerName = config.get('SELLER_LEGAL_NAME', { infer: true });
     this.sellerState = config.get('SELLER_STATE', { infer: true });
@@ -152,10 +168,31 @@ export class CreditNoteService {
       },
       select: { id: true, creditNoteNumber: true },
     });
+    // Same transaction as the note: the refund email (with the note attached) goes out exactly when the note exists.
+    await this.outbox.add(tx, {
+      aggregateType: 'credit_note',
+      aggregateId: note.id,
+      eventType: 'credit_note.issued',
+      payload: {
+        creditNoteId: note.id,
+        refundId: refund.id,
+        orderId: refund.orderId,
+        amountMinor: refund.amountMinor,
+      },
+    });
     this.logger.log(
       `credit note ${note.creditNoteNumber} issued for refund ${refund.id}`,
     );
     return note;
+  }
+
+  /** The printable document, read on the caller's transaction (consumers: one connection at a time). */
+  async documentInTx(tx: Prisma.TransactionClient, id: string) {
+    const note = await tx.creditNote.findUnique({
+      where: { id },
+      include: withLines,
+    });
+    return note ? this.document(note) : null;
   }
 
   /** The customer's own credit notes for an order (a foreign order is a 404, as everywhere). */
@@ -171,6 +208,68 @@ export class CreditNoteService {
       include: withLines,
     });
     return notes.map((n) => this.document(n));
+  }
+
+  /** Staff view of one order's credit notes (oldest first). An unknown order is a 404. */
+  async forOrder(orderId: string) {
+    const exists = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundException('Order not found');
+    const notes = await this.prisma.creditNote.findMany({
+      where: { orderId },
+      orderBy: { issuedAt: 'asc' },
+      include: withLines,
+    });
+    return notes.map((n) => this.document(n));
+  }
+
+  /**
+   * Every credit note issued in [from, to) as a GSTR-1-style CSV (`gstr1-export.ts`). Capped: a range with more than
+   * EXPORT_MAX notes must be split (a filing period is a month or a quarter).
+   */
+  async exportCsv(
+    from: Date,
+    to: Date,
+  ): Promise<{ csv: string; notes: number }> {
+    const notes = await this.prisma.creditNote.findMany({
+      where: { issuedAt: { gte: from, lt: to } },
+      orderBy: [{ issuedAt: 'asc' }, { creditNoteNumber: 'asc' }],
+      take: EXPORT_MAX + 1,
+      select: {
+        creditNoteNumber: true,
+        issuedAt: true,
+        invoiceNumber: true,
+        placeOfSupply: true,
+        supply: true,
+        reason: true,
+        totalMinor: true,
+        order: { select: { orderNumber: true, paidAt: true } },
+        lines: {
+          select: {
+            gstRateBps: true,
+            taxableValueMinor: true,
+            cgstMinor: true,
+            sgstMinor: true,
+            igstMinor: true,
+          },
+        },
+      },
+    });
+    if (notes.length > EXPORT_MAX)
+      throw new BadRequestException({
+        message: `More than ${EXPORT_MAX} credit notes in this range: export a shorter period.`,
+        code: ErrorCode.ValidationFailed,
+      });
+    const rows = creditNoteRows(
+      notes.map((n) => ({
+        ...n,
+        orderNumber: n.order.orderNumber,
+        invoiceDate: n.order.paidAt, // the invoice is dated when the order was paid
+      })),
+    );
+    return { csv: toCsv(GSTR1_CREDIT_NOTE_COLUMNS, rows), notes: notes.length };
   }
 
   async adminGet(id: string) {

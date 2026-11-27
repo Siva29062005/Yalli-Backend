@@ -34,6 +34,7 @@ import {
   categorySchema,
   createProductSchema,
   imageMetaSchema,
+  updateImageSchema,
   updateCategorySchema,
   updateProductSchema,
   updateVariantSchema,
@@ -266,6 +267,17 @@ export class CatalogAdminController {
     @Req() req: Request,
   ) {
     return this.admin.uploadImage(a, id, file, meta, requestContext(req));
+  }
+
+  @Patch('images/:id')
+  @RequirePermissions(Permission.ProductsUpdate)
+  updateImage(
+    @CurrentPrincipal() a: AuthPrincipal,
+    @Param('id', { schema: uuidParam }) id: string,
+    @Body({ schema: updateImageSchema }) dto: z.infer<typeof updateImageSchema>,
+    @Req() req: Request,
+  ) {
+    return this.admin.updateImage(a, id, dto, requestContext(req));
   }
 
   @Delete('images/:id')

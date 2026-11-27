@@ -492,6 +492,27 @@ describe('admin catalogue management', () => {
         })
       ).priceMinor,
     ).toBe(59_000);
+    // Price fields sent UNCHANGED (a form that saves everything) are not a price change: allowed, and not audited.
+    expect(
+      (
+        await ctx
+          .http()
+          .patch(`/api/v1/admin/variants/${variant.id}`)
+          .set(authed(editor))
+          .send({
+            name: 'Green',
+            priceMinor: 59_000,
+            salePriceMinor: null,
+            saleStartsAt: null,
+            saleEndsAt: null,
+          })
+      ).status,
+    ).toBe(200);
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'catalog.price.changed', resourceId: variant.id },
+      }),
+    ).toBe(0);
 
     await ctx
       .http()
@@ -670,6 +691,144 @@ describe('admin product list shows what staff need at a glance', () => {
       price: null,
       stock: { available: 0, lowStock: false },
     });
+  });
+});
+
+describe('admin brands and product lookups for the console', () => {
+  it('brand counts show live products; deleting a brand keeps its products (no brand); only products.delete may delete', async () => {
+    const admin = await s.staff('ADMIN');
+    const brand = await fx.brand();
+    const { product } = await fx.product({ brandId: brand.id });
+    const gone = await fx.product({ brandId: brand.id });
+    await ctx.prisma.product.update({
+      where: { id: gone.product.id },
+      data: { deletedAt: new Date() },
+    });
+    const listed = (
+      await ctx
+        .http()
+        .get('/api/v1/admin/brands')
+        .set(authed(admin))
+        .expect(200)
+    ).body.data as { id: string; _count: { products: number } }[];
+    expect(listed.find((b) => b.id === brand.id)?._count.products).toBe(1);
+    expect(
+      (
+        await ctx
+          .http()
+          .delete(`/api/v1/admin/brands/${brand.id}`)
+          .set(authed(await s.staff('ORDER_MANAGER')))
+      ).status,
+    ).toBe(403);
+    await ctx
+      .http()
+      .delete(`/api/v1/admin/brands/${brand.id}`)
+      .set(authed(admin))
+      .expect(200);
+    expect(
+      (
+        await ctx.prisma.product.findUniqueOrThrow({
+          where: { id: product.id },
+        })
+      ).brandId,
+    ).toBeNull();
+  });
+
+  it('GET /admin/products?ids= returns exactly those products (a coupon picker shows their names); bad ids are refused', async () => {
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const a = await fx.product();
+    const b = await fx.product();
+    await fx.product();
+    const res = await ctx
+      .http()
+      .get(
+        `/api/v1/admin/products?ids=${a.product.id},${b.product.id}&pageSize=60`,
+      )
+      .set(authed(pm))
+      .expect(200);
+    expect((res.body.data as { id: string }[]).map((p) => p.id).sort()).toEqual(
+      [a.product.id, b.product.id].sort(),
+    );
+    for (const bad of [
+      'ids=not-a-uuid',
+      `ids=${a.product.id},`,
+      `ids=${Array.from({ length: 61 }, () => a.product.id).join(',')}`,
+    ])
+      expect(
+        (await ctx.http().get(`/api/v1/admin/products?${bad}`).set(authed(pm)))
+          .status,
+      ).toBe(400);
+  });
+});
+
+describe('image order and variant images (PATCH /admin/images/:id)', () => {
+  it('moves an image in the gallery (clean 0..n-1 order), links it to a variant, and checks ownership and permission', async () => {
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const { product, variant } = await fx.product();
+    const other = await fx.product();
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++)
+      ids.push(
+        (
+          await ctx
+            .http()
+            .post(`/api/v1/admin/products/${product.id}/images`)
+            .set(authed(pm))
+            .attach('file', PNG, {
+              filename: `p${i}.png`,
+              contentType: 'image/png',
+            })
+            .expect(201)
+        ).body.data.id,
+      );
+    const patch = (id: string, body: Record<string, unknown>, who = pm) =>
+      ctx
+        .http()
+        .patch(`/api/v1/admin/images/${id}`)
+        .set(authed(who))
+        .send(body);
+    const moved = await patch(ids[2]!, { position: 0 }).expect(200);
+    expect(
+      (moved.body.data.images as { id: string; position: number }[]).map(
+        (i) => [i.id, i.position],
+      ),
+    ).toEqual([
+      [ids[2], 0],
+      [ids[0], 1],
+      [ids[1], 2],
+    ]);
+    const linked = await patch(ids[0]!, {
+      variantId: variant.id,
+      altText: 'Steel <b>lid</b>',
+    }).expect(200);
+    expect(
+      (
+        linked.body.data.images as {
+          id: string;
+          variantId: string | null;
+          altText: string;
+        }[]
+      ).find((i) => i.id === ids[0]),
+    ).toMatchObject({ variantId: variant.id, altText: 'Steel lid' });
+    // a variant of ANOTHER product, nothing to change, unknown fields, the wrong role, an unknown image
+    expect((await patch(ids[0]!, { variantId: other.variant.id })).status).toBe(
+      400,
+    );
+    expect((await patch(ids[0]!, {})).status).toBe(400);
+    expect((await patch(ids[0]!, { storageKey: 'x.png' })).status).toBe(400);
+    expect(
+      (await patch(ids[0]!, { position: 1 }, await s.staff('ORDER_MANAGER')))
+        .status,
+    ).toBe(403);
+    expect(
+      (await patch('0190a7c0-0000-7000-8000-000000000000', { position: 1 }))
+        .status,
+    ).toBe(404);
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'catalog.image.updated', resourceId: product.id },
+      }),
+    ).toBe(2);
   });
 });
 

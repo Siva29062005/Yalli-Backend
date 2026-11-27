@@ -201,6 +201,9 @@ Goal: staff can run the shop without SQL, a terminal or a developer.
 Exit: `test-admin-screens.mjs` (fake) and `test-admin-real.mjs` (real backend) drive every new screen; negative
 permission tests for every new endpoint; `lib/admin-access.ts` updated.
 
+**Status (2026-11-27): done.** All bugs, screens and new endpoints above are built, plus the contact-message inbox
+deferred from Phase 10. Record: `docs/architecture/phase-11-admin.md`.
+
 ## Phase 12: catalogue, content and business setup
 
 Goal: the new store holds the real shop, not test data. Mostly owner work, supported by tooling.

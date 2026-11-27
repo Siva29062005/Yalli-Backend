@@ -3,6 +3,8 @@ import {
   Controller,
   Get,
   NotFoundException,
+  Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -37,6 +39,34 @@ const adjustSchema = z
     reason: z.string().trim().min(3).max(200),
   })
   .strict();
+const thresholdSchema = z
+  .object({
+    sku: z.string().trim().min(1).max(64),
+    warehouseCode: z.string().trim().min(1).max(20),
+    lowStockThreshold: z.number().int().min(0).max(100_000),
+  })
+  .strict();
+const warehouseCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(
+    /^[A-Z0-9][A-Z0-9-]{1,19}$/,
+    'Code: 2 to 20 letters, digits or dashes',
+  );
+const warehouseName = z.string().trim().min(2).max(100);
+const createWarehouseSchema = z
+  .object({ code: warehouseCode, name: warehouseName })
+  .strict();
+const updateWarehouseSchema = z
+  .object({
+    name: warehouseName.optional(),
+    isActive: z.boolean().optional(),
+    isDefault: z.literal(true).optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
+
 const listSchema = paginationSchema
   .extend({
     sku: z.string().trim().max(64).optional(),
@@ -70,6 +100,94 @@ export class InventoryAdminController {
         isActive: true,
       },
     });
+  }
+
+  @Post('warehouses')
+  @RequirePermissions(Permission.InventoryAdjust)
+  async createWarehouse(
+    @CurrentPrincipal() actor: AuthPrincipal,
+    @Body({ schema: createWarehouseSchema })
+    dto: z.infer<typeof createWarehouseSchema>,
+    @Req() req: Request,
+  ) {
+    const w = await this.inventory.createWarehouse(dto);
+    await this.audit.record({
+      action: AuditAction.WarehouseChanged,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...requestContext(req),
+      resourceType: 'warehouse',
+      resourceId: w.id,
+      metadata: { code: w.code, change: 'created' },
+    });
+    return w;
+  }
+
+  @Patch('warehouses/:code')
+  @RequirePermissions(Permission.InventoryAdjust)
+  async updateWarehouse(
+    @CurrentPrincipal() actor: AuthPrincipal,
+    @Param('code', { schema: warehouseCode }) code: string,
+    @Body({ schema: updateWarehouseSchema })
+    dto: z.infer<typeof updateWarehouseSchema>,
+    @Req() req: Request,
+  ) {
+    const w = await this.inventory.updateWarehouse(code, dto);
+    await this.audit.record({
+      action: AuditAction.WarehouseChanged,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...requestContext(req),
+      resourceType: 'warehouse',
+      resourceId: w.id,
+      metadata: { code: w.code, change: Object.keys(dto) },
+    });
+    return w;
+  }
+
+  /** The low-stock level of one SKU in one warehouse (shown as "Low" in the list and the low-stock filter). */
+  @Patch('inventory/threshold')
+  @RequirePermissions(Permission.InventoryAdjust)
+  async threshold(
+    @CurrentPrincipal() actor: AuthPrincipal,
+    @Body({ schema: thresholdSchema }) dto: z.infer<typeof thresholdSchema>,
+    @Req() req: Request,
+  ) {
+    const [variant, warehouse] = await Promise.all([
+      this.prisma.productVariant.findFirst({
+        where: { sku: { equals: dto.sku, mode: 'insensitive' } },
+        select: { id: true, sku: true },
+      }),
+      this.prisma.warehouse.findUnique({
+        where: { code: dto.warehouseCode.toUpperCase() },
+        select: { id: true, code: true },
+      }),
+    ]);
+    if (!variant) throw new NotFoundException('Unknown SKU');
+    if (!warehouse) throw new NotFoundException('Unknown warehouse');
+    await this.inventory.setLowStockThreshold(
+      variant.id,
+      warehouse.id,
+      dto.lowStockThreshold,
+    );
+    await this.audit.record({
+      action: AuditAction.InventoryThresholdChanged,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...requestContext(req),
+      resourceType: 'variant',
+      resourceId: variant.id,
+      metadata: {
+        sku: variant.sku,
+        warehouse: warehouse.code,
+        lowStockThreshold: dto.lowStockThreshold,
+      },
+    });
+    return {
+      sku: variant.sku,
+      warehouse: warehouse.code,
+      lowStockThreshold: dto.lowStockThreshold,
+    };
   }
 
   @Get('inventory')

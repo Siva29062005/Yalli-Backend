@@ -223,7 +223,13 @@ export function renderEmail(
         paragraphs: [
           hi,
           `We refunded ${formatInr(m.amountMinor)} for order ${m.orderNumber}. Depending on your bank or payment method it can take up to 10 working days to show.`,
+          ...(m.creditNote
+            ? [
+                `Your credit note ${oneLine(m.creditNote.creditNoteNumber)} is attached. You can also find it with the order in your account.`,
+              ]
+            : []),
         ],
+        cta: { label: 'View order', url: `${base}/account/orders` },
       });
     case 'RETURN_UPDATE':
       return layout(`Return update for order ${oneLine(m.orderNumber)}`, {

@@ -804,6 +804,11 @@ describe('money arriving for an order we can no longer fulfil', () => {
       onHand: 5,
       reserved: 0,
     });
+    // never invoiced, so no credit note: the refund email still goes out (on refund.processed), without one
+    await ctx.drainOutbox();
+    const mail = ctx.notifier.last('REFUND_PROCESSED', u.email);
+    expect(mail).toMatchObject({ amountMinor: 59_000 });
+    expect(mail?.creditNote).toBeUndefined();
   });
 
   it('payment after the hold lapsed but stock still free: re-reserved and the order is PAID', async () => {

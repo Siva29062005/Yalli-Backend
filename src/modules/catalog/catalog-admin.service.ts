@@ -61,7 +61,13 @@ export class CatalogAdminService {
   async listBrands() {
     return this.prisma.brand.findMany({
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
-      select: { id: true, name: true, slug: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        // live products (not soft-deleted) that carry the brand: they lose it if the brand is deleted
+        _count: { select: { products: { where: { deletedAt: null } } } },
+      },
     });
   }
 
@@ -481,17 +487,21 @@ export class CatalogAdminService {
     dto: UpdateVariantDto,
     ctx: RequestContext,
   ) {
-    const touchesPrice = PRICE_FIELDS.some((f) => dto[f] !== undefined);
+    const before = await this.prisma.productVariant.findFirst({
+      where: { id: variantId, deletedAt: null },
+    });
+    if (!before) throw new NotFoundException('Variant not found');
+    // A price field sent with its CURRENT value is not a price change: an editor saving the name or weight needs no
+    // pricing.update and leaves no price-change audit entry.
+    const touchesPrice = PRICE_FIELDS.some(
+      (f) => dto[f] !== undefined && !samePriceValue(dto[f], before[f]),
+    );
     if (touchesPrice && !actor.permissions.has(Permission.PricingUpdate)) {
       throw new ForbiddenException({
         message: 'Changing prices requires the pricing.update permission',
         code: ErrorCode.Forbidden,
       });
     }
-    const before = await this.prisma.productVariant.findFirst({
-      where: { id: variantId, deletedAt: null },
-    });
-    if (!before) throw new NotFoundException('Variant not found');
     const merged = {
       ...priceSnapshot(before),
       ...Object.fromEntries(
@@ -648,6 +658,71 @@ export class CatalogAdminService {
     };
   }
 
+  /**
+   * Alt text, gallery order and variant link of one image. Moving an image to `position` renumbers the product's
+   * images 0..n-1 in one transaction, so the order is always a clean sequence (no ties, no gaps).
+   */
+  async updateImage(
+    actor: AuthPrincipal,
+    imageId: string,
+    dto: {
+      altText?: string | null | undefined;
+      position?: number | undefined;
+      variantId?: string | null | undefined;
+    },
+    ctx: RequestContext,
+  ) {
+    const image = await this.prisma.productImage.findUnique({
+      where: { id: imageId },
+    });
+    if (!image) throw new NotFoundException('Image not found');
+    if (
+      dto.variantId &&
+      !(await this.prisma.productVariant.findFirst({
+        where: {
+          id: dto.variantId,
+          productId: image.productId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      }))
+    )
+      throw new BadRequestException({
+        message: 'Variant does not belong to this product',
+        code: ErrorCode.ValidationFailed,
+      });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productImage.update({
+        where: { id: imageId },
+        data: {
+          ...(dto.altText !== undefined
+            ? { altText: dto.altText ? stripTags(dto.altText) : null }
+            : {}),
+          ...(dto.variantId !== undefined ? { variantId: dto.variantId } : {}),
+        },
+      });
+      if (dto.position === undefined) return;
+      // Lock the product's images so two reorders cannot interleave.
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM product_images WHERE product_id = ${image.productId}::uuid
+        ORDER BY position, created_at, id FOR UPDATE`;
+      const order = rows.map((r) => r.id).filter((id) => id !== imageId);
+      order.splice(Math.min(dto.position, order.length), 0, imageId);
+      for (const [position, id] of order.entries())
+        await tx.productImage.update({ where: { id }, data: { position } });
+    });
+    await this.audit.record({
+      action: AuditAction.ProductImageUpdated,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...ctx,
+      resourceType: 'product',
+      resourceId: image.productId,
+      metadata: { imageId, fields: Object.keys(dto) },
+    });
+    return this.getProduct(image.productId);
+  }
+
   async deleteImage(
     actor: AuthPrincipal,
     imageId: string,
@@ -676,11 +751,14 @@ export class CatalogAdminService {
     q: PaginationInput & {
       q?: string | undefined;
       status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED' | undefined;
+      ids?: string | undefined;
     },
   ) {
+    const ids = q.ids?.toLowerCase().split(',');
     const where: Prisma.ProductWhereInput = {
       deletedAt: null,
       ...(q.status ? { status: q.status } : {}),
+      ...(ids ? { id: { in: ids } } : {}),
       ...(q.q
         ? {
             OR: [
@@ -884,6 +962,18 @@ export class CatalogAdminService {
     await this.inventory.ensureStockRecord(tx, variant.id);
     return variant;
   }
+}
+
+/** Equal price-field values: numbers, null, or dates compared by instant. */
+function samePriceValue(
+  a: number | Date | null | undefined,
+  b: number | Date | null,
+): boolean {
+  if (a instanceof Date || b instanceof Date)
+    return (
+      a instanceof Date && b instanceof Date && a.getTime() === b.getTime()
+    );
+  return (a ?? null) === b;
 }
 
 function priceSnapshot(v: {

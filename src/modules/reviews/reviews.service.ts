@@ -319,4 +319,45 @@ export class ReviewsService implements ProductRatingSource, OnModuleInit {
     });
     return { id, status: decision };
   }
+
+  /**
+   * Takes a PUBLISHED review down (for example one found abusive after approval): APPROVED -> REJECTED with the
+   * reason, which the author sees. Conditional, like `decide`: only an approved review can be taken down.
+   */
+  async takeDown(
+    actor: AuthPrincipal,
+    id: string,
+    note: string,
+    ctx: RequestContext,
+  ) {
+    const { count } = await this.prisma.productReview.updateMany({
+      where: { id, status: 'APPROVED' },
+      data: {
+        status: 'REJECTED',
+        moderatedById: actor.userId,
+        moderatedAt: new Date(),
+        moderationNote: note,
+      },
+    });
+    if (count === 0) {
+      const exists = await this.prisma.productReview.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (!exists) throw new NotFoundException('Review not found');
+      throw new ConflictException({
+        message: 'Only a published review can be taken down',
+        code: 'REVIEW_NOT_PUBLISHED',
+      });
+    }
+    await this.audit.record({
+      action: AuditAction.ReviewTakenDown,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...ctx,
+      resourceType: 'review',
+      resourceId: id,
+    });
+    return { id, status: 'REJECTED' as const };
+  }
 }

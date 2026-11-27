@@ -44,6 +44,8 @@ export interface RefundRequest {
   autoApprove: boolean;
   idempotencyKey: string;
   returnRequestId?: string | undefined;
+  /** A retry of this FAILED refund (refunds.retry_of_id, unique). */
+  retryOfId?: string | undefined;
 }
 
 const OPEN: Refund['status'][] = ['PENDING_APPROVAL', 'APPROVED', 'PROCESSING'];
@@ -135,6 +137,7 @@ export class RefundService {
         requestedById: input.requestedById,
         receipt: `RF-${randomBytes(8).toString('hex')}`,
         idempotencyKey: input.idempotencyKey,
+        retryOfId: input.retryOfId ?? null,
       },
     });
     await this.recompute(tx, order.id, payment.id);
@@ -202,6 +205,84 @@ export class RefundService {
     });
     await this.execute(refundId); // best effort now; the worker retries if this fails
     return this.prisma.refund.findUniqueOrThrow({ where: { id: refundId } });
+  }
+
+  /**
+   * Retry of a FAILED refund (a bank or provider refused it): a NEW refund request for the same order, payment, kind,
+   * amount and return, in the name of the staff member retrying. Like every refund a person asks for, a DIFFERENT
+   * person must approve it. A failed cancel refund is retried under the next cancel key, so when the retry is processed
+   * the cancellation completes (RefundService.recompute). One retry per failed refund (unique retry_of_id).
+   */
+  async retryFailed(
+    actor: AuthPrincipal,
+    failedId: string,
+    ctx: RequestContext,
+  ): Promise<Refund> {
+    let retry: Refund;
+    try {
+      retry = await this.prisma.$transaction(async (tx) => {
+        const failed = await tx.refund.findUnique({ where: { id: failedId } });
+        if (!failed) throw new NotFoundException('Refund not found');
+        await this.lifecycle.lock(tx, failed.orderId); // ORDER first, as everywhere (requestInTx locks it again)
+        const current = await tx.refund.findUniqueOrThrow({
+          where: { id: failedId },
+          include: { retriedBy: { select: { id: true } } },
+        });
+        if (current.status !== 'FAILED')
+          throw new ConflictException({
+            message: 'Only a failed refund can be retried',
+            code: 'REFUND_NOT_FAILED',
+          });
+        if (current.retriedBy)
+          throw new ConflictException({
+            message: 'This refund was already retried',
+            code: 'REFUND_ALREADY_RETRIED',
+          });
+        const cancelPrefix = `cancel:${current.orderId}`;
+        const isCancel =
+          current.idempotencyKey === cancelPrefix ||
+          current.idempotencyKey.startsWith(`${cancelPrefix}:`);
+        const idempotencyKey = isCancel
+          ? `${cancelPrefix}:${await tx.refund.count({ where: { orderId: current.orderId, idempotencyKey: { startsWith: cancelPrefix } } })}`
+          : `retry:${current.id}`;
+        return this.requestInTx(tx, {
+          paymentId: current.paymentId,
+          kind: current.kind,
+          amountMinor: current.amountMinor,
+          // keeps the "Order cancelled: " prefix of a cancel refund (recompute reads the reason from it)
+          reason: isCancel
+            ? current.reason
+            : `Retry of ${current.receipt}: ${current.reason}`,
+          requestedById: actor.userId,
+          autoApprove: false,
+          idempotencyKey,
+          returnRequestId: current.returnRequestId ?? undefined,
+          retryOfId: current.id,
+        });
+      });
+    } catch (err) {
+      // two people retrying at the same moment: the unique retry_of_id decides
+      if ((err as { code?: string }).code === 'P2002')
+        throw new ConflictException({
+          message: 'This refund was already retried',
+          code: 'REFUND_ALREADY_RETRIED',
+        });
+      throw err;
+    }
+    await this.audit.record({
+      action: AuditAction.RefundRetried,
+      outcome: 'SUCCESS',
+      actorId: actor.userId,
+      ...ctx,
+      resourceType: 'refund',
+      resourceId: retry.id,
+      metadata: {
+        retryOf: failedId,
+        amountMinor: retry.amountMinor,
+        orderId: retry.orderId,
+      },
+    });
+    return retry;
   }
 
   async reject(

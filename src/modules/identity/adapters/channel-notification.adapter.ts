@@ -7,6 +7,7 @@ import {
   SmsTransport,
   type NotificationMessage,
 } from '../ports/ports.js';
+import { creditNoteAttachment } from './credit-note-document.js';
 import { renderEmail, type EmailMessage } from './notification-templates.js';
 
 const mask = (v: string): string => v.replace(/^(.).*(.@|.{2}$)/, '$1***$2');
@@ -58,6 +59,14 @@ export class ChannelNotificationAdapter extends NotificationPort {
 
   private async sendEmail(m: EmailMessage): Promise<void> {
     const r = renderEmail(m, { frontendBaseUrl: this.frontendBaseUrl });
-    await this.email.send({ to: m.email, ...r });
+    const attachments =
+      m.type === 'REFUND_PROCESSED' && m.creditNote
+        ? [creditNoteAttachment(m.creditNote)]
+        : undefined;
+    await this.email.send({
+      to: m.email,
+      ...r,
+      ...(attachments ? { attachments } : {}),
+    });
   }
 }

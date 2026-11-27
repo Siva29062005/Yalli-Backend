@@ -235,12 +235,15 @@ Storefront
       accessible labels; mobile filter dialog has no Escape/focus trap. Categories refetch on every window focus.
 
 Admin
-- [ ] Lists stay on an empty page after the last row of a page is approved/deleted (products, reviews, refunds,
-      inventory): clamp `page` to `meta.totalPages`. Inventory history keeps the page number when switching SKU.
-- [ ] Inventory "Adjust" ignores the row's warehouse (always the default warehouse).
-- [ ] Categories screen is shown for `products.read` but needs `products.update`, and bypasses `withStepUp`.
-- [ ] Variant save always sends price fields, so it needs `pricing.update` and is audited as a price change.
-- [ ] Order cancel form closes even when cancel fails; the role picker offers roles the caller cannot assign.
+- [x] (2026-11-27, Phase 11: `useClampedPage` in every paged admin list; history keyed by SKU) Lists stay on an
+      empty page after the last row of a page is approved/deleted; inventory history keeps the page when switching SKU.
+- [x] (2026-11-27, Phase 11) Inventory "Adjust" ignores the row's warehouse (always the default warehouse).
+- [x] (2026-11-27, Phase 11: readable with `products.read`, form only with `products.update`, all calls via
+      `withStepUp`) Categories screen is shown for `products.read` but needs `products.update`, and bypasses `withStepUp`.
+- [x] (2026-11-27, Phase 11: the form sends only changed fields; the server ignores price fields equal to the current
+      value for the permission check and the audit) Variant save always sends price fields.
+- [x] (2026-11-27, Phase 11: `act` reports failure; `GET /admin/roles` marks `assignable` via `canAssignRole`) Order
+      cancel form closes even when cancel fails; the role picker offers roles the caller cannot assign.
 
 ### Security and bug review 2026-11-27: fix soon
 Money and orders
@@ -304,8 +307,9 @@ Platform
 Catalogue and content
 - [x] (2026-11-27, Phase 9) Cart merge can exceed 50 lines (count read once, `cart.service.ts`); checkout has no line cap.
 - [ ] "Verified purchase" stays after the item was returned and refunded (`hasReceivedProduct`).
-- [ ] `DELETE /admin/variants/:id` needs `products.update`, not `products.delete`; the import CLI's `--publish` and stock
-      receipts do not check the `--as` user's permissions; category counts include products with no active variant.
+- [ ] `DELETE /admin/variants/:id` needs `products.update`, not `products.delete`; category counts include products
+      with no active variant. (Fixed 2026-11-27, Phase 11: the import CLI now checks products.publish for `--publish`
+      and inventory.adjust for stock, like the console.)
 
 ### Review of the Phase 10 commit (da146bc, 2026-11-27)
 - [x] (2026-11-27) 18 confirmed findings fixed (contact form limits and length, brand counts, contact data in export and
@@ -320,12 +324,18 @@ Catalogue and content
 - [x] (2026-11-27, Phase 10) Storefront: all reviews (paged) with the star breakdown, a "From" price for products whose
       variants cost different amounts, the brand filter scoped to the category (`GET /catalog/brands?category=`).
 - [ ] Storefront: nested category filter (parent/child), and a "can I review?" check before writing a review.
-- [ ] Admin screen for contact-form messages (`contact_messages`, status NEW/HANDLED); until then read them in the
-      support inbox (`SUPPORT_INBOX_EMAIL`) or the database.
-- [ ] Admin: brand create/delete, credit-note list by date (for GST filing), restore archived products, edit slug,
-      image reorder/per-variant images, returns status filter, invoice view on admin order detail, take down an approved
-      review. Backend has no endpoints yet for audit log, customer lookup, refund retry, low-stock thresholds, catalogue
-      import (CLI only).
+- [x] (2026-11-27, Phase 11) Admin screen for contact-form messages (`/admin/messages`, mark handled, audited).
+- [x] (2026-11-27, Phase 11) Admin: brand create/delete (`/admin/brands`), restore archived products, edit slug,
+      image reorder/per-variant images (`PATCH /admin/images/:id`), returns status and order filters (linked from the
+      order page), invoice and credit notes on admin order detail (`GET /admin/orders/:id/invoice|credit-notes`),
+      tracking event time, take down an approved review (`POST /admin/reviews/:id/take-down`), product picker for
+      product coupons (`GET /admin/products?ids=`).
+- [x] (2026-11-27, Phase 11) Admin: credit-note register with GSTR-1 CSV, refund reconciliation export, refund retry,
+      customer lookup, audit-log viewer, low-stock thresholds and warehouses, credit note attached to the refund email,
+      catalogue import in the console. Record: `docs/architecture/phase-11-admin.md`.
+- [ ] Refund reconciliation is our side only; match it against Razorpay's settlement report manually until the live
+      account exists (Phase 13: use the settlement recon API).
+- [ ] The emailed credit note is an HTML document; a PDF needs a server-side renderer (P2).
 - [ ] No Content-Security-Policy on the frontend; "stock held for 30 minutes" is hard-coded instead of
       `PAYMENT_WINDOW_MINUTES`.
 

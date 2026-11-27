@@ -21,6 +21,7 @@ export interface AdminIdentity {
 export const restoreAdminSession = session.restore;
 export const adminRequest = session.request;
 export const adminRequestPage = session.requestPage;
+export const adminRequestFile = session.requestFile;
 export const adminLogin = (email: string, password: string) => session.login(email, password, false);
 export const adminVerify = (mfaToken: string, code: string) => session.verifyMfa(mfaToken, { code }, false);
 export const adminStepUp = session.stepUp;

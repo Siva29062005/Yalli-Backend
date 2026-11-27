@@ -308,6 +308,84 @@ describe('no flow needs a second connection while it holds one', () => {
     no5xx(approvals, 'refund approvals');
   }, 240_000);
 
+  it('Phase 11 console flows: failed-refund retries and image reorders, 9 in parallel each', async () => {
+    // refunds the provider refuses -> FAILED, then 9 retries at once (each locks the order, then the payment)
+    const failed: string[] = [];
+    for (let i = 0; i < N; i++) {
+      const { variant } = await shop.fx.product({
+        priceMinor: 20_000,
+        stock: 5,
+      });
+      const [u] = await customers(1, variant.id);
+      const order = await shop.order(u!, [{ variantId: variant.id }]);
+      await shop.paid(u!, order.id);
+      ctx.razorpay.failNext.push({ match: '/refund', mode: 'reject' });
+      await ctx
+        .http()
+        .post(`/api/v1/orders/${order.id}/cancel`)
+        .set(authed(u!))
+        .send({})
+        .expect(200);
+      failed.push((await shop.dbOrder(order.id)).refunds[0]!.id);
+    }
+    const retries = await Promise.all(
+      failed.map((id, i) =>
+        ctx
+          .http()
+          .post(`/api/v1/admin/refunds/${id}/retry`)
+          .set({
+            ...authed(support),
+            'Idempotency-Key': `pool-retry-${i}-${randomBytes(4).toString('hex')}`,
+          }),
+      ),
+    );
+    no5xx(retries, 'refund retries');
+    expect(retries.every((r) => r.status === 201)).toBe(true);
+
+    // 9 image moves on one product at once (each renumbers the gallery in one transaction)
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const { product } = await shop.fx.product();
+    const png = Buffer.from(
+      '89504e470d0a1a0a0000000d4948445200000001000000010806000000' +
+        '1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082',
+      'hex',
+    );
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++)
+      ids.push(
+        (
+          await ctx
+            .http()
+            .post(`/api/v1/admin/products/${product.id}/images`)
+            .set(authed(pm))
+            .attach('file', png, {
+              filename: 'p.png',
+              contentType: 'image/png',
+            })
+            .expect(201)
+        ).body.data.id,
+      );
+    const moves = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        ctx
+          .http()
+          .patch(`/api/v1/admin/images/${ids[i % 3]}`)
+          .set(authed(pm))
+          .send({ position: (i * 2) % 3 }),
+      ),
+    );
+    no5xx(moves, 'image moves');
+    const positions = (
+      await ctx.prisma.productImage.findMany({
+        where: { productId: product.id },
+        select: { position: true },
+      })
+    )
+      .map((r) => r.position)
+      .sort();
+    expect(positions).toEqual([0, 1, 2]); // still a clean sequence after the concurrent moves
+  }, 240_000);
+
   it('reviews, wishlist and catalogue reads: 9 in parallel', async () => {
     const { product } = await shop.fx.product({
       priceMinor: 10_000,

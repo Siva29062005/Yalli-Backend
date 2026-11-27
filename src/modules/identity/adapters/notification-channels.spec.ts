@@ -25,6 +25,36 @@ const cfg = (extra: Record<string, unknown> = {}) =>
   }) as unknown as ConfigService<Env, true>;
 
 describe('SesEmailTransport', () => {
+  it('sends a raw MIME message only when there is an attachment', async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const t = new SesEmailTransport(cfg(), { send } as Pick<
+      SESv2Client,
+      'send'
+    >);
+    await t.send({
+      to: 'a@example.com',
+      subject: 'Refund',
+      text: 'T',
+      html: '<p>H</p>',
+      attachments: [
+        {
+          filename: 'credit-note-CN-1.html',
+          contentType: 'text/html',
+          content: '<h1>CN</h1>',
+        },
+      ],
+    });
+    const input = (
+      send.mock.calls[0]![0] as {
+        input: { Content: { Raw?: { Data: Uint8Array }; Simple?: unknown } };
+      }
+    ).input;
+    expect(input.Content.Simple).toBeUndefined();
+    const raw = Buffer.from(input.Content.Raw!.Data).toString('utf8');
+    expect(raw).toContain('From: no-reply@yalli.in');
+    expect(raw).toContain('filename="credit-note-CN-1.html"');
+  });
+
   it('sends a structured SES v2 message (no raw headers) from the configured identity', async () => {
     const send = vi.fn().mockResolvedValue({});
     const t = new SesEmailTransport(
@@ -209,6 +239,47 @@ describe('ChannelNotificationAdapter', () => {
     await expect(
       adapter.send({ type: 'PHONE_OTP', phone: '+919876543210', code: '1' }),
     ).rejects.toThrow('MSG91 down');
+  });
+
+  it('attaches the credit note to the refund email (and only then)', async () => {
+    const { email, adapter } = make();
+    const base = {
+      email: 'buyer@example.com',
+      name: 'Buyer',
+      orderNumber: 'YL26-1',
+      amountMinor: 11_800,
+    };
+    await adapter.send({ type: 'REFUND_PROCESSED', ...base });
+    expect(email.sent.at(-1)?.attachments).toBeUndefined();
+    await adapter.send({
+      type: 'REFUND_PROCESSED',
+      ...base,
+      creditNote: {
+        creditNoteNumber: 'CN/2627/000007',
+        issuedAt: '2026-11-20T10:00:00Z',
+        invoiceNumber: 'INV/2627/000001',
+        orderNumber: 'YL26-1',
+        reason: 'Returned',
+        taxDocument: false,
+        seller: { name: 'Yalli', state: 'Tamil Nadu', gstin: null },
+        buyer: { name: 'Buyer', email: 'buyer@example.com' },
+        placeOfSupply: 'Tamil Nadu',
+        supply: 'INTRA_STATE',
+        lines: [],
+        totals: {
+          taxableValueMinor: 10_000,
+          cgstMinor: 900,
+          sgstMinor: 900,
+          igstMinor: 0,
+          totalMinor: 11_800,
+        },
+      },
+    });
+    const sent = email.sent.at(-1)!;
+    expect(sent.attachments?.[0]?.filename).toBe(
+      'credit-note-CN-2627-000007.html',
+    );
+    expect(sent.text).toContain('CN/2627/000007 is attached');
   });
 
   it('never writes tokens, codes or full addresses to the log', async () => {

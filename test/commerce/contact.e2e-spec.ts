@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common';
 import { CaptchaVerifier } from '../../src/modules/identity/ports/ports.js';
 import {
+  Scenario,
+  authed,
   createTestApp,
   freshIp,
   type TestContext,
@@ -94,5 +96,55 @@ describe('contact form', () => {
     for (let i = 0; i < 4; i++)
       statuses.push((await send(valid({ email }))).status);
     expect(statuses).toEqual([202, 202, 202, 429]);
+  });
+});
+
+describe('contact inbox in the console (customers.read)', () => {
+  it('support lists new messages and marks one handled (once); other roles cannot', async () => {
+    const s = new Scenario(ctx);
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const body = valid({ message: 'Please call me about my order delivery.' });
+    expect((await send(body)).status).toBe(202);
+    const list = await ctx
+      .http()
+      .get('/api/v1/admin/contact-messages?status=NEW')
+      .set(authed(support))
+      .expect(200);
+    const msg = (
+      list.body.data as { id: string; email: string; status: string }[]
+    ).find((m) => m.email === body.email);
+    expect(msg).toMatchObject({ status: 'NEW' });
+    await ctx
+      .http()
+      .post(`/api/v1/admin/contact-messages/${msg!.id}/handled`)
+      .set(authed(support))
+      .expect(200);
+    const again = await ctx
+      .http()
+      .post(`/api/v1/admin/contact-messages/${msg!.id}/handled`)
+      .set(authed(support));
+    expect(again.status).toBe(409);
+    const handled = await ctx
+      .http()
+      .get('/api/v1/admin/contact-messages?status=HANDLED')
+      .set(authed(support))
+      .expect(200);
+    expect(
+      (handled.body.data as { id: string }[]).some((m) => m.id === msg!.id),
+    ).toBe(true);
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'contact.handled', resourceId: msg!.id },
+      }),
+    ).toBe(1);
+    for (const who of [await s.staff('ORDER_MANAGER'), await s.session()])
+      expect(
+        (
+          await ctx
+            .http()
+            .get('/api/v1/admin/contact-messages')
+            .set(authed(who))
+        ).status,
+      ).toBe(403);
   });
 });

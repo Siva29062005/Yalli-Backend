@@ -58,6 +58,29 @@ export async function requestEnvelope<T>(
   return { data: result.data as T, meta: (result.meta ?? null) as ApiEnvelope<T>['meta'] };
 }
 
+/** A file download (CSV export): the body as a Blob, or the API's error envelope as an ApiError. */
+export async function requestBlob(endpoint: string, options: RequestInit = {}): Promise<{ blob: Blob; filename: string | null }> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      credentials: 'include',
+      cache: 'no-store',
+      signal: options.signal ?? AbortSignal.timeout(60000),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    throw new ApiError('Unable to reach the store. Please try again.', 0);
+  }
+  if (!response.ok) {
+    const result = await response.json().catch(() => null);
+    throw new ApiError(result?.message || 'The file could not be downloaded. Please try again.', response.status, result?.error?.code, result?.error?.details);
+  }
+  // filename="…" from Content-Disposition, letters/digits/dot/dash only
+  const match = /filename="([A-Za-z0-9._-]{1,100})"/.exec(response.headers.get('content-disposition') ?? '');
+  return { blob: await response.blob(), filename: match?.[1] ?? null };
+}
+
 export async function requestApi<T>(
   endpoint: string,
   options: RequestInit = {},

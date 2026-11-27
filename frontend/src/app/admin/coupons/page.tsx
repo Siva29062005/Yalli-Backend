@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { useAdminSession } from '@/components/AdminContext';
-import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminGhostButton, adminInput } from '@/components/AdminKit';
+import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminGhostButton, adminInput, useClampedPage } from '@/components/AdminKit';
 import { adminGet, adminList, adminPatch, adminPost, paiseToRupees, rupeesToPaise } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
 import { formatDateTime, formatPaise } from '@/lib/formatters';
@@ -67,6 +67,7 @@ export default function AdminCouponsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const list = useAdminQuery(() => adminList<Coupon>('/admin/coupons', { page, pageSize: 20 }), [page]);
+  useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
 
   async function toggle(c: Coupon) {
@@ -189,8 +190,9 @@ function CouponFields({
   const [amount, setAmount] = useState(paiseToRupees(coupon?.amountMinor));
   const [maxDiscount, setMaxDiscount] = useState(paiseToRupees(coupon?.maxDiscountMinor));
   const [minCart, setMinCart] = useState(coupon?.minCartMinor ? paiseToRupees(coupon.minCartMinor) : '');
-  const [scope, setScope] = useState<'ALL_ITEMS' | 'CATEGORIES'>(coupon?.scope === 'CATEGORIES' ? 'CATEGORIES' : 'ALL_ITEMS');
+  const [scope, setScope] = useState<'ALL_ITEMS' | 'CATEGORIES' | 'PRODUCTS'>(coupon?.scope ?? 'ALL_ITEMS');
   const [categoryIds, setCategoryIds] = useState<string[]>(detail?.categories.map((c) => c.categoryId) ?? []);
+  const [productIds, setProductIds] = useState<string[]>(detail?.products.map((p) => p.productId) ?? []);
   const [startsAt, setStartsAt] = useState(toLocalInput(coupon?.startsAt ?? null));
   const [expiresAt, setExpiresAt] = useState(toLocalInput(coupon?.expiresAt ?? null));
   const [maxRedemptions, setMaxRedemptions] = useState(coupon?.maxRedemptions ? String(coupon.maxRedemptions) : '');
@@ -198,7 +200,10 @@ function CouponFields({
   const [isActive, setIsActive] = useState(coupon?.isActive ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const productScoped = coupon?.scope === 'PRODUCTS';
+  // Choosing products needs products.read (the same access the category list needs); without it a product coupon
+  // keeps its product list untouched.
+  const canPickProducts = categories !== null;
+  const productScoped = coupon?.scope === 'PRODUCTS' && !canPickProducts;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -235,6 +240,8 @@ function CouponFields({
     const per = wholeNumber(perCustomer, 'Uses per customer', 1000);
     if (max === undefined || per === undefined) return;
     if (scope === 'CATEGORIES' && categoryIds.length === 0) return fail('Choose at least one category.') ?? undefined;
+    if (scope === 'PRODUCTS' && productIds.length === 0) return fail('Choose at least one product.') ?? undefined;
+    const scopeBody = { scope, categoryIds: scope === 'CATEGORIES' ? categoryIds : [], productIds: scope === 'PRODUCTS' ? productIds : [] };
     const startIso = toIso(startsAt);
     const endIso = toIso(expiresAt);
     if (startIso && endIso && endIso <= startIso) return fail('The coupon must expire after it starts.') ?? undefined;
@@ -253,10 +260,19 @@ function CouponFields({
     setBusy(true);
     try {
       if (isNew) {
-        await run(() => adminPost('/admin/coupons', { code: code.trim(), discountType: type, scope, ...(scope === 'CATEGORIES' ? { categoryIds } : {}), ...shared }));
+        await run(() =>
+          adminPost('/admin/coupons', {
+            code: code.trim(),
+            discountType: type,
+            scope,
+            ...(scope === 'CATEGORIES' ? { categoryIds } : {}),
+            ...(scope === 'PRODUCTS' ? { productIds } : {}),
+            ...shared,
+          }),
+        );
         onSaved(`Coupon ${code.trim().toUpperCase()} created.`);
       } else {
-        await run(() => adminPatch(`/admin/coupons/${coupon.id}`, { ...shared, description: description.trim(), ...(productScoped ? {} : { scope, categoryIds: scope === 'CATEGORIES' ? categoryIds : [] }) }));
+        await run(() => adminPatch(`/admin/coupons/${coupon.id}`, { ...shared, description: description.trim(), ...(productScoped ? {} : scopeBody) }));
         onSaved(`Coupon ${coupon.code} updated.`);
       }
     } catch (e) {
@@ -315,6 +331,7 @@ function CouponFields({
           <legend className="text-sm font-medium">Applies to</legend>
           <label className="flex items-center gap-2 text-sm"><input type="radio" checked={scope === 'ALL_ITEMS'} onChange={() => setScope('ALL_ITEMS')} /> Everything in the cart</label>
           <label className="flex items-center gap-2 text-sm"><input type="radio" checked={scope === 'CATEGORIES'} disabled={categories === null && scope !== 'CATEGORIES'} onChange={() => setScope('CATEGORIES')} /> Only selected categories</label>
+          <label className="flex items-center gap-2 text-sm"><input type="radio" checked={scope === 'PRODUCTS'} disabled={!canPickProducts} onChange={() => setScope('PRODUCTS')} /> Only selected products</label>
           {categories === null && (
             <p className="pl-6 text-xs text-[#4A5550]">
               {categoriesUnavailable === 'error'
@@ -334,6 +351,7 @@ function CouponFields({
               ))}
             </div>
           )}
+          {scope === 'PRODUCTS' && canPickProducts && <ProductPicker selected={productIds} onChange={setProductIds} run={run} />}
         </fieldset>
       )}
       <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active (customers can use it)</label>
@@ -342,5 +360,94 @@ function CouponFields({
         <button className={adminButton} disabled={busy}>{busy ? 'Saving…' : isNew ? 'Create coupon' : 'Save changes'}</button>
       </div>
     </form>
+  );
+}
+
+interface ProductOption {
+  id: string;
+  name: string;
+  status: string;
+}
+
+/** Search the catalogue and pick the products a coupon applies to (up to 500; names shown for the first 60). */
+function ProductPicker({ selected, onChange, run }: { selected: string[]; onChange: (ids: string[]) => void; run: <T>(call: () => Promise<T>) => Promise<T> }) {
+  const [initial] = useState(() => selected.slice(0, 60));
+  const known = useAdminQuery(
+    () => (initial.length ? adminList<ProductOption>('/admin/products', { ids: initial.join(','), pageSize: 60 }).then((r) => r.items) : Promise.resolve([] as ProductOption[])),
+    [initial.join(',')],
+  );
+  const [added, setAdded] = useState<ProductOption[]>([]);
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<ProductOption[] | null>(null);
+  const [error, setError] = useState('');
+  const names = new Map([...(known.data ?? []), ...added].map((p) => [p.id, p.name]));
+
+  async function search() {
+    if (q.trim().length < 2) return setError('Type at least 2 letters of the name or SKU.');
+    setError('');
+    try {
+      setResults((await run(() => adminList<ProductOption>('/admin/products', { q: q.trim(), pageSize: 10 }))).items);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  return (
+    <div className="space-y-3 pl-6">
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label="Find a product">
+          <input
+            className={adminInput}
+            maxLength={100}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault(); // not the coupon form
+              void search();
+            }}
+          />
+        </Field>
+        <button type="button" className={adminGhostButton} onClick={() => void search()}>Search products</button>
+      </div>
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      {results && (
+        <ul aria-label="Search results" className="divide-y divide-[#E6EAE7] rounded-xl border border-[#E6EAE7] text-sm">
+          {results.length === 0 && <li className="p-3 text-[#4A5550]">No products match.</li>}
+          {results.map((p) => (
+            <li key={p.id} className="flex items-center justify-between gap-3 p-3">
+              <span className="min-w-0 break-words">{p.name}{p.status !== 'PUBLISHED' ? ` (${p.status.toLowerCase()})` : ''}</span>
+              <button
+                type="button"
+                className="shrink-0 font-semibold text-[#116644] disabled:opacity-40"
+                disabled={selected.includes(p.id) || selected.length >= 500}
+                aria-label={`Add ${p.name}`}
+                onClick={() => {
+                  setAdded((list) => [...list, p]);
+                  onChange([...selected, p.id]);
+                }}
+              >
+                {selected.includes(p.id) ? 'Added' : 'Add'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div>
+        <p className="text-sm font-medium">Selected ({selected.length})</p>
+        {selected.length === 0 ? (
+          <p className="text-sm text-[#4A5550]">No products yet.</p>
+        ) : (
+          <ul aria-label="Selected products" className="mt-1 flex flex-wrap gap-2">
+            {selected.map((id) => (
+              <li key={id} className="flex items-center gap-1 rounded-full bg-[#EEFFEE] px-3 py-1 text-xs text-[#116644]">
+                <span className="break-all">{names.get(id) ?? (known.loading ? 'Loading…' : 'Product')}</span>
+                <button type="button" className="font-bold" aria-label={`Remove ${names.get(id) ?? 'product'}`} onClick={() => onChange(selected.filter((x) => x !== id))}>×</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }

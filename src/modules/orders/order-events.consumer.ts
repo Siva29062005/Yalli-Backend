@@ -6,6 +6,7 @@ import {
 } from '../identity/ports/ports.js';
 import { MessageBus, type EventEnvelope } from '../outbox/message-bus.js';
 import { MessageDeduplicator } from '../outbox/run-once.js';
+import { CreditNoteService } from './credit-note.service.js';
 
 const CONSUMER = 'notifications';
 const EVENTS = [
@@ -15,6 +16,7 @@ const EVENTS = [
   'order.delivered',
   'order.cancelled',
   'refund.processed',
+  'credit_note.issued',
   'return.decided',
 ] as const;
 
@@ -32,6 +34,7 @@ export class OrderEventsConsumer implements OnModuleInit {
     private readonly dedupe: MessageDeduplicator,
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationPort,
+    private readonly creditNotes: CreditNoteService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -50,6 +53,7 @@ export class OrderEventsConsumer implements OnModuleInit {
           totalMinor: true,
           contactEmail: true,
           shipName: true,
+          paidAt: true,
         },
       });
       if (!order) return;
@@ -58,6 +62,23 @@ export class OrderEventsConsumer implements OnModuleInit {
         name: order.shipName,
         orderNumber: order.orderNumber,
       };
+      // The refund email of an INVOICED order waits for its credit note (credit_note.issued) and carries it; an order
+      // that was never invoiced (no credit note will come) is told on refund.processed.
+      if (event.type === 'refund.processed' && order.paidAt) return;
+      if (event.type === 'credit_note.issued') {
+        const id = event.payload['creditNoteId'];
+        const creditNote =
+          typeof id === 'string'
+            ? await this.creditNotes.documentInTx(tx, id)
+            : null;
+        await this.notifications.send({
+          type: 'REFUND_PROCESSED',
+          ...base,
+          amountMinor: Number(event.payload['amountMinor'] ?? 0),
+          ...(creditNote ? { creditNote } : {}),
+        });
+        return;
+      }
       const message = this.message(event, base, order.totalMinor);
       if (message) await this.notifications.send(message);
     });

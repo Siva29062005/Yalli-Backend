@@ -352,3 +352,100 @@ describe('failure isolation', () => {
     });
   });
 });
+
+describe('console import (POST /admin/catalog/import)', () => {
+  const upload = (
+    who: Awaited<ReturnType<Scenario['staff']>>,
+    body: unknown,
+    fields: Record<string, string> = {},
+  ) => {
+    let req = ctx
+      .http()
+      .post('/api/v1/admin/catalog/import')
+      .set(authed(who))
+      .attach('file', Buffer.from(JSON.stringify(body)), {
+        filename: 'catalog.json',
+        contentType: 'application/json',
+      });
+    for (const [k, v] of Object.entries(fields)) req = req.field(k, v);
+    return req;
+  };
+
+  it('dry run first, then the same file is applied; another file or other options need their own dry run', async () => {
+    const admin = await s.staff('ADMIN');
+    const file = makeFile();
+    // applying without a dry run is refused
+    const blind = await upload(admin, file, { apply: 'true' });
+    expect(blind.status).toBe(400);
+    expect(blind.body.error.code).toBe('IMPORT_DRY_RUN_REQUIRED');
+
+    const dry = await upload(admin, file).expect(200);
+    expect(dry.body.data).toMatchObject({
+      mode: 'DRY_RUN',
+      products: { created: 2 },
+    });
+    expect(
+      await ctx.prisma.product.count({
+        where: { name: file.products[0]!.name },
+      }),
+    ).toBe(0); // the dry run wrote nothing
+    // the dry run does not cover other options
+    expect(
+      (await upload(admin, file, { apply: 'true', publish: 'true' })).body.error
+        ?.code,
+    ).toBe('IMPORT_DRY_RUN_REQUIRED');
+
+    const applied = await upload(admin, file, { apply: 'true' }).expect(200);
+    expect(applied.body.data).toMatchObject({
+      mode: 'APPLIED',
+      products: { created: 2, failed: 0 },
+    });
+    // DRAFT by default, even though the file says PUBLISHED
+    const p = await ctx.prisma.product.findFirstOrThrow({
+      where: { name: file.products[0]!.name },
+    });
+    expect(p.status).toBe('DRAFT');
+    // the confirmation is used up
+    expect(
+      (await upload(admin, file, { apply: 'true' })).body.error?.code,
+    ).toBe('IMPORT_DRY_RUN_REQUIRED');
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'catalog.imported', actorId: admin.userId },
+      }),
+    ).toBe(1);
+  });
+
+  it('a bad file writes nothing and lists the problems; publish and stock need their own permissions', async () => {
+    const admin = await s.staff('ADMIN');
+    const bad = makeFile(uniq(), {
+      products: [{ key: 'x', name: '', variants: [] }],
+    });
+    const res = await upload(admin, bad);
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.length).toBeGreaterThan(0);
+    const notJson = await ctx
+      .http()
+      .post('/api/v1/admin/catalog/import')
+      .set(authed(admin))
+      .attach('file', Buffer.from('{oops'), {
+        filename: 'c.json',
+        contentType: 'application/json',
+      });
+    expect(notJson.status).toBe(400);
+
+    // PRODUCT_MANAGER has no inventory.adjust: a file with stock is refused, one without is fine
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const withStock = await upload(pm, makeFile());
+    expect(withStock.status).toBe(403);
+    const noStock = makeFile();
+    for (const prod of noStock.products)
+      for (const v of prod.variants) v.stock = 0;
+    await upload(pm, noStock).expect(200);
+    // ORDER_MANAGER may not import at all; unknown option fields are refused
+    expect((await upload(await s.staff('ORDER_MANAGER'), noStock)).status).toBe(
+      403,
+    );
+    expect((await upload(admin, noStock, { force: 'true' })).status).toBe(400);
+  });
+});

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Plus, Search } from 'lucide-react';
-import { Alert, AdminPage, DataState, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
+import { Alert, AdminPage, DataState, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput, useClampedPage } from '@/components/AdminKit';
 import { useAdminSession } from '@/components/AdminContext';
 import { adminDelete, adminList, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
@@ -40,6 +40,7 @@ export default function AdminProductsPage() {
   const [notice, setNotice] = useState('');
 
   const list = useAdminQuery(() => adminList<AdminProductRow>('/admin/products', { q, status, page, pageSize: 20 }), [q, status, page]);
+  useClampedPage(list.data?.meta, page, setPage);
 
   async function act(row: AdminProductRow, action: 'publish' | 'unpublish' | 'archive' | 'delete') {
     if (action === 'delete' && !window.confirm(`Delete "${row.name}"? It disappears from the shop; past orders keep their record.`)) return;
@@ -49,7 +50,12 @@ export default function AdminProductsPage() {
     setNotice('');
     try {
       await withStepUp(() => (action === 'delete' ? adminDelete(`/admin/products/${row.id}`) : adminPost(`/admin/products/${row.id}/${action}`)));
-      setNotice({ publish: 'Product published.', unpublish: 'Product moved back to draft.', archive: 'Product archived.', delete: 'Product deleted.' }[action]);
+      setNotice({
+        publish: 'Product published.',
+        unpublish: row.status === 'ARCHIVED' ? 'Product restored as a draft.' : 'Product moved back to draft.',
+        archive: 'Product archived.',
+        delete: 'Product deleted.',
+      }[action]);
       list.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not update the product.');
@@ -167,6 +173,9 @@ export default function AdminProductsPage() {
                         ) : null}
                         {can('products.publish') && row.status !== 'ARCHIVED' && (
                           <button className={adminGhostButton} disabled={busyId === row.id} onClick={() => void act(row, 'archive')}>Archive</button>
+                        )}
+                        {can('products.publish') && row.status === 'ARCHIVED' && (
+                          <button className={adminGhostButton} disabled={busyId === row.id} onClick={() => void act(row, 'unpublish')}>Restore</button>
                         )}
                         {can('products.delete') && (
                           <button className={adminDangerButton} disabled={busyId === row.id} onClick={() => void act(row, 'delete')}>Delete</button>

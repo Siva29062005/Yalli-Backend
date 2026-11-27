@@ -62,8 +62,8 @@ export class AdminAccessController {
 
   @Get('roles')
   @RequirePermissions(Permission.UsersManage)
-  roles() {
-    return this.access.listRoles();
+  roles(@CurrentPrincipal() actor: AuthPrincipal) {
+    return this.access.listRoles(actor);
   }
 
   @Get('users')

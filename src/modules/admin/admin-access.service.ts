@@ -15,6 +15,7 @@ import type { Prisma } from '../../generated/prisma/client.js';
 import { AuthorizationService } from '../access/authorization.service.js';
 import { RoleName, STAFF_ROLE_RANK_THRESHOLD } from '../access/permissions.js';
 import {
+  canAssignRole,
   canChangeRole,
   canChangeUserStatus,
   type PolicyActor,
@@ -55,7 +56,9 @@ export class AdminAccessService {
     private readonly audit: AuditService,
   ) {}
 
-  listRoles() {
+  /** All roles, each marked with whether THIS caller may give it to someone (role-policy `canAssignRole`). */
+  listRoles(actor: AuthPrincipal) {
+    const policyActor = toActor(actor);
     return this.prisma.role
       .findMany({
         orderBy: { rank: 'desc' },
@@ -67,12 +70,22 @@ export class AdminAccessService {
         },
       })
       .then((roles) =>
-        roles.map((r) => ({
-          name: r.name,
-          description: r.description,
-          rank: r.rank,
-          permissions: r.permissions.map((p) => p.permission.name).sort(),
-        })),
+        roles.map((r) => {
+          const permissions = r.permissions
+            .map((p) => p.permission.name)
+            .sort();
+          return {
+            name: r.name,
+            description: r.description,
+            rank: r.rank,
+            permissions,
+            assignable: canAssignRole(policyActor, {
+              name: r.name,
+              rank: r.rank,
+              permissions,
+            }).allowed,
+          };
+        }),
       );
   }
 

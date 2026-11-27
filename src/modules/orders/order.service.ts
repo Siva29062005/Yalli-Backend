@@ -256,8 +256,17 @@ export class OrderService {
 
   /** GST tax invoice data (JSON). Available once the order has been paid. */
   async invoice(principal: AuthPrincipal, orderId: string) {
+    return this.invoiceWhere({ id: orderId, userId: principal.userId });
+  }
+
+  /** Staff copy of an order's invoice (same document the customer gets). */
+  async adminInvoice(orderId: string) {
+    return this.invoiceWhere({ id: orderId });
+  }
+
+  private async invoiceWhere(where: Prisma.OrderWhereInput) {
     const o = await this.prisma.order.findFirst({
-      where: { id: orderId, userId: principal.userId },
+      where,
       include: { items: true },
     });
     if (!o || !o.paidAt) throw new NotFoundException('Invoice not available');
@@ -331,6 +340,48 @@ export class OrderService {
       this.prisma.order.count({ where }),
     ]);
     return paginated(rows, total, q);
+  }
+
+  /** Support's view of one customer's recent orders and return requests (newest first, at most 20 of each). */
+  async adminCustomerHistory(userId: string) {
+    const [orders, returns] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { userId },
+        orderBy: { placedAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          orderNumber: true,
+          status: true,
+          placedAt: true,
+          totalMinor: true,
+        },
+      }),
+      this.prisma.returnRequest.findMany({
+        where: { order: { userId } },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          status: true,
+          quantity: true,
+          reason: true,
+          createdAt: true,
+          order: { select: { id: true, orderNumber: true } },
+          item: { select: { productName: true } },
+        },
+      }),
+    ]);
+    return { orders, returns };
+  }
+
+  /** The customer an order number belongs to (support finds a caller by the number on their invoice). */
+  async ownerOfOrderNumber(orderNumber: string): Promise<string | null> {
+    const o = await this.prisma.order.findUnique({
+      where: { orderNumber },
+      select: { userId: true },
+    });
+    return o?.userId ?? null;
   }
 
   async adminGet(orderId: string) {

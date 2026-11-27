@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Search } from 'lucide-react';
 import { useAdminSession } from '@/components/AdminContext';
-import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
+import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput, useClampedPage } from '@/components/AdminKit';
 import { adminDelete, adminGet, adminList, adminPatch, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
 import { formatDateTime } from '@/lib/formatters';
@@ -24,6 +24,8 @@ interface RoleInfo {
   description: string | null;
   rank: number;
   permissions: string[];
+  /** Whether the signed-in staff member may give this role (server role policy). Missing on an older backend. */
+  assignable?: boolean;
 }
 
 const STATUS_TONE = { ACTIVE: 'green', PENDING_VERIFICATION: 'amber', SUSPENDED: 'red', DEACTIVATED: 'gray' } as const;
@@ -47,6 +49,7 @@ export default function AdminUsersPage() {
 
   const roles = useAdminQuery(() => adminGet<RoleInfo[]>('/admin/roles'), []);
   const list = useAdminQuery(() => adminList<UserRow>('/admin/users', { q, role, status, page, pageSize: 20 }), [q, role, status, page]);
+  useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
 
   async function act(id: string, message: string, call: () => Promise<unknown>) {
@@ -103,7 +106,8 @@ export default function AdminUsersPage() {
             {rows.map((u) => {
               const self = u.id === identity.id;
               const isStaff = u.roles.some((r) => r !== 'CUSTOMER');
-              const available = (roles.data ?? []).filter((r) => !u.roles.includes(r.name));
+              // only roles this staff member may hand out (the server refuses the others anyway)
+              const available = (roles.data ?? []).filter((r) => !u.roles.includes(r.name) && r.assignable !== false);
               return (
                 <li key={u.id} className="space-y-3 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">

@@ -48,6 +48,8 @@ export type NotificationMessage =
       name: string;
       orderNumber: string;
       amountMinor: number;
+      /** The GST credit note for this refund, attached to the email (absent when the order was never invoiced). */
+      creditNote?: CreditNoteDocument | undefined;
     }
   | {
       type: 'RETURN_UPDATE';
@@ -69,11 +71,50 @@ export type NotificationMessage =
     }
   | { type: 'PHONE_OTP'; phone: string; code: string };
 
+export interface EmailAttachment {
+  /** Letters, digits, dot, dash and underscore only (it goes into a MIME header). */
+  filename: string;
+  contentType: 'text/html';
+  content: string;
+}
+
 export interface OutboundEmail {
   to: string;
   subject: string;
   text: string;
   html: string;
+  attachments?: EmailAttachment[] | undefined;
+}
+
+/** A credit note as it is printed (built by the orders module's CreditNoteService). */
+export interface CreditNoteDocument {
+  creditNoteNumber: string;
+  issuedAt: Date | string;
+  invoiceNumber: string;
+  orderNumber: string;
+  reason: string;
+  taxDocument: boolean;
+  seller: { name: string; state: string; gstin: string | null };
+  buyer: { name: string; email: string };
+  placeOfSupply: string;
+  supply: 'INTRA_STATE' | 'INTER_STATE';
+  lines: {
+    description: string;
+    hsn: string | null;
+    gstRateBps: number;
+    taxableValueMinor: number;
+    cgstMinor: number;
+    sgstMinor: number;
+    igstMinor: number;
+    totalMinor: number;
+  }[];
+  totals: {
+    taxableValueMinor: number;
+    cgstMinor: number;
+    sgstMinor: number;
+    igstMinor: number;
+    totalMinor: number;
+  };
 }
 
 /** Sends one email. Throws on failure (the caller decides whether that is retried or only logged). */

@@ -144,7 +144,19 @@ describe('customer cancels a PAID order', () => {
     await ctx.drainOutbox();
     expect(ctx.notifier.last('REFUND_PROCESSED', u.email)).toMatchObject({
       amountMinor: total,
+      // the email waits for the GST credit note and carries it (attached as a document)
+      creditNote: {
+        creditNoteNumber: expect.stringMatching(/^CN\//),
+        orderNumber: order.orderNumber,
+        totals: { totalMinor: total },
+      },
     });
+    // one refund email, not one per event
+    expect(
+      ctx.notifier.sent.filter(
+        (m) => m.type === 'REFUND_PROCESSED' && m.email === u.email,
+      ),
+    ).toHaveLength(1);
   });
 
   it('is idempotent: cancelling again neither refunds twice nor restocks twice', async () => {
@@ -367,6 +379,107 @@ describe('staff cancels a PAID order: the refund needs a second approver', () =>
           .send({ status: 'PROCESSING' })
       ).status,
     ).toBe(409);
+  });
+
+  it('a FAILED refund can be retried as a new request: four-eyes again, once per failed refund, and it completes the order', async () => {
+    const { u, order, variant } = await paidOrder(42_000, 1);
+    ctx.razorpay.failNext.push({ match: '/refund', mode: 'reject' });
+    await ctx
+      .http()
+      .post(`/api/v1/orders/${order.id}/cancel`)
+      .set(authed(u))
+      .send({})
+      .expect(200);
+    const failed = (await shop.dbOrder(order.id)).refunds[0]!;
+    expect(failed.status).toBe('FAILED');
+    const onHand = (await shop.stock(variant.id)).onHand;
+
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const finance = await s.staff('FINANCE_MANAGER');
+    const retry = (who: Session, id = failed.id, key = idem()) =>
+      ctx
+        .http()
+        .post(`/api/v1/admin/refunds/${id}/retry`)
+        .set({ ...authed(who), 'Idempotency-Key': key });
+    expect(
+      (
+        await ctx
+          .http()
+          .post(`/api/v1/admin/refunds/${failed.id}/retry`)
+          .set(authed(support))
+      ).status,
+    ).toBe(400); // an Idempotency-Key is required
+    expect((await retry(await s.staff('ORDER_MANAGER'))).status).toBe(403);
+    const key = idem();
+    const res = await retry(support, failed.id, key);
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({
+      status: 'PENDING_APPROVAL',
+      amountMinor: failed.amountMinor,
+      retryOfId: failed.id,
+    });
+    // the same click again replays the same answer; a new click is refused (one retry per failed refund)
+    expect((await retry(support, failed.id, key)).body.data.id).toBe(
+      res.body.data.id,
+    );
+    const twice = await retry(finance);
+    expect(twice.status).toBe(409);
+    expect(twice.body.error.code).toBe('REFUND_ALREADY_RETRIED');
+    // whoever retried cannot approve it
+    const self = await approve(support, res.body.data.id);
+    expect(self.status).toBe(403);
+    await approve(finance, res.body.data.id).expect(200);
+    const db = await shop.dbOrder(order.id);
+    expect(db.refunds.find((r) => r.id === res.body.data.id)?.status).toBe(
+      'PROCESSED',
+    );
+    expect(db.status).toBe('REFUNDED');
+    expect((await shop.stock(variant.id)).onHand).toBe(onHand); // nothing restocked twice
+    const notFailed = await retry(support, res.body.data.id);
+    expect(notFailed.status).toBe(409);
+    expect(notFailed.body.error.code).toBe('REFUND_NOT_FAILED');
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'refund.retried', actorId: support.userId },
+      }),
+    ).toBe(1);
+  });
+
+  it('retrying a FAILED staff-cancel refund completes the cancellation once processed (restocked once)', async () => {
+    const { order, variant } = await paidOrder(30_000, 1);
+    const om = await s.staff('ORDER_MANAGER');
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const finance = await s.staff('FINANCE_MANAGER');
+    await ctx
+      .http()
+      .post(`/api/v1/admin/orders/${order.id}/cancel`)
+      .set(authed(om))
+      .send({ reason: 'Out of stock at the supplier' })
+      .expect(200);
+    const first = (await shop.dbOrder(order.id)).refunds[0]!;
+    ctx.razorpay.failNext.push({ match: '/refund', mode: 'reject' });
+    await approve(finance, first.id).expect(200);
+    expect((await shop.dbOrder(order.id)).refunds[0]!.status).toBe('FAILED');
+    expect((await shop.dbOrder(order.id)).cancelledAt).toBeNull(); // nothing cancelled without the money back
+    const before = (await shop.stock(variant.id)).onHand;
+
+    const retry = await ctx
+      .http()
+      .post(`/api/v1/admin/refunds/${first.id}/retry`)
+      .set({ ...authed(support), 'Idempotency-Key': idem() })
+      .expect(201);
+    await approve(finance, retry.body.data.id).expect(200);
+    const db = await shop.dbOrder(order.id);
+    expect(db.cancelledAt).not.toBeNull();
+    expect(db.status).toBe('REFUNDED');
+    expect((await shop.stock(variant.id)).onHand).toBe(before + 1);
+    expect(
+      (
+        await ctx.prisma.refund.findUniqueOrThrow({
+          where: { id: retry.body.data.id },
+        })
+      ).idempotencyKey,
+    ).toBe(`cancel:${order.id}:1`);
   });
 
   it('a customer cancel of the same kind of order is still refunded at once (system request, no person to approve)', async () => {
@@ -948,6 +1061,38 @@ describe('returns', () => {
       .post(`/api/v1/orders/${orderId}/returns`)
       .set(authed(u))
       .send(body);
+
+  it('the staff list filters by status and by order', async () => {
+    const { u, order, om, itemId } = await delivered();
+    const ret = await requestReturn(u, order.id, {
+      orderItemId: itemId,
+      quantity: 1,
+      reason: 'WRONG_ITEM',
+      opened: false,
+    });
+    expect(ret.status).toBe(201);
+    const ids = async (query: string) =>
+      (
+        (
+          await ctx
+            .http()
+            .get(`/api/v1/admin/returns?${query}`)
+            .set(authed(om))
+            .expect(200)
+        ).body.data as { id: string }[]
+      ).map((r) => r.id);
+    expect(await ids(`orderId=${order.id}`)).toEqual([ret.body.data.id]);
+    expect(await ids(`orderId=${order.id}&status=REQUESTED`)).toEqual([
+      ret.body.data.id,
+    ]);
+    expect(await ids(`orderId=${order.id}&status=REFUNDED`)).toEqual([]);
+    expect(await ids('status=REQUESTED')).toContain(ret.body.data.id);
+    for (const bad of ['status=LOST', 'orderId=not-a-uuid', 'sort=hack'])
+      expect(
+        (await ctx.http().get(`/api/v1/admin/returns?${bad}`).set(authed(om)))
+          .status,
+      ).toBe(400);
+  });
 
   it('full flow: customer requests -> staff approve -> goods received (unopened = restocked) -> refund request -> finance approves -> REFUNDED', async () => {
     const { u, order, variant, payment, om, itemId } = await delivered();

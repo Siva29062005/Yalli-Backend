@@ -75,13 +75,22 @@ async function main(): Promise<number> {
       const access = user
         ? await app.get(AuthorizationService).loadAccess(user.id)
         : null;
+      // The same permissions the console import checks: publishing and stock receipts need their own.
+      const receivesStock = parsed.plan.products.some((p) =>
+        p.variants.some((v) => (v.stock ?? 0) > 0),
+      );
+      const needed = [
+        Permission.ProductsCreate,
+        Permission.PricingUpdate,
+        ...(flag('publish') ? [Permission.ProductsPublish] : []),
+        ...(receivesStock ? [Permission.InventoryAdjust] : []),
+      ];
       const allowed =
         access?.status === 'ACTIVE' &&
-        access.permissions.includes(Permission.ProductsCreate) &&
-        access.permissions.includes(Permission.PricingUpdate);
+        needed.every((p) => access.permissions.includes(p));
       if (!user || !allowed) {
         process.stderr.write(
-          '--as must name an ACTIVE staff user with products.create and pricing.update\n',
+          `--as must name an ACTIVE staff user with ${needed.join(', ')}\n`,
         );
         return 2;
       }

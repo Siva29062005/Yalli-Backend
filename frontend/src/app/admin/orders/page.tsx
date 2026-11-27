@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Search } from 'lucide-react';
 import { useAdminSession } from '@/components/AdminContext';
-import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
+import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput, useClampedPage } from '@/components/AdminKit';
 import { adminGet, adminList, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
-import { ORDER_STATUS_LABEL, type Shipment } from '@/lib/account-api';
+import { ORDER_STATUS_LABEL, type CreditNote, type Invoice, type Shipment } from '@/lib/account-api';
 import { AWAITING_PAYMENT, type CustomerOrder, type OrderStatus } from '@/lib/checkout-api';
 import { formatDateTime, formatPaise } from '@/lib/formatters';
 
@@ -66,6 +67,7 @@ export default function AdminOrdersPage() {
   const [selected, setSelected] = useState<string | null>(null);
 
   const list = useAdminQuery(() => adminList<OrderRow>('/admin/orders', { q, status, page, pageSize: 20 }), [q, status, page]);
+  useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
 
   return (
@@ -141,10 +143,12 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
   const [event, setEvent] = useState<keyof typeof EVENT_LABEL>('IN_TRANSIT');
   const [location, setLocation] = useState('');
   const [note, setNote] = useState('');
+  const [eventAt, setEventAt] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
-  async function act(message: string, call: () => Promise<unknown>) {
+  /** Runs a staff action; resolves to whether it succeeded (forms stay open on failure so nothing typed is lost). */
+  async function act(message: string, call: () => Promise<unknown>): Promise<boolean> {
     setBusy(true);
     setError('');
     setNotice('');
@@ -155,8 +159,10 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
       tracking.reload();
       payments.reload();
       onChanged();
+      return true;
     } catch (e) {
       setError(errorText(e));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -218,6 +224,8 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
             </div>
           )}
 
+          <OrderDocuments orderId={id} paid={!!o.paidAt} returns={o.returns.length} onError={setError} />
+
           {/* Fulfilment: one forward step at a time; the server enforces the order of steps. */}
           <div className="space-y-3 border-t border-[#E6EAE7] pt-4">
             <h3 className="font-semibold">Fulfilment</h3>
@@ -248,7 +256,17 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
                   className="space-y-3 rounded-xl border border-[#E6EAE7] p-3"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    void act('Tracking update added.', () => adminPost(`/admin/orders/${id}/tracking`, { status: event, ...(location.trim() ? { location: location.trim() } : {}), ...(note.trim() ? { note: note.trim() } : {}) }));
+                    const occurredAt = eventAt ? new Date(eventAt) : null;
+                    if (occurredAt && occurredAt.getTime() > Date.now()) return setError('The update cannot be in the future.');
+                    void act('Tracking update added.', () =>
+                      adminPost(`/admin/orders/${id}/tracking`, {
+                        status: event,
+                        ...(location.trim() ? { location: location.trim() } : {}),
+                        ...(note.trim() ? { note: note.trim() } : {}),
+                        // when the courier says it happened (e.g. entered the next morning); now when left blank
+                        ...(occurredAt ? { occurredAt: occurredAt.toISOString() } : {}),
+                      }),
+                    ).then((ok) => ok && setEventAt(''));
                   }}
                 >
                   <Field label="Add tracking update">
@@ -258,6 +276,9 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
                   </Field>
                   <input aria-label="Location" placeholder="Location (optional)" minLength={2} maxLength={120} className={adminInput} value={location} onChange={(e) => setLocation(e.target.value)} />
                   <input aria-label="Note" placeholder="Note (optional)" minLength={2} maxLength={200} className={adminInput} value={note} onChange={(e) => setNote(e.target.value)} />
+                  <Field label="When it happened (optional)" hint="Leave blank for now.">
+                    <input type="datetime-local" className={adminInput} value={eventAt} onChange={(e) => setEventAt(e.target.value)} />
+                  </Field>
                   <button className={adminGhostButton} disabled={busy}>Add update</button>
                 </form>}
               </>
@@ -284,7 +305,7 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
                   onSubmit={(e) => {
                     e.preventDefault();
                     if (!window.confirm(`Cancel ${o.orderNumber}? ${o.paidAt ? 'A full refund is raised; finance must approve it (Refunds & returns) before the money goes back.' : ''}`)) return;
-                    void act('Order cancelled.', () => adminPost(`/admin/orders/${id}/cancel`, { reason: cancelReason.trim() })).then(() => setCancelling(false));
+                    void act('Order cancelled.', () => adminPost(`/admin/orders/${id}/cancel`, { reason: cancelReason.trim() })).then((ok) => ok && setCancelling(false));
                   }}
                 >
                   <Field label="Reason (shown in the order history)">
@@ -309,5 +330,75 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Invoice (orders.read), credit notes (payments.read) and the order's return requests. Documents open in a new window
+ * opened INSIDE the click (a window opened after an await is blocked as a pop-up), then filled in.
+ */
+function OrderDocuments({ orderId, paid, returns, onError }: { orderId: string; paid: boolean; returns: number; onError: (m: string) => void }) {
+  const { withStepUp, can } = useAdminSession();
+  const notes = useAdminQuery(
+    () => (paid && can('payments.read') ? adminGet<CreditNote[]>(`/admin/orders/${orderId}/credit-notes`) : Promise.resolve([] as CreditNote[])),
+    [orderId, paid],
+  );
+  const open = async (title: string, load: () => Promise<string>) => {
+    const w = window.open('', '_blank');
+    if (!w) return onError(`Allow pop-ups for this site to view the ${title}.`);
+    w.document.write(`<p style="font-family:sans-serif">Preparing the ${title}…</p>`);
+    try {
+      const html = await load();
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+    } catch (e) {
+      w.close();
+      onError(e instanceof Error && e.message ? e.message : `The ${title} could not be opened.`);
+    }
+  };
+  if (!paid && returns === 0) return null;
+  return (
+    <div className="space-y-2 border-t border-[#E6EAE7] pt-4 text-sm">
+      <h3 className="font-semibold">Documents and returns</h3>
+      <div className="flex flex-wrap gap-2">
+        {paid && (
+          <button
+            type="button"
+            className={adminGhostButton}
+            onClick={() =>
+              void open('invoice', async () => {
+                const inv = await withStepUp(() => adminGet<Invoice>(`/admin/orders/${orderId}/invoice`));
+                const { invoiceHtml } = await import('@/lib/invoice');
+                return invoiceHtml(inv);
+              })
+            }
+          >
+            Invoice
+          </button>
+        )}
+        {(notes.data ?? []).map((cn) => (
+          <button
+            key={cn.id}
+            type="button"
+            className={adminGhostButton}
+            onClick={() =>
+              void open('credit note', async () => {
+                const { creditNoteHtml } = await import('@/lib/invoice');
+                return creditNoteHtml(cn);
+              })
+            }
+          >
+            Credit note {cn.creditNoteNumber}
+          </button>
+        ))}
+        {returns > 0 && (
+          <Link href={`/admin/refunds?tab=returns&order=${orderId}`} className={adminGhostButton}>
+            {returns === 1 ? '1 return request' : `${returns} return requests`} →
+          </Link>
+        )}
+      </div>
+      {notes.error && <p className="text-xs text-red-700">Credit notes could not be loaded: {notes.error}</p>}
+    </div>
   );
 }

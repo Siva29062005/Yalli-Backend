@@ -271,6 +271,40 @@ describe('moderation and visibility', () => {
     ).toBe(404);
   });
 
+  it('a published review can be taken down with a reason; only moderators, only from APPROVED', async () => {
+    const { product, u } = await buyer();
+    const id = await approved(u, product.slug);
+    const takeDown = (actor: Session, body: Record<string, unknown>) =>
+      ctx
+        .http()
+        .post(`/api/v1/admin/reviews/${id}/take-down`)
+        .set(authed(actor))
+        .send(body);
+    expect((await takeDown(moderator, {})).status).toBe(400); // a reason is required
+    expect((await takeDown(u, { note: 'Abusive language' })).status).toBe(403);
+    expect(
+      (await takeDown(await s.staff('ORDER_MANAGER'), { note: 'Abusive' }))
+        .status,
+    ).toBe(403);
+    await takeDown(moderator, { note: 'Abusive language' }).expect(200);
+    const pub = await ctx.http().get(reviewsUrl(product.slug)).expect(200);
+    expect((pub.body.data as { id: string }[]).some((r) => r.id === id)).toBe(
+      false,
+    );
+    const mine = await ctx.http().get('/api/v1/me/reviews').set(authed(u));
+    expect(
+      (mine.body.data as { id: string }[]).find((r) => r.id === id),
+    ).toMatchObject({ status: 'REJECTED', moderationNote: 'Abusive language' });
+    const again = await takeDown(moderator, { note: 'Abusive language' });
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('REVIEW_NOT_PUBLISHED');
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'review.taken_down', resourceId: id },
+      }),
+    ).toBe(1);
+  });
+
   it('only staff with reviews.moderate may see the queue or decide', async () => {
     const { product, u } = await buyer();
     const id = (await post(u, product.slug, goodReview())).body.data

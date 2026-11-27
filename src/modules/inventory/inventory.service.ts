@@ -18,6 +18,14 @@ import {
 
 type Tx = Prisma.TransactionClient;
 
+const WAREHOUSE_VIEW = {
+  id: true,
+  code: true,
+  name: true,
+  isDefault: true,
+  isActive: true,
+} as const;
+
 export interface ReservationLine {
   variantId: string;
   quantity: number;
@@ -109,6 +117,108 @@ export class InventoryService {
   }
 
   // ------------------------------------------------------------------------------- adjustments
+
+  // ------------------------------------------------------------------ thresholds and warehouses
+
+  /**
+   * The "low stock" level of one stock row (no stock moves, so no ledger row). Returns the row's sku/warehouse view.
+   */
+  async setLowStockThreshold(
+    variantId: string,
+    warehouseId: string,
+    threshold: number,
+  ) {
+    const { count } = await this.prisma.inventory.updateMany({
+      where: { variantId, warehouseId },
+      data: { lowStockThreshold: threshold },
+    });
+    if (count === 0)
+      throw new NotFoundException(
+        'No stock record for this SKU in this warehouse',
+      );
+  }
+
+  async createWarehouse(input: { code: string; name: string }) {
+    try {
+      return await this.prisma.warehouse.create({
+        data: {
+          code: input.code,
+          name: input.name,
+          isDefault: false,
+          isActive: true,
+        },
+        select: WAREHOUSE_VIEW,
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002')
+        throw new ConflictException({
+          message: 'A warehouse with this code already exists',
+          code: ErrorCode.Conflict,
+        });
+      throw err;
+    }
+  }
+
+  /**
+   * Rename, switch on/off, or make the default (new receipts and the first choice for reservations). Rules, checked
+   * with the warehouse rows locked: the default is always active; a warehouse holding stock or reservations cannot be
+   * switched off (its stock would silently vanish from the shop: move it first).
+   */
+  async updateWarehouse(
+    code: string,
+    input: {
+      name?: string | undefined;
+      isActive?: boolean | undefined;
+      isDefault?: true | undefined;
+    },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<
+        { id: string; code: string; is_default: boolean; is_active: boolean }[]
+      >`
+        SELECT id, code, is_default, is_active FROM warehouses ORDER BY code FOR UPDATE`;
+      const w = rows.find((r) => r.code === code);
+      if (!w) throw new NotFoundException('Unknown warehouse');
+      if (input.isActive === false) {
+        if (w.is_default || input.isDefault)
+          throw new ConflictException({
+            message:
+              'The default warehouse cannot be switched off: make another one the default first',
+            code: 'WAREHOUSE_IS_DEFAULT',
+          });
+        const held = await tx.inventory.aggregate({
+          where: { warehouseId: w.id },
+          _sum: { onHand: true, reserved: true },
+        });
+        if ((held._sum.onHand ?? 0) > 0 || (held._sum.reserved ?? 0) > 0)
+          throw new ConflictException({
+            message:
+              'This warehouse still holds stock or reservations: move the stock first',
+            code: 'WAREHOUSE_HAS_STOCK',
+          });
+      }
+      if (input.isDefault && !w.is_default) {
+        if (!w.is_active && input.isActive !== true)
+          throw new ConflictException({
+            message: 'Switch the warehouse on before making it the default',
+            code: 'WAREHOUSE_INACTIVE',
+          });
+        await tx.warehouse.updateMany({
+          where: { isDefault: true },
+          data: { isDefault: false },
+        });
+      }
+      return tx.warehouse.update({
+        where: { id: w.id },
+        data: {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+          ...(input.isDefault ? { isDefault: true } : {}),
+        },
+        select: WAREHOUSE_VIEW,
+      });
+    });
+  }
 
   async adjust(input: AdjustInput) {
     return this.prisma.$transaction((tx) => this.adjustInTx(tx, input));

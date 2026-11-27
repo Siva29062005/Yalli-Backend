@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   HttpException,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env.js';
@@ -10,6 +12,12 @@ import { ErrorCode } from '../../common/exceptions/error-codes.js';
 import { stripTags } from '../../common/utils/sanitize-html.js';
 import type { ContactTopic } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
+import {
+  paginated,
+  type PaginationInput,
+} from '../../common/http/pagination.js';
+import { AuditAction } from '../audit/audit-actions.js';
+import { AuditService, type RequestContext } from '../audit/audit.service.js';
 import { CaptchaVerifier, NotificationPort } from '../identity/ports/ports.js';
 
 export const CONTACT_TOPIC_LABEL: Record<ContactTopic, string> = {
@@ -49,8 +57,53 @@ export class ContactService {
     private readonly prisma: PrismaService,
     private readonly captcha: CaptchaVerifier,
     private readonly notifications: NotificationPort,
+    private readonly audit: AuditService,
   ) {
     this.inbox = config.get('SUPPORT_INBOX_EMAIL', { infer: true });
+  }
+
+  /** Support's inbox in the console: newest first, optionally only NEW or HANDLED. */
+  async adminList(
+    q: PaginationInput & { status?: 'NEW' | 'HANDLED' | undefined },
+  ) {
+    const where = q.status ? { status: q.status } : {};
+    const [items, total] = await Promise.all([
+      this.prisma.contactMessage.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (q.page - 1) * q.pageSize,
+        take: q.pageSize,
+      }),
+      this.prisma.contactMessage.count({ where }),
+    ]);
+    return paginated(items, total, q);
+  }
+
+  /** NEW -> HANDLED (conditional: marking twice is a 409, an unknown id a 404). Audited with the staff member. */
+  async markHandled(actorId: string, id: string, ctx: RequestContext) {
+    const { count } = await this.prisma.contactMessage.updateMany({
+      where: { id, status: 'NEW' },
+      data: { status: 'HANDLED', handledAt: new Date() },
+    });
+    if (count === 0) {
+      const exists = await this.prisma.contactMessage.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!exists) throw new NotFoundException('Message not found');
+      throw new ConflictException({
+        message: 'This message was already marked as handled',
+        code: ErrorCode.Conflict,
+      });
+    }
+    await this.audit.record({
+      action: AuditAction.ContactHandled,
+      outcome: 'SUCCESS',
+      actorId,
+      ...ctx,
+      resourceType: 'contact_message',
+      resourceId: id,
+    });
   }
 
   async submit(input: ContactInput, ip: string | null): Promise<void> {

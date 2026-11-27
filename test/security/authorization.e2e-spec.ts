@@ -180,6 +180,40 @@ describe('vertical privilege escalation (BFLA): customers and low roles cannot r
     ).toBe(403);
   });
 
+  it('GET /admin/roles marks only the roles the caller may give (ADMIN: never SUPER_ADMIN or ADMIN)', async () => {
+    const admin = await s.staff('ADMIN');
+    const roles = (
+      await ctx.http().get('/api/v1/admin/roles').set(as(admin)).expect(200)
+    ).body.data as { name: string; assignable: boolean }[];
+    const flag = (n: string) => roles.find((r) => r.name === n)?.assignable;
+    expect(flag('SUPER_ADMIN')).toBe(false);
+    expect(flag('ADMIN')).toBe(false);
+    expect(flag('PRODUCT_MANAGER')).toBe(true);
+    // ADMIN does not hold refunds.create, so it cannot hand out roles that carry it (no permission laundering)
+    expect(flag('CUSTOMER_SUPPORT')).toBe(false);
+    expect(flag('FINANCE_MANAGER')).toBe(false);
+    // the flag matches what the server then decides
+    const victim = await s.session();
+    expect(
+      (
+        await ctx
+          .http()
+          .post(`/api/v1/admin/users/${victim.userId}/roles`)
+          .set(as(admin))
+          .send({ role: 'SUPER_ADMIN' })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await ctx
+          .http()
+          .post(`/api/v1/admin/users/${victim.userId}/roles`)
+          .set(as(admin))
+          .send({ role: 'CUSTOMER_SUPPORT' })
+      ).status,
+    ).toBe(403);
+  });
+
   it("/me reports the caller's own effective permissions: a role's exact set for staff, none for a customer", async () => {
     const pm = await s.staff('PRODUCT_MANAGER');
     const fromApi = (await ctx.http().get('/api/v1/me').set(as(pm)).expect(200))

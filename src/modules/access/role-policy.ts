@@ -49,6 +49,24 @@ export function canChangeRole(
   return ALLOW;
 }
 
+/**
+ * Whether the actor may hand out this role to SOMEONE (the role-level half of canChangeRole, without a target).
+ * Used to offer only assignable roles in the console; every real change is still decided by canChangeRole.
+ */
+export function canAssignRole(
+  actor: PolicyActor,
+  role: RoleRef,
+): PolicyDecision {
+  if (!actor.permissions.has(Permission.UsersManage))
+    return deny('missing users.manage');
+  if (isSuperAdmin(actor)) return ALLOW;
+  if (role.rank >= actor.maxRank)
+    return deny('role ranks at or above your own');
+  if (role.permissions.some((p) => !actor.permissions.has(p)))
+    return deny('role carries permissions you do not hold');
+  return ALLOW;
+}
+
 /** Suspending/restoring accounts follows the same rank rules (and never applies to yourself). */
 export function canChangeUserStatus(
   actor: PolicyActor,

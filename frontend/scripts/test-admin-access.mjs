@@ -27,7 +27,7 @@ async function otp() {
   await page.getByRole('button', { name: 'Verify and continue', exact: true }).click();
 }
 try {
-  for (const path of ['analytics', 'products', 'products/new', 'categories', 'inventory', 'orders', 'refunds', 'reviews', 'users', 'coupons', 'shipping']) {
+  for (const path of ['analytics', 'products', 'products/new', 'categories', 'brands', 'import', 'inventory', 'orders', 'refunds', 'finance', 'customers', 'messages', 'reviews', 'users', 'audit', 'coupons', 'shipping']) {
     await page.goto(`${base}/admin/${path}`);
     await page.getByRole('heading', { name: 'Secure admin sign in' }).waitFor();
     assert.equal(await page.locator('aside').count(), 0, `${path} exposed admin sidebar`);

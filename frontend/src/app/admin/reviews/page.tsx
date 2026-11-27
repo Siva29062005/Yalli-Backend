@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useAdminSession } from '@/components/AdminContext';
-import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
+import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput, useClampedPage } from '@/components/AdminKit';
 import { adminList, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
 import { formatDateTime } from '@/lib/formatters';
@@ -35,7 +35,25 @@ export default function AdminReviewsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const list = useAdminQuery(() => adminList<ReviewRow>('/admin/reviews', { status, page, pageSize: 20 }), [status, page]);
+  useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
+
+  /** A published review found unsuitable later: it leaves the product page; the author sees the reason. */
+  async function takeDown(id: string, note: string) {
+    setBusyId(id);
+    setError('');
+    setNotice('');
+    try {
+      await withStepUp(() => adminPost(`/admin/reviews/${id}/take-down`, { note }));
+      setNotice('Review taken down. The customer sees your reason.');
+      setRejecting(null);
+      list.reload();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function decide(id: string, decision: 'APPROVED' | 'REJECTED', note?: string) {
     setBusyId(id);
@@ -131,6 +149,24 @@ export default function AdminReviewsPage() {
                       <button className={adminButton} disabled={busyId === r.id} onClick={() => void decide(r.id, 'APPROVED')}>Approve</button>
                       <button className={adminGhostButton} disabled={busyId === r.id} onClick={() => setRejecting({ id: r.id, note: '' })}>Reject…</button>
                     </div>
+                  ))}
+                {r.status === 'APPROVED' &&
+                  (rejecting?.id === r.id ? (
+                    <form
+                      className="flex flex-wrap items-end gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void takeDown(r.id, rejecting.note.trim());
+                      }}
+                    >
+                      <Field label="Reason (shown to the customer)">
+                        <input required minLength={3} maxLength={300} className={adminInput} value={rejecting.note} onChange={(e) => setRejecting({ id: r.id, note: e.target.value })} />
+                      </Field>
+                      <button className={adminDangerButton} disabled={busyId === r.id}>Take down review</button>
+                      <button type="button" className={adminGhostButton} onClick={() => setRejecting(null)}>Cancel</button>
+                    </form>
+                  ) : (
+                    <button className={adminGhostButton} disabled={busyId === r.id} onClick={() => setRejecting({ id: r.id, note: '' })}>Take down…</button>
                   ))}
               </li>
             ))}

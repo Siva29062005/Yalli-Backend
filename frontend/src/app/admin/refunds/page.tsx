@@ -1,8 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { Suspense, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useAdminSession } from '@/components/AdminContext';
-import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
+import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput, useClampedPage } from '@/components/AdminKit';
 import { adminGet, adminList, adminPost, newIdempotencyKey, rupeesToPaise } from '@/lib/admin-api';
 import type { CreditNote } from '@/lib/account-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
@@ -25,6 +27,10 @@ interface RefundRow {
   createdAt: string;
   processedAt: string | null;
   failureReason: string | null;
+  /** Set when this refund is a retry of a failed one. */
+  retryOfId?: string | null;
+  /** The retry raised for this (failed) refund, if any. */
+  retriedBy?: { id: string; status: RefundStatus } | null;
 }
 interface ReturnRow {
   id: string;
@@ -57,11 +63,24 @@ const REFUND_LABEL: Record<RefundStatus, string> = {
 const RETURN_TONE = { REQUESTED: 'amber', APPROVED: 'blue', REJECTED: 'gray', RECEIVED: 'blue', REFUNDED: 'green' } as const;
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong. Please try again.');
 
-export default function AdminRefundsPage() {
+// useSearchParams needs a Suspense boundary in a statically rendered page.
+export default function AdminRefundsRoute() {
+  return (
+    <Suspense>
+      <AdminRefundsPage />
+    </Suspense>
+  );
+}
+
+/** `?tab=returns&order=<orderId>` opens the returns of one order (linked from the order page). */
+function AdminRefundsPage() {
+  const params = useSearchParams();
+  // only a plausible id is passed on; the API validates it (a malformed one is a 400 shown as an error)
+  const orderFilter = /^[A-Za-z0-9-]{1,64}$/.test(params.get('order') ?? '') ? params.get('order')! : undefined;
   const { can } = useAdminSession();
   // Finance sees the refund list; support can request refunds without listing them; order staff see returns.
   const tabs = (['refunds', 'returns'] as const).filter((t) => (t === 'refunds' ? can('payments.read') || can('refunds.create') : can('orders.read')));
-  const [chosen, setChosen] = useState<'refunds' | 'returns'>('refunds');
+  const [chosen, setChosen] = useState<'refunds' | 'returns'>(params.get('tab') === 'returns' ? 'returns' : 'refunds');
   const tab = tabs.includes(chosen) ? chosen : (tabs[0] ?? 'refunds');
   return (
     <AdminPage eyebrow="Finance" title="Refunds & returns" subtitle="Money moves only after a second person approves it. Returns are checked before any refund is raised.">
@@ -74,7 +93,7 @@ export default function AdminRefundsPage() {
           ))}
         </div>
       )}
-      {tab === 'refunds' ? <RefundsTab /> : <ReturnsTab />}
+      {tab === 'refunds' ? <RefundsTab /> : <ReturnsTab orderId={orderFilter} />}
     </AdminPage>
   );
 }
@@ -95,7 +114,28 @@ function RefundsTab() {
     () => (canList ? adminList<RefundRow>('/admin/refunds', { status, page, pageSize: 20 }) : Promise.resolve({ items: [] as RefundRow[], meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 } })),
     [status, page, canList],
   );
+  useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
+
+  // One Idempotency-Key per retry intent (kept across a step-up prompt or a network retry of the same click).
+  const retryKeys = useRef(new Map<string, string>());
+  async function retry(r: RefundRow) {
+    if (!window.confirm(`Retry the failed refund of ${formatPaise(r.amountMinor)} for ${r.order.orderNumber}? It becomes a new request that another person must approve.`)) return;
+    setBusyId(r.id);
+    setError('');
+    setNotice('');
+    const key = retryKeys.current.get(r.id) ?? newIdempotencyKey();
+    retryKeys.current.set(r.id, key);
+    try {
+      await withStepUp(() => adminPost(`/admin/refunds/${r.id}/retry`, {}, { 'Idempotency-Key': key }));
+      setNotice('Retry requested. A second person must approve it before any money moves.');
+      list.reload();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function decide(id: string, action: 'approve' | 'reject', reason?: string) {
     setBusyId(id);
@@ -148,6 +188,8 @@ function RefundsTab() {
                     <p className="break-words text-sm text-[#4A5550]">{r.reason}</p>
                     <p className="text-xs text-[#4A5550]">{r.kind.toLowerCase().replaceAll('_', ' ')} · requested {formatDateTime(r.createdAt)}{r.processedAt ? ` · refunded ${formatDateTime(r.processedAt)}` : ''}</p>
                     {r.failureReason && <p className="text-xs text-red-700">{r.failureReason}</p>}
+                    {r.retryOfId && <p className="text-xs text-[#4A5550]">Retry of an earlier failed refund.</p>}
+                    {r.retriedBy && <p className="text-xs text-[#4A5550]">Retried as a new request ({REFUND_LABEL[r.retriedBy.status].toLowerCase()}).</p>}
                     {r.creditNote && (
                       <button
                         type="button"
@@ -170,6 +212,9 @@ function RefundsTab() {
                   </div>
                   <Pill tone={REFUND_TONE[r.status]}>{REFUND_LABEL[r.status]}</Pill>
                 </div>
+                {r.status === 'FAILED' && !r.retriedBy && can('refunds.create') && (
+                  <button className={adminGhostButton} disabled={busyId === r.id} onClick={() => void retry(r)}>Retry refund…</button>
+                )}
                 {r.status === 'PENDING_APPROVAL' && (
                   rejecting?.id === r.id ? (
                     <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void decide(r.id, 'reject', rejecting.reason.trim()); }}>
@@ -296,16 +341,20 @@ function CreateRefund({ onDone }: { onDone: () => void }) {
 
 // ------------------------------------------------------------------------------------------------ returns
 
-function ReturnsTab() {
+const RETURN_STATUS_LABEL = { REQUESTED: 'Requested', APPROVED: 'Approved', REJECTED: 'Rejected', RECEIVED: 'Received', REFUNDED: 'Refunded' } as const;
+
+function ReturnsTab({ orderId }: { orderId?: string }) {
   const { withStepUp, can } = useAdminSession();
   const canDecide = can('orders.update');
+  const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<Record<string, string>>({});
   const [amount, setAmount] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const list = useAdminQuery(() => adminList<ReturnRow>('/admin/returns', { page, pageSize: 20 }), [page]);
+  const list = useAdminQuery(() => adminList<ReturnRow>('/admin/returns', { status, orderId, page, pageSize: 20 }), [status, orderId, page]);
+  useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
 
   async function act(id: string, message: string, call: () => Promise<unknown>) {
@@ -328,7 +377,18 @@ function ReturnsTab() {
       {error && <Alert kind="error">{error}</Alert>}
       {notice && <Alert kind="success">{notice}</Alert>}
       <section className={`${adminCard} min-w-0`}>
-        <DataState loading={list.loading && !list.data} error={list.error} empty={rows.length === 0} emptyTitle="No return requests" emptyHint="Customers can request a return within 7 days of delivery.">
+        <div className="flex flex-wrap items-center gap-3 border-b border-[#E6EAE7] p-4">
+          <select aria-label="Filter returns by status" className="rounded-xl border border-[#DCE3DE] bg-white p-2 text-sm" value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }}>
+            <option value="">All statuses</option>
+            {(Object.keys(RETURN_STATUS_LABEL) as (keyof typeof RETURN_STATUS_LABEL)[]).map((k) => <option key={k} value={k}>{RETURN_STATUS_LABEL[k]}</option>)}
+          </select>
+          {orderId && (
+            <p className="text-sm text-[#4A5550]">
+              Showing one order{rows[0] ? ` (${rows[0].order.orderNumber})` : ''}. <Link href="/admin/refunds?tab=returns" className="font-semibold text-[#116644] underline">Show all returns</Link>
+            </p>
+          )}
+        </div>
+        <DataState loading={list.loading && !list.data} error={list.error} empty={rows.length === 0} emptyTitle="No return requests" emptyHint={status || orderId ? 'Nothing matches this filter.' : 'Customers can request a return within 7 days of delivery.'}>
           <ul className="divide-y divide-[#E6EAE7]">
             {rows.map((r) => {
               const custom = amount[r.id]?.trim();

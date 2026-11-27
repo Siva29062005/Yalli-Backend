@@ -6,12 +6,18 @@ import { CatalogController } from './catalog.controller.js';
 import { CatalogQueryService } from './catalog-query.service.js';
 import { MediaController } from './media.controller.js';
 import { ProductRatings } from './product-ratings.js';
+import { CatalogImportController } from './import/catalog-import.controller.js';
 import { CatalogImportService } from './import/catalog-import.service.js';
 import { LocalDiskStorage, ObjectStorage } from './media/object-storage.js';
 
 @Module({
   imports: [InventoryModule],
-  controllers: [CatalogController, CatalogAdminController, MediaController],
+  controllers: [
+    CatalogController,
+    CatalogAdminController,
+    MediaController,
+    CatalogImportController,
+  ],
   providers: [
     CatalogQueryService,
     CatalogAdminService,

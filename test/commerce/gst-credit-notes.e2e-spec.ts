@@ -423,6 +423,144 @@ describe('credit notes', () => {
     }
   });
 
+  it('finance exports the credit-note register as CSV (GSTR-1 layout): formulas neutralised, range checked, audited', async () => {
+    const { order } = await paidOrder([
+      { priceMinor: 11_800, gstRateBps: 1800 },
+    ]);
+    const from = new Date(Date.now() - 60_000).toISOString();
+    await refund(order.id, 11_800, '=HYPERLINK("http://evil.example")');
+    const to = new Date(Date.now() + 60_000).toISOString();
+    const finance = await s.staff('FINANCE_MANAGER');
+    const url = `/api/v1/admin/credit-notes/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    const res = await ctx.http().get(url).set(authed(finance)).expect(200);
+    expect(res.headers['content-type']).toMatch(/^text\/csv/);
+    expect(res.headers['content-disposition']).toMatch(
+      /^attachment; filename="credit-notes-/,
+    );
+    expect(res.headers['cache-control']).toBe('no-store');
+    const csv = res.text;
+    const lines = csv.trim().split('\r\n');
+    expect(lines[0]).toBe(
+      '"Note number","Note date","Note type","Original invoice number","Original invoice date","Order number","Place of supply","Supply type","Note value","Rate (%)","Taxable value","IGST","CGST","SGST","Cess","Reason"',
+    );
+    const row = lines.find((l) => l.includes(order.orderNumber));
+    expect(row).toBeDefined();
+    expect(row).toContain('"118.00","18","100.00"'); // value, rate, taxable value
+    expect(row).toContain(`"'=HYPERLINK(""http://evil.example"")"`); // never a live formula
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'finance.exported', actorId: finance.userId },
+      }),
+    ).toBe(1);
+    for (const bad of [
+      '',
+      `?from=${encodeURIComponent(from)}`,
+      `?from=${encodeURIComponent(to)}&to=${encodeURIComponent(from)}`,
+      `?from=2025-01-01T00:00:00Z&to=2026-06-01T00:00:00Z`,
+    ])
+      expect(
+        (
+          await ctx
+            .http()
+            .get(`/api/v1/admin/credit-notes/export${bad}`)
+            .set(authed(finance))
+        ).status,
+      ).toBe(400);
+    expect(
+      (
+        await ctx
+          .http()
+          .get(url)
+          .set(authed(await s.staff('ORDER_MANAGER')))
+      ).status,
+    ).toBe(403);
+  });
+
+  it('finance exports refunds for reconciliation (Razorpay ids, credit note), others cannot; audited', async () => {
+    const { order } = await paidOrder([
+      { priceMinor: 20_000, gstRateBps: 1800 },
+    ]);
+    const from = new Date(Date.now() - 60_000).toISOString();
+    await refund(order.id, 7_500, '+SUM(A1) goodwill');
+    const to = new Date(Date.now() + 60_000).toISOString();
+    const finance = await s.staff('FINANCE_MANAGER');
+    const url = `/api/v1/admin/refunds/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    const res = await ctx.http().get(url).set(authed(finance)).expect(200);
+    expect(res.headers['content-type']).toMatch(/^text\/csv/);
+    const row = res.text
+      .split('\r\n')
+      .find((l) => l.includes(order.orderNumber));
+    const dbRefund = await ctx.prisma.refund.findFirstOrThrow({
+      where: { orderId: order.id },
+      include: { payment: true, creditNote: true },
+    });
+    expect(dbRefund.providerRefundId).toBeTruthy();
+    expect(row).toContain(
+      `"${dbRefund.receipt}","${dbRefund.providerRefundId}","${dbRefund.payment.providerPaymentId}"`,
+    );
+    expect(row).toContain('"PROCESSED","75.00"');
+    expect(row).toContain(`"${dbRefund.creditNote!.creditNoteNumber}"`);
+    expect(res.text).not.toContain('"+SUM'); // the reason is not exported, and nothing starts a formula
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'finance.exported', actorId: finance.userId },
+      }),
+    ).toBe(1);
+    for (const who of [await s.staff('ORDER_MANAGER'), await s.session()])
+      expect((await ctx.http().get(url).set(authed(who))).status).toBe(403);
+    expect(
+      (
+        await ctx
+          .http()
+          .get('/api/v1/admin/refunds/export')
+          .set(authed(finance))
+      ).status,
+    ).toBe(400);
+  });
+
+  it("staff see an order's invoice (orders.read) and its credit notes (payments.read); others cannot", async () => {
+    const { u, order } = await paidOrder([
+      { priceMinor: 30_000, gstRateBps: 1800 },
+    ]);
+    await refund(order.id, 4_000);
+    const own = await invoice(u, order.id);
+    const om = await s.staff('ORDER_MANAGER');
+    const adminInvoice = await ctx
+      .http()
+      .get(`/api/v1/admin/orders/${order.id}/invoice`)
+      .set(authed(om))
+      .expect(200);
+    expect(adminInvoice.body.data).toEqual(own);
+    // a customer (even the buyer) cannot use the staff route
+    await ctx
+      .http()
+      .get(`/api/v1/admin/orders/${order.id}/invoice`)
+      .set(authed(u))
+      .expect(403);
+
+    const finance = await s.staff('FINANCE_MANAGER');
+    const cns = await ctx
+      .http()
+      .get(`/api/v1/admin/orders/${order.id}/credit-notes`)
+      .set(authed(finance))
+      .expect(200);
+    expect(cns.body.data).toHaveLength(1);
+    expect(cns.body.data[0].orderNumber).toBe(order.orderNumber);
+    // finance documents: ORDER_MANAGER has no payments.read
+    await ctx
+      .http()
+      .get(`/api/v1/admin/orders/${order.id}/credit-notes`)
+      .set(authed(om))
+      .expect(403);
+    await ctx
+      .http()
+      .get(
+        `/api/v1/admin/orders/0190a7c0-0000-7000-8000-000000000000/credit-notes`,
+      )
+      .set(authed(finance))
+      .expect(404);
+  });
+
   it('an issued credit note can never be edited or deleted: the app role has no write access and triggers guard the rest', async () => {
     const { order } = await paidOrder([
       { priceMinor: 15_000, gstRateBps: 1800 },

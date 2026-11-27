@@ -12,7 +12,11 @@ import {
 } from '../../common/http/pagination.js';
 import type { Env } from '../../config/env.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
-import type { ReturnReason } from '../../generated/prisma/client.js';
+import type {
+  Prisma,
+  ReturnReason,
+  ReturnStatus,
+} from '../../generated/prisma/client.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, type RequestContext } from '../audit/audit.service.js';
 import { InventoryService } from '../inventory/inventory.service.js';
@@ -169,9 +173,20 @@ export class ReturnService {
     );
   }
 
-  async adminList(q: PaginationInput) {
+  /** Staff list, newest first; optionally one status and/or one order (the order page links here). */
+  async adminList(
+    q: PaginationInput & {
+      status?: ReturnStatus | undefined;
+      orderId?: string | undefined;
+    },
+  ) {
+    const where: Prisma.ReturnRequestWhereInput = {
+      ...(q.status ? { status: q.status } : {}),
+      ...(q.orderId ? { orderId: q.orderId } : {}),
+    };
     const [items, total] = await Promise.all([
       this.prisma.returnRequest.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (q.page - 1) * q.pageSize,
         take: q.pageSize,
@@ -180,7 +195,7 @@ export class ReturnService {
           item: { select: { productName: true, sku: true } },
         },
       }),
-      this.prisma.returnRequest.count(),
+      this.prisma.returnRequest.count({ where }),
     ]);
     return paginated(items, total, q);
   }

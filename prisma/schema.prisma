@@ -974,10 +974,14 @@ model Refund {
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   processedAt      DateTime?    @map("processed_at") @db.Timestamptz(6)
+  /// Set on a retry of a FAILED refund (one retry per failed refund).
+  retryOfId        String?      @unique @map("retry_of_id") @db.Uuid
 
   order      Order       @relation(fields: [orderId], references: [id], onDelete: Restrict)
   payment    Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   creditNote CreditNote?
+  retryOf    Refund?     @relation("RefundRetry", fields: [retryOfId], references: [id], onDelete: Restrict)
+  retriedBy  Refund?     @relation("RefundRetry")
 
   @@index([orderId])
   @@index([status, createdAt])

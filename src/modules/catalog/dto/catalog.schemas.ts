@@ -175,8 +175,24 @@ export const adminListSchema = paginationSchema
   .extend({
     q: z.string().trim().min(1).max(100).optional(),
     status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).optional(),
+    /** Comma-separated product ids (up to 60, one page), e.g. to show the names of a coupon's products. */
+    ids: z
+      .string()
+      .regex(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(,[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}){0,59}$/i,
+      )
+      .optional(),
   })
   .strict();
+/** PATCH /admin/images/:id: alt text, place in the gallery (0 = first) and the variant it shows (null = all). */
+export const updateImageSchema = z
+  .object({
+    altText: z.string().trim().max(200).nullable().optional(),
+    position: z.number().int().min(0).max(1000).optional(),
+    variantId: z.uuid().nullable().optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 export const imageMetaSchema = z
   .object({
     altText: z.string().trim().max(200).optional(),

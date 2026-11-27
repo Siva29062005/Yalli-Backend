@@ -4,12 +4,14 @@ import {
   Get,
   Headers,
   HttpCode,
+  BadRequestException,
   NotFoundException,
   Param,
   Post,
   Query,
   Req,
   Res,
+  StreamableFile,
   type RawBodyRequest,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
@@ -24,11 +26,18 @@ import {
   RequireStepUp,
 } from '../../common/decorators/access.decorators.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
-import { ResponseMessage } from '../../common/decorators/response.decorators.js';
+import {
+  ResponseMessage,
+  SkipEnvelope,
+} from '../../common/decorators/response.decorators.js';
 import { paginated, paginationSchema } from '../../common/http/pagination.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { Permission } from '../access/permissions.js';
-import { requestContext } from '../audit/audit.service.js';
+import { ErrorCode } from '../../common/exceptions/error-codes.js';
+import { toCsv } from '../../common/utils/csv.js';
+import { AuditAction } from '../audit/audit-actions.js';
+import { AuditService, requestContext } from '../audit/audit.service.js';
+import { REFUND_EXPORT_COLUMNS, refundRows } from './refund-export.js';
 import { CheckoutService } from '../checkout/checkout.service.js';
 import {
   assertIdempotencyKey,
@@ -393,6 +402,14 @@ const fulfilmentSchema = z
     trackingNumber: z.string().trim().min(3).max(80).optional(),
   })
   .strict();
+const adminReturnsQuerySchema = paginationSchema
+  .extend({
+    status: z
+      .enum(['REQUESTED', 'APPROVED', 'REJECTED', 'RECEIVED', 'REFUNDED'])
+      .optional(),
+    orderId: uuid.optional(),
+  })
+  .strict();
 const trackingEventSchema = z
   .object({
     status: z.enum([
@@ -438,6 +455,7 @@ export class AdminOrdersController {
   constructor(
     private readonly orders: OrderService,
     private readonly returns: ReturnService,
+    private readonly creditNotes: CreditNoteService,
   ) {}
 
   @Get('orders')
@@ -450,6 +468,20 @@ export class AdminOrdersController {
   @RequirePermissions(Permission.OrdersRead)
   get(@Param('id', { schema: uuid }) id: string) {
     return this.orders.adminGet(id);
+  }
+
+  /** The order's tax invoice (paid orders only), as the customer sees it. */
+  @Get('orders/:id/invoice')
+  @RequirePermissions(Permission.OrdersRead)
+  invoice(@Param('id', { schema: uuid }) id: string) {
+    return this.orders.adminInvoice(id);
+  }
+
+  /** GST credit notes issued against this order (finance documents: payments.read, like the credit-note register). */
+  @Get('orders/:id/credit-notes')
+  @RequirePermissions(Permission.PaymentsRead)
+  orderCreditNotes(@Param('id', { schema: uuid }) id: string) {
+    return this.creditNotes.forOrder(id);
   }
 
   @Get('orders/:id/payments')
@@ -516,7 +548,8 @@ export class AdminOrdersController {
   @Get('returns')
   @RequirePermissions(Permission.OrdersRead)
   listReturns(
-    @Query({ schema: paginationSchema }) q: z.infer<typeof paginationSchema>,
+    @Query({ schema: adminReturnsQuerySchema })
+    q: z.infer<typeof adminReturnsQuerySchema>,
   ) {
     return this.returns.adminList(q);
   }
@@ -572,6 +605,24 @@ const rejectSchema = z
   .object({ reason: z.string().trim().min(3).max(200) })
   .strict();
 
+/** An export period: both ends required, `to` after `from`, at most 366 days. */
+const periodSchema = z
+  .object({
+    from: z.iso.datetime({ offset: true }).transform((v) => new Date(v)),
+    to: z.iso.datetime({ offset: true }).transform((v) => new Date(v)),
+  })
+  .strict()
+  .refine((v) => v.to > v.from, {
+    message: 'to must be after from',
+    path: ['to'],
+  })
+  .refine((v) => v.to.getTime() - v.from.getTime() <= 366 * 86_400_000, {
+    message: 'Export at most one year at a time',
+    path: ['to'],
+  });
+/** Most refunds one reconciliation export may hold. */
+const REFUND_EXPORT_MAX = 10_000;
+
 @ApiTags('admin-refunds')
 @Controller('admin/refunds')
 @RequireStepUp(900)
@@ -586,7 +637,83 @@ export class AdminRefundsController {
     private readonly refunds: RefundService,
     private readonly prisma: PrismaService,
     private readonly idem: IdempotencyService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Refund reconciliation: every refund requested or processed in [from, to), with the Razorpay ids to match against
+   * the settlement report. Audited (finance data export); at most one year and REFUND_EXPORT_MAX rows.
+   */
+  @Get('export')
+  @RequirePermissions(Permission.PaymentsRead)
+  @SkipEnvelope()
+  @RateLimit({
+    name: 'refund-export',
+    limit: 20,
+    windowSeconds: 3_600,
+    key: 'principal',
+  })
+  async export(
+    @CurrentPrincipal() a: AuthPrincipal,
+    @Query({ schema: periodSchema }) q: z.infer<typeof periodSchema>,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const inRange = { gte: q.from, lt: q.to };
+    const rows = await this.prisma.refund.findMany({
+      where: { OR: [{ createdAt: inRange }, { processedAt: inRange }] },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: REFUND_EXPORT_MAX + 1,
+      select: {
+        receipt: true,
+        providerRefundId: true,
+        kind: true,
+        status: true,
+        amountMinor: true,
+        createdAt: true,
+        processedAt: true,
+        failureReason: true,
+        order: { select: { orderNumber: true } },
+        payment: { select: { providerPaymentId: true } },
+        creditNote: { select: { creditNoteNumber: true } },
+      },
+    });
+    if (rows.length > REFUND_EXPORT_MAX)
+      throw new BadRequestException({
+        message: `More than ${REFUND_EXPORT_MAX} refunds in this range: export a shorter period.`,
+        code: ErrorCode.ValidationFailed,
+      });
+    const csv = toCsv(
+      REFUND_EXPORT_COLUMNS,
+      refundRows(
+        rows.map((r) => ({
+          ...r,
+          orderNumber: r.order.orderNumber,
+          providerPaymentId: r.payment.providerPaymentId,
+          creditNoteNumber: r.creditNote?.creditNoteNumber ?? null,
+        })),
+      ),
+    );
+    await this.audit.record({
+      action: AuditAction.FinanceExported,
+      outcome: 'SUCCESS',
+      actorId: a.userId,
+      ...requestContext(req),
+      resourceType: 'refund_reconciliation',
+      metadata: {
+        from: q.from.toISOString(),
+        to: q.to.toISOString(),
+        refunds: rows.length,
+      },
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="refunds-${q.from.toISOString().slice(0, 10)}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    return new StreamableFile(Buffer.from(csv, 'utf8'));
+  }
 
   @Get()
   @RequirePermissions(Permission.PaymentsRead)
@@ -630,6 +757,8 @@ export class AdminRefundsController {
           failureReason: true,
           order: { select: { orderNumber: true } },
           creditNote: { select: { id: true, creditNoteNumber: true } },
+          retryOfId: true,
+          retriedBy: { select: { id: true, status: true } },
         },
       }),
       this.prisma.refund.count({ where }),
@@ -687,6 +816,46 @@ export class AdminRefundsController {
     setIdempotent(res, r.replayed);
     res.status(r.status);
     void ctx;
+    return r.body;
+  }
+
+  /** Retries a FAILED refund as a NEW request (a different person must approve it). Needs an Idempotency-Key. */
+  @Post(':id/retry')
+  @RequirePermissions(Permission.RefundsCreate)
+  async retry(
+    @CurrentPrincipal() a: AuthPrincipal,
+    @Param('id', { schema: uuid }) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const idemKey = assertIdempotencyKey(key);
+    const r = await this.idem.run(
+      {
+        scope: 'refund.retry',
+        actorId: a.userId,
+        key: idemKey,
+        request: { id },
+      },
+      async () => {
+        const retry = await this.refunds.retryFailed(
+          a,
+          id,
+          requestContext(req),
+        );
+        return {
+          status: 201,
+          body: {
+            id: retry.id,
+            status: retry.status,
+            amountMinor: retry.amountMinor,
+            retryOfId: id,
+          },
+        };
+      },
+    );
+    setIdempotent(res, r.replayed);
+    res.status(r.status);
     return r.body;
   }
 
@@ -754,7 +923,48 @@ const creditNoteListSchema = paginationSchema
   key: 'principal',
 })
 export class AdminCreditNotesController {
-  constructor(private readonly creditNotes: CreditNoteService) {}
+  constructor(
+    private readonly creditNotes: CreditNoteService,
+    private readonly audit: AuditService,
+  ) {}
+
+  /** The credit-note register for a filing period as CSV (GSTR-1 layout). Audited: it is a finance data export. */
+  @Get('export')
+  @SkipEnvelope()
+  @RateLimit({
+    name: 'credit-note-export',
+    limit: 20,
+    windowSeconds: 3_600,
+    key: 'principal',
+  })
+  async export(
+    @CurrentPrincipal() a: AuthPrincipal,
+    @Query({ schema: periodSchema })
+    q: z.infer<typeof periodSchema>,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { csv, notes } = await this.creditNotes.exportCsv(q.from, q.to);
+    await this.audit.record({
+      action: AuditAction.FinanceExported,
+      outcome: 'SUCCESS',
+      actorId: a.userId,
+      ...requestContext(req),
+      resourceType: 'credit_note_register',
+      metadata: {
+        from: q.from.toISOString(),
+        to: q.to.toISOString(),
+        notes,
+      },
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="credit-notes-${q.from.toISOString().slice(0, 10)}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    return new StreamableFile(Buffer.from(csv, 'utf8'));
+  }
 
   @Get()
   list(

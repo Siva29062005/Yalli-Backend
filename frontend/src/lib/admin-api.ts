@@ -1,4 +1,4 @@
-import { adminRequest, adminRequestPage } from './admin-session';
+import { adminRequest, adminRequestFile, adminRequestPage } from './admin-session';
 
 export interface PageMeta {
   page: number;
@@ -60,3 +60,16 @@ export function rupeesToPaise(text: string): number | null {
 
 export const paiseToRupees = (paise: number | null | undefined): string =>
   paise === null || paise === undefined ? '' : (paise / 100).toFixed(2);
+
+/** Downloads an admin export (CSV) and hands it to the browser as a file. */
+export async function adminDownload(path: string, params: Params, fallbackName: string): Promise<void> {
+  const { blob, filename } = await adminRequestFile(`${path}${queryString(params)}`);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename ?? fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000); // some browsers start the download after this tick
+}

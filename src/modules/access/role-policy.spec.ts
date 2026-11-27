@@ -6,6 +6,7 @@ import {
   type RoleNameValue,
 } from './permissions.js';
 import {
+  canAssignRole,
   canChangeRole,
   canChangeUserStatus,
   type PolicyActor,
@@ -176,5 +177,44 @@ describe('canChangeUserStatus', () => {
     expect(
       canChangeUserStatus(actorFor('CUSTOMER'), target('CUSTOMER')).allowed,
     ).toBe(false);
+  });
+});
+
+describe('canAssignRole (which roles the console offers)', () => {
+  const roles = Object.keys(ROLE_DEFINITIONS) as RoleNameValue[];
+
+  it('agrees with canChangeRole for any lower-ranked target that is not the actor', () => {
+    for (const a of roles)
+      for (const r of roles) {
+        const actor = actorFor(a);
+        const lowest = target('CUSTOMER');
+        expect(canAssignRole(actor, roleRef(r)).allowed).toBe(
+          canChangeRole(actor, lowest, roleRef(r)).allowed,
+        );
+      }
+  });
+
+  it('SUPER_ADMIN may assign every role, a role without users.manage none', () => {
+    for (const r of roles) {
+      expect(canAssignRole(actorFor('SUPER_ADMIN'), roleRef(r)).allowed).toBe(
+        true,
+      );
+      expect(canAssignRole(actorFor('CUSTOMER'), roleRef(r)).allowed).toBe(
+        false,
+      );
+    }
+  });
+
+  it('never offers a role ranked at or above the actor, or one with permissions the actor lacks', () => {
+    for (const a of roles.filter((x) => x !== 'SUPER_ADMIN'))
+      for (const r of roles) {
+        const actor = actorFor(a);
+        const role = roleRef(r);
+        if (
+          role.rank >= actor.maxRank ||
+          role.permissions.some((p) => !actor.permissions.has(p))
+        )
+          expect(canAssignRole(actor, role).allowed).toBe(false);
+      }
   });
 });

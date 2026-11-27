@@ -125,6 +125,7 @@ it('lists brands with ids for staff with product access only', async () => {
     id: created.body.data.id,
     name,
     slug: created.body.data.slug,
+    _count: { products: 0 },
   });
   await ctx.http().get('/api/v1/admin/brands').expect(401);
   await ctx

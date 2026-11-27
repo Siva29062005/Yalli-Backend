@@ -1,4 +1,4 @@
-import { ApiError, requestApi, requestEnvelope, type ApiEnvelope } from './http';
+import { ApiError, requestApi, requestBlob, requestEnvelope, type ApiEnvelope } from './http';
 
 /**
  * Browser session built on the backend's cookie mode.
@@ -120,6 +120,9 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
   const requestPage = <T>(endpoint: string, options: RequestInit = {}): Promise<ApiEnvelope<T>> =>
     authed((o) => requestEnvelope<T>(endpoint, o), options);
 
+  /** An authenticated file download (CSV exports). */
+  const requestFile = (endpoint: string, options: RequestInit = {}) => authed((o) => requestBlob(endpoint, o), options);
+
   async function login(email: string, password: string, persistent = false): Promise<LoginResult> {
     clear();
     const result = await requestApi<LoginResult & { csrfToken?: string }>('/auth/login', {
@@ -163,5 +166,5 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
     }
   }
 
-  return { restore, request, requestPage, login, verifyMfa, stepUp, logout, clear };
+  return { restore, request, requestPage, requestFile, login, verifyMfa, stepUp, logout, clear };
 }

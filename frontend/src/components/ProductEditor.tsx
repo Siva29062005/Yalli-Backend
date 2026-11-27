@@ -36,7 +36,7 @@ interface AdminProduct {
   categories: { id: string; name: string }[];
   tags: string[];
   attributes: { name: string; value: string }[];
-  images: { id: string; url: string | null; altText: string | null }[];
+  images: { id: string; url: string | null; altText: string | null; position: number; variantId: string | null }[];
   variants: Variant[];
   updatedAt: string;
 }
@@ -163,8 +163,11 @@ function EditorBody({
         router.replace(`/admin/products/${created.id}`);
         return;
       }
-      await withStepUp(() => adminPatch(`/admin/products/${product.id}`, productPayload()));
-      setNotice('Product saved.');
+      const newSlug = slug.trim();
+      if (newSlug !== product.slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(newSlug)) throw new Error('URL slug: lowercase letters, digits and single dashes.');
+      // the slug is sent only when it changed (it is the product's public address)
+      await withStepUp(() => adminPatch(`/admin/products/${product.id}`, { ...productPayload(), ...(newSlug !== product.slug ? { slug: newSlug } : {}) }));
+      setNotice(newSlug !== product.slug ? `Product saved. Its address is now /products/${newSlug}.` : 'Product saved.');
       onChanged();
     });
   };
@@ -172,8 +175,13 @@ function EditorBody({
   const setStatus = (action: 'publish' | 'unpublish' | 'archive') =>
     run(async () => {
       if (!product) return;
+      // "unpublish" moves any status back to DRAFT: it is also how an archived product is restored
       await withStepUp(() => adminPost(`/admin/products/${product.id}/${action}`));
-      setNotice({ publish: 'Product is live.', unpublish: 'Product moved back to draft.', archive: 'Product archived.' }[action]);
+      setNotice({
+        publish: 'Product is live.',
+        unpublish: product.status === 'ARCHIVED' ? 'Product restored as a draft. Publish it when it is ready.' : 'Product moved back to draft.',
+        archive: 'Product archived.',
+      }[action]);
       onChanged();
     });
 
@@ -199,6 +207,9 @@ function EditorBody({
             {can('products.publish') && product.status !== 'ARCHIVED' && (
               <button className={adminGhostButton} disabled={busy} onClick={() => void setStatus('archive')}>Archive</button>
             )}
+            {can('products.publish') && product.status === 'ARCHIVED' && (
+              <button className={adminButton} disabled={busy} onClick={() => void setStatus('unpublish')}>Restore as draft</button>
+            )}
           </div>
         </div>
       )}
@@ -209,9 +220,16 @@ function EditorBody({
         <Field label="Product name">
           <input required maxLength={200} className={adminInput} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {!product && (
+        {!product ? (
           <Field label="URL slug (optional)" hint="Lowercase letters, digits and dashes. Leave blank to generate it from the name.">
             <input maxLength={160} pattern="[a-z0-9]+(-[a-z0-9]+)*" className={adminInput} value={slug} onChange={(e) => setSlug(e.target.value)} />
+          </Field>
+        ) : (
+          <Field
+            label="URL slug"
+            hint={slug.trim() !== product.slug ? 'Changing the address breaks old links and bookmarks to this product, and search engines must find it again.' : 'The product’s address: /products/<slug>.'}
+          >
+            <input required maxLength={160} pattern="[a-z0-9]+(-[a-z0-9]+)*" className={adminInput} value={slug} onChange={(e) => setSlug(e.target.value)} />
           </Field>
         )}
         <Field label="Summary" hint="Up to 500 characters, shown on product cards.">
@@ -329,8 +347,12 @@ const draftFrom = (v: Variant): VariantDraft => ({
   isActive: v.isActive,
 });
 
-/** Turns the form into an API body, or returns a message. Create omits empty optionals; update sends null to clear them. */
-function parseVariant(v: VariantDraft, create: boolean) {
+/**
+ * Turns the form into an API body, or returns a message. Create omits empty optionals; update sends ONLY the fields
+ * that differ from `original` (null to clear one), so saving a name or weight is not a price change (no pricing.update
+ * needed, no price audit entry).
+ */
+function parseVariant(v: VariantDraft, create: boolean, original?: VariantDraft) {
   const priceMinor = rupeesToPaise(v.price);
   if (priceMinor === null || priceMinor < 1) return 'enter a price in rupees, e.g. 499 or 499.50.';
   const salePriceMinor = v.salePrice.trim() ? rupeesToPaise(v.salePrice) : null;
@@ -354,7 +376,16 @@ function parseVariant(v: VariantDraft, create: boolean) {
       ...(weightGrams !== null ? { weightGrams } : {}),
     };
   }
-  return { name: v.name.trim() || null, priceMinor, salePriceMinor, saleStartsAt, saleEndsAt, isActive: v.isActive, weightGrams };
+  const changed = (k: keyof VariantDraft) => !original || original[k] !== v[k];
+  return {
+    ...(changed('name') ? { name: v.name.trim() || null } : {}),
+    ...(changed('price') ? { priceMinor } : {}),
+    ...(changed('salePrice') ? { salePriceMinor } : {}),
+    ...(changed('saleStarts') ? { saleStartsAt } : {}),
+    ...(changed('saleEnds') ? { saleEndsAt } : {}),
+    ...(changed('isActive') ? { isActive: v.isActive } : {}),
+    ...(changed('weight') ? { weightGrams } : {}),
+  };
 }
 
 function VariantFields({ draft, onChange, isNew }: { draft: VariantDraft; onChange: (v: VariantDraft) => void; isNew: boolean }) {
@@ -398,8 +429,9 @@ function VariantRow({ variant, onChanged }: { variant: Variant; onChanged: () =>
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    const body = parseVariant(draft, false);
+    const body = parseVariant(draft, false, draftFrom(variant));
     if (typeof body === 'string') return setError(`Variant ${variant.sku}: ${body}`);
+    if (Object.keys(body).length === 0) return setOpen(false); // nothing changed
     setBusy(true);
     setError('');
     try {
@@ -503,8 +535,25 @@ function VariantsPanel({ product, onChanged }: { product: AdminProduct; onChange
 function ImagesPanel({ product, onChanged }: { product: AdminProduct; onChanged: () => void }) {
   const { withStepUp } = useAdminSession();
   const [alt, setAlt] = useState('');
+  const [uploadVariant, setUploadVariant] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const images = [...product.images].sort((a, b) => a.position - b.position);
+  const variantLabel = (v: Variant) => `${v.sku}${v.name ? ` · ${v.name}` : ''}`;
+
+  /** Moves or re-links one image; the server renumbers the gallery 0..n-1. */
+  async function change(imageId: string, body: { position?: number; variantId?: string | null }) {
+    setBusy(true);
+    setError('');
+    try {
+      await withStepUp(() => adminPatch(`/admin/images/${imageId}`, body));
+      onChanged();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function upload(file: File | undefined) {
     if (!file) return;
@@ -517,6 +566,7 @@ function ImagesPanel({ product, onChanged }: { product: AdminProduct; onChanged:
         const form = new FormData();
         form.set('file', file);
         if (alt.trim()) form.set('altText', alt.trim());
+        if (uploadVariant) form.set('variantId', uploadVariant);
         return adminRequest(`/admin/products/${product.id}/images`, { method: 'POST', body: form });
       });
       setAlt('');
@@ -545,10 +595,11 @@ function ImagesPanel({ product, onChanged }: { product: AdminProduct; onChanged:
   return (
     <section className={`${adminCard} space-y-4 p-6`}>
       <h2 className="font-heading text-xl font-bold">Images</h2>
+      <p className="text-sm text-[#4A5550]">The first image is the main one. An image linked to a variant is shown when the customer picks that variant.</p>
       {error && <Alert kind="error">{error}</Alert>}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        {product.images.map((img) => (
-          <figure key={img.id} className="space-y-2">
+        {images.map((img, index) => (
+          <figure key={img.id} className="space-y-2" aria-label={`Image ${index + 1}`}>
             {img.url ? (
               // Served by the backend (or CDN); the host differs per environment, so next/image is not used here.
               // eslint-disable-next-line @next/next/no-img-element
@@ -556,15 +607,36 @@ function ImagesPanel({ product, onChanged }: { product: AdminProduct; onChanged:
             ) : (
               <div className="aspect-square w-full rounded-xl bg-[#F5F6F5]" />
             )}
-            <button type="button" className="text-xs font-semibold text-red-700" disabled={busy} onClick={() => void remove(img.id)}>Remove</button>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button type="button" className="font-semibold text-[#116644] disabled:opacity-40" aria-label={`Move image ${index + 1} earlier`} disabled={busy || index === 0} onClick={() => void change(img.id, { position: index - 1 })}>← Earlier</button>
+              <button type="button" className="font-semibold text-[#116644] disabled:opacity-40" aria-label={`Move image ${index + 1} later`} disabled={busy || index === images.length - 1} onClick={() => void change(img.id, { position: index + 1 })}>Later →</button>
+              <button type="button" className="font-semibold text-red-700" disabled={busy} onClick={() => void remove(img.id)}>Remove</button>
+            </div>
+            {product.variants.length > 1 && (
+              <label className="block text-xs">
+                <span className="sr-only">Image {index + 1} shows</span>
+                <select className={`${adminInput} py-1.5 text-xs`} aria-label={`Image ${index + 1} shows`} value={img.variantId ?? ''} disabled={busy} onChange={(e) => void change(img.id, { variantId: e.target.value || null })}>
+                  <option value="">All variants</option>
+                  {product.variants.map((v) => <option key={v.id} value={v.id}>{variantLabel(v)}</option>)}
+                </select>
+              </label>
+            )}
           </figure>
         ))}
       </div>
-      {product.images.length === 0 && <p className="text-sm text-[#4A5550]">No images yet.</p>}
+      {images.length === 0 && <p className="text-sm text-[#4A5550]">No images yet.</p>}
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Alt text (describes the image)">
           <input maxLength={200} className={adminInput} value={alt} onChange={(e) => setAlt(e.target.value)} />
         </Field>
+        {product.variants.length > 1 && (
+          <Field label="Shows">
+            <select className={adminInput} value={uploadVariant} onChange={(e) => setUploadVariant(e.target.value)}>
+              <option value="">All variants</option>
+              {product.variants.map((v) => <option key={v.id} value={v.id}>{variantLabel(v)}</option>)}
+            </select>
+          </Field>
+        )}
         <label className={`${adminButton} inline-flex cursor-pointer items-center gap-2`}>
           <Upload className="h-4 w-4" /> {busy ? 'Uploading…' : 'Upload image'}
           <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={busy} onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ''; }} />

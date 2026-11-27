@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { AlertTriangle, Search } from 'lucide-react';
 import { useAdminSession } from '@/components/AdminContext';
-import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminGhostButton, adminInput } from '@/components/AdminKit';
-import { adminGet, adminList, adminPost } from '@/lib/admin-api';
+import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminGhostButton, adminInput, useClampedPage } from '@/components/AdminKit';
+import { adminGet, adminList, adminPatch, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
 import { formatIndianDate } from '@/lib/formatters';
 
@@ -43,6 +43,10 @@ const MOVEMENT_LABEL: Record<string, string> = {
   COMMIT: 'Sold',
   EXPIRE: 'Reservation expired',
 };
+const warehouseLabel = (list: Warehouse[], code: string) => {
+  const w = list.find((x) => x.code === code);
+  return w ? `${w.name} (${code})` : code;
+};
 const signed = (n: number) => (n > 0 ? `+${n}` : String(n));
 const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong. Please try again.');
 
@@ -52,8 +56,24 @@ export default function AdminInventoryPage() {
   const [sku, setSku] = useState('');
   const [lowOnly, setLowOnly] = useState(false);
   const [page, setPage] = useState(1);
-  const [adjusting, setAdjusting] = useState<{ sku: string } | null>(null);
+  const [adjusting, setAdjusting] = useState<{ sku: string; warehouse?: string } | null>(null);
   const [history, setHistory] = useState<string | null>(null);
+  const [levelFor, setLevelFor] = useState<{ sku: string; warehouse: string; value: string } | null>(null);
+  const [rowError, setRowError] = useState('');
+
+  async function saveLevel() {
+    if (!levelFor) return;
+    if (!/^\d{1,6}$/.test(levelFor.value.trim()) || Number(levelFor.value) > 100000) return setRowError('Enter a whole number from 0 to 100,000.');
+    setRowError('');
+    try {
+      await withStepUp(() => adminPatch('/admin/inventory/threshold', { sku: levelFor.sku, warehouseCode: levelFor.warehouse, lowStockThreshold: Number(levelFor.value) }));
+      setNotice(`${levelFor.sku}: low-stock level is now ${Number(levelFor.value)}.`);
+      setLevelFor(null);
+      list.reload();
+    } catch (e) {
+      setRowError(errorText(e));
+    }
+  }
   const [notice, setNotice] = useState('');
 
   const list = useAdminQuery(
@@ -61,12 +81,14 @@ export default function AdminInventoryPage() {
     [sku, lowOnly, page],
   );
   const warehouses = useAdminQuery(() => adminGet<Warehouse[]>('/admin/warehouses'), []);
+  useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
   const lowCount = rows.filter((r) => r.available <= r.lowStockThreshold).length;
 
   return (
     <AdminPage eyebrow="Operations" title="Inventory" subtitle="See what is on the shelf and keep every change on the record. Each adjustment needs a reason.">
       {notice && <Alert kind="success">{notice}</Alert>}
+      {rowError && <Alert kind="error">{rowError}</Alert>}
       {lowCount > 0 && !lowOnly && (
         <Alert kind="warning">
           <AlertTriangle className="mr-2 inline h-4 w-4" />
@@ -129,11 +151,29 @@ export default function AdminInventoryPage() {
                       <td className="p-4 text-right">{r.onHand}</td>
                       <td className="p-4 text-right">{r.reserved}</td>
                       <td className="p-4 text-right font-semibold">{r.available}</td>
-                      <td className="p-4">{r.available <= 0 ? <Pill tone="red">Out of stock</Pill> : low ? <Pill tone="amber">Low</Pill> : <Pill tone="green">In stock</Pill>}</td>
+                      <td className="p-4">
+                        {r.available <= 0 ? <Pill tone="red">Out of stock</Pill> : low ? <Pill tone="amber">Low</Pill> : <Pill tone="green">In stock</Pill>}
+                        {levelFor?.sku === r.sku && levelFor.warehouse === r.warehouse ? (
+                          <form className="mt-2 flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); void saveLevel(); }}>
+                            <input aria-label={`Low-stock level for ${r.sku}`} inputMode="numeric" autoFocus className={`${adminInput} w-20 py-1`} value={levelFor.value} onChange={(e) => setLevelFor({ ...levelFor, value: e.target.value })} />
+                            <button className="text-xs font-semibold text-[#116644]">Save</button>
+                            <button type="button" className="text-xs text-[#4A5550]" onClick={() => setLevelFor(null)}>Cancel</button>
+                          </form>
+                        ) : (
+                          <span className="mt-1 block text-xs text-[#4A5550]">
+                            low at {r.lowStockThreshold}
+                            {can('inventory.adjust') && (
+                              <button type="button" className="ml-1 font-semibold text-[#116644] underline" aria-label={`Change low-stock level for ${r.sku}`} onClick={() => setLevelFor({ sku: r.sku, warehouse: r.warehouse, value: String(r.lowStockThreshold) })}>
+                                change
+                              </button>
+                            )}
+                          </span>
+                        )}
+                      </td>
                       <td className="p-4">
                         <div className="flex justify-end gap-2">
                           <button className={adminGhostButton} onClick={() => setHistory(r.sku)}>History</button>
-                          {can('inventory.adjust') && <button className={adminButton} onClick={() => setAdjusting({ sku: r.sku })}>Adjust</button>}
+                          {can('inventory.adjust') && <button className={adminButton} onClick={() => setAdjusting({ sku: r.sku, warehouse: r.warehouse })}>Adjust</button>}
                         </div>
                       </td>
                     </tr>
@@ -149,6 +189,7 @@ export default function AdminInventoryPage() {
       {adjusting && (
         <AdjustDialog
           initialSku={adjusting.sku}
+          fixedWarehouse={adjusting.warehouse}
           warehouses={(warehouses.data ?? []).filter((w) => w.isActive)}
           run={withStepUp}
           onClose={() => setAdjusting(null)}
@@ -159,26 +200,31 @@ export default function AdminInventoryPage() {
           }}
         />
       )}
-      {history && <HistoryPanel sku={history} onClose={() => setHistory(null)} />}
+      {can('inventory.adjust') && <WarehousesPanel warehouses={warehouses.data ?? []} run={withStepUp} onChanged={() => { warehouses.reload(); list.reload(); }} />}
+      {/* keyed by SKU: another SKU's history starts on its first page */}
+      {history && <HistoryPanel key={history} sku={history} onClose={() => setHistory(null)} />}
     </AdminPage>
   );
 }
 
 function AdjustDialog({
   initialSku,
+  fixedWarehouse,
   warehouses,
   run,
   onClose,
   onDone,
 }: {
   initialSku: string;
+  /** Opened from a stock row: the change applies to THAT row's warehouse. */
+  fixedWarehouse?: string;
   warehouses: Warehouse[];
   run: <T>(call: () => Promise<T>) => Promise<T>;
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
   const [sku, setSku] = useState(initialSku);
-  const [warehouse, setWarehouse] = useState('');
+  const [warehouse, setWarehouse] = useState(fixedWarehouse ?? '');
   const [direction, setDirection] = useState<'add' | 'remove'>('add');
   const [quantity, setQuantity] = useState('');
   const [type, setType] = useState<'RECEIPT' | 'ADJUSTMENT' | 'RETURN'>('RECEIPT');
@@ -217,7 +263,11 @@ function AdjustDialog({
         <Field label="SKU">
           <input required autoFocus={!initialSku} readOnly={!!initialSku} maxLength={64} className={adminInput} value={sku} onChange={(e) => setSku(e.target.value)} />
         </Field>
-        {warehouses.length > 1 && (
+        {fixedWarehouse ? (
+          <Field label="Warehouse">
+            <input readOnly className={adminInput} value={warehouseLabel(warehouses, fixedWarehouse)} />
+          </Field>
+        ) : warehouses.length > 1 && (
           <Field label="Warehouse">
             <select className={adminInput} value={warehouse} onChange={(e) => setWarehouse(e.target.value)}>
               <option value="">Default warehouse</option>
@@ -258,6 +308,7 @@ function AdjustDialog({
 function HistoryPanel({ sku, onClose }: { sku: string; onClose: () => void }) {
   const [page, setPage] = useState(1);
   const movements = useAdminQuery(() => adminList<Movement>('/admin/inventory/movements', { sku, page, pageSize: 15 }), [sku, page]);
+  useClampedPage(movements.data?.meta, page, setPage);
   const rows = movements.data?.items ?? [];
   return (
     <section className={`${adminCard} min-w-0`} aria-label={`Stock history for ${sku}`}>
@@ -286,6 +337,80 @@ function HistoryPanel({ sku, onClose }: { sku: string; onClose: () => void }) {
         </div>
         {movements.data && <Pager meta={movements.data.meta} onPage={setPage} />}
       </DataState>
+    </section>
+  );
+}
+
+/** Warehouses: add one, rename, switch on/off, choose the default (where new stock is received). */
+function WarehousesPanel({ warehouses, run, onChanged }: { warehouses: Warehouse[]; run: <T>(call: () => Promise<T>) => Promise<T>; onChanged: () => void }) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [renaming, setRenaming] = useState<{ code: string; name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  async function act(message: string, call: () => Promise<unknown>) {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await run(call);
+      setNotice(message);
+      onChanged();
+      return true;
+    } catch (e) {
+      setError(errorText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={`${adminCard} min-w-0 space-y-4 p-5`} aria-label="Warehouses">
+      <h2 className="font-heading text-lg font-bold">Warehouses</h2>
+      {error && <Alert kind="error">{error}</Alert>}
+      {notice && <Alert kind="success">{notice}</Alert>}
+      <ul className="divide-y divide-[#E6EAE7] rounded-xl border border-[#E6EAE7] text-sm">
+        {warehouses.map((w) => (
+          <li key={w.code} className="flex flex-wrap items-center justify-between gap-3 p-3">
+            {renaming?.code === w.code ? (
+              <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void act('Warehouse renamed.', () => adminPatch(`/admin/warehouses/${w.code}`, { name: renaming.name.trim() })).then((ok) => ok && setRenaming(null)); }}>
+                <input aria-label={`New name for ${w.code}`} required minLength={2} maxLength={100} className={`${adminInput} max-w-xs py-1.5`} value={renaming.name} onChange={(e) => setRenaming({ code: w.code, name: e.target.value })} />
+                <button className="text-xs font-semibold text-[#116644]" disabled={busy}>Save</button>
+                <button type="button" className="text-xs text-[#4A5550]" onClick={() => setRenaming(null)}>Cancel</button>
+              </form>
+            ) : (
+              <span className="min-w-0 break-words">
+                <strong>{w.name}</strong> <span className="text-[#4A5550]">({w.code})</span>{' '}
+                {w.isDefault && <Pill tone="green">Default</Pill>} {!w.isActive && <Pill tone="gray">Switched off</Pill>}
+              </span>
+            )}
+            <span className="flex flex-wrap gap-2">
+              <button type="button" className={adminGhostButton} disabled={busy} onClick={() => setRenaming({ code: w.code, name: w.name })}>Rename</button>
+              {!w.isDefault && w.isActive && (
+                <button type="button" className={adminGhostButton} disabled={busy} onClick={() => { if (window.confirm(`Make ${w.name} the default? New stock is received there and orders take stock from it first.`)) void act(`${w.name} is now the default warehouse.`, () => adminPatch(`/admin/warehouses/${w.code}`, { isDefault: true })); }}>Make default</button>
+              )}
+              {!w.isDefault && (
+                <button type="button" className={adminGhostButton} disabled={busy} onClick={() => void act(w.isActive ? `${w.name} switched off.` : `${w.name} switched on.`, () => adminPatch(`/admin/warehouses/${w.code}`, { isActive: !w.isActive }))}>
+                  {w.isActive ? 'Switch off' : 'Switch on'}
+                </button>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void act(`Warehouse ${code.trim().toUpperCase()} added.`, () => adminPost('/admin/warehouses', { code: code.trim(), name: name.trim() })).then((ok) => { if (ok) { setCode(''); setName(''); } }); }}>
+        <Field label="Code" hint="2 to 20 letters, digits or dashes, e.g. CHN-1.">
+          <input required minLength={2} maxLength={20} pattern="[A-Za-z0-9][A-Za-z0-9-]{1,19}" className={`${adminInput} uppercase`} value={code} onChange={(e) => setCode(e.target.value)} />
+        </Field>
+        <Field label="Warehouse name">
+          <input required minLength={2} maxLength={100} className={adminInput} value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <button className={adminButton} disabled={busy}>Add warehouse</button>
+      </form>
+      <p className="text-xs text-[#4A5550]">A warehouse that still holds stock or reservations cannot be switched off: move its stock first with “Adjust stock”.</p>
     </section>
   );
 }

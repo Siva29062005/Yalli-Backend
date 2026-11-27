@@ -284,6 +284,7 @@ describe('reporting database role (least privilege)', () => {
       'SELECT password_hash FROM users',
       'SELECT email FROM users',
       'SELECT * FROM audit_logs',
+      'SELECT user_agent FROM audit_logs', // the audit viewer's grant leaves the user agent out
       'SELECT * FROM refresh_tokens',
       'SELECT * FROM mfa_methods',
       'SELECT * FROM payments',
