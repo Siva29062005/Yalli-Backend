@@ -116,6 +116,16 @@ export function indianDate(d: Date): string {
   return `${get('day')}-${get('month')}-${get('year')}`;
 }
 
+/** yyyy-mm-dd in India time (file names: India midnight on the 1st is still the previous day in UTC). */
+export function indianIsoDate(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
 /** One row per (credit note, GST rate): lines of the same rate are added up. */
 export function creditNoteRows(
   notes: readonly CreditNoteForExport[],

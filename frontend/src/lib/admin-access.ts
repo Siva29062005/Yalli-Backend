@@ -6,8 +6,10 @@
 export interface AdminScreen {
   name: string;
   href: string;
-  /** The screen is available when the staff member holds at least one of these. */
+  /** The screen is available when the staff member holds at least one of these… */
   anyOf: readonly string[];
+  /** …and all of these (for endpoints whose @RequirePermissions lists several, all required). */
+  allOf?: readonly string[];
 }
 
 export const ADMIN_SCREENS: readonly AdminScreen[] = [
@@ -15,7 +17,7 @@ export const ADMIN_SCREENS: readonly AdminScreen[] = [
   { name: 'Products', href: '/admin/products', anyOf: ['products.read'] },
   { name: 'Categories', href: '/admin/categories', anyOf: ['products.read'] },
   { name: 'Brands', href: '/admin/brands', anyOf: ['products.read'] },
-  { name: 'Import', href: '/admin/import', anyOf: ['products.create'] },
+  { name: 'Import', href: '/admin/import', anyOf: ['products.create'], allOf: ['products.create', 'pricing.update'] },
   { name: 'Inventory', href: '/admin/inventory', anyOf: ['inventory.read'] },
   { name: 'Orders', href: '/admin/orders', anyOf: ['orders.read'] },
   { name: 'Refunds & returns', href: '/admin/refunds', anyOf: ['payments.read', 'orders.read', 'refunds.create'] },
@@ -33,8 +35,11 @@ export const ADMIN_SCREENS: readonly AdminScreen[] = [
  * `permissions` is null when the server did not report them (an older backend): then nothing is hidden, because hiding is
  * cosmetic and the API refuses anything the role may not do.
  */
-export function canOpen(permissions: readonly string[] | null, screen: Pick<AdminScreen, 'anyOf'>): boolean {
-  return permissions === null || screen.anyOf.some((p) => permissions.includes(p));
+export function canOpen(permissions: readonly string[] | null, screen: Pick<AdminScreen, 'anyOf' | 'allOf'>): boolean {
+  return (
+    permissions === null ||
+    (screen.anyOf.some((p) => permissions.includes(p)) && (screen.allOf ?? []).every((p) => permissions.includes(p)))
+  );
 }
 
 /** The screen a path belongs to (`/admin/products/new` belongs to Products), or null for `/admin` and unknown paths. */

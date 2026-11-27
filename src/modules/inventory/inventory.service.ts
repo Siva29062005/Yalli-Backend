@@ -80,6 +80,23 @@ export class InventoryService {
     return w.id;
   }
 
+  /**
+   * The (zero) stock row of a variant in an ACTIVE warehouse, created when missing (a warehouse added after the
+   * variant has none yet). Idempotent. An inactive or unknown warehouse is refused.
+   */
+  private async ensureRowInTx(tx: Tx, variantId: string, warehouseId: string) {
+    // FOR SHARE: a concurrent "switch off" (updateWarehouse locks the rows FOR UPDATE) waits for this stock change,
+    // then sees the stock and refuses; it can never switch off a warehouse that is receiving stock right now.
+    const [w] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM warehouses WHERE id = ${warehouseId}::uuid AND is_active FOR SHARE`;
+    if (!w) throw new NotFoundException('Unknown or switched-off warehouse');
+    await tx.inventory.upsert({
+      where: { variantId_warehouseId: { variantId, warehouseId } },
+      update: {},
+      create: { variantId, warehouseId },
+    });
+  }
+
   /** Creates the (zero) stock record for a new variant in the default warehouse. Idempotent. */
   async ensureStockRecord(tx: Tx, variantId: string): Promise<void> {
     const warehouseId = await this.defaultWarehouseId(tx);
@@ -230,16 +247,8 @@ export class InventoryService {
       throw new RangeError('delta must be a non-zero integer');
     const warehouseId =
       input.warehouseId ?? (await this.defaultWarehouseId(tx));
-    const exists = await tx.inventory.findUnique({
-      where: {
-        variantId_warehouseId: { variantId: input.variantId, warehouseId },
-      },
-      select: { id: true },
-    });
-    if (!exists)
-      throw new NotFoundException(
-        'No stock record for this variant and warehouse',
-      );
+    // A warehouse added later has no row for older variants yet: receiving stock there creates it.
+    await this.ensureRowInTx(tx, input.variantId, warehouseId);
     // Stock may never drop below what is already promised to customers (reserved).
     const [row] = await tx.$queryRaw<StockRow[]>`
       UPDATE inventory SET on_hand = on_hand + ${input.delta}, updated_at = now()
@@ -277,13 +286,22 @@ export class InventoryService {
     quantity: number,
     ref: ReservationRef,
     reason: string,
+    warehouseId?: string,
   ): Promise<void> {
     if (!Number.isSafeInteger(quantity) || quantity < 1)
       throw new RangeError('quantity must be a positive integer');
-    const warehouseId = await this.defaultWarehouseId(tx);
+    // Back to the warehouse the goods were reserved from when it is still active; otherwise the current default.
+    const from = warehouseId
+      ? await tx.warehouse.findFirst({
+          where: { id: warehouseId, isActive: true },
+          select: { id: true },
+        })
+      : null;
+    const target = from?.id ?? (await this.defaultWarehouseId(tx));
+    await this.ensureRowInTx(tx, variantId, target);
     const [row] = await tx.$queryRaw<StockRow[]>`
       UPDATE inventory SET on_hand = on_hand + ${quantity}, updated_at = now()
-      WHERE variant_id = ${variantId}::uuid AND warehouse_id = ${warehouseId}::uuid
+      WHERE variant_id = ${variantId}::uuid AND warehouse_id = ${target}::uuid
       RETURNING id, warehouse_id, on_hand, reserved, low_stock_threshold`;
     if (!row) throw new NotFoundException('No stock record for this variant');
     await this.recordMovement(tx, 'RETURN', variantId, row, quantity, 0, {
@@ -465,13 +483,20 @@ export class InventoryService {
     reason: string,
   ): Promise<number> {
     const lines = await tx.$queryRaw<
-      { variant_id: string; quantity: number }[]
+      { variant_id: string; quantity: number; warehouse_id: string }[]
     >`
       UPDATE inventory_reservations SET status = 'RELEASED'
       WHERE reference_type = ${ref.referenceType} AND reference_id = ${ref.referenceId} AND status = 'COMMITTED'
-      RETURNING variant_id, quantity`;
+      RETURNING variant_id, quantity, warehouse_id`;
     for (const l of lines)
-      await this.restockInTx(tx, l.variant_id, l.quantity, ref, reason);
+      await this.restockInTx(
+        tx,
+        l.variant_id,
+        l.quantity,
+        ref,
+        reason,
+        l.warehouse_id,
+      );
     return lines.length;
   }
 

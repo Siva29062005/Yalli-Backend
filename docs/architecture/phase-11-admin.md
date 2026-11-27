@@ -81,3 +81,30 @@ new screen; `admin-access.spec.ts` covers the new gates; `finance.spec.ts` the m
   after deploy) on an invoiced order sends no refund email: the email now waits for `credit_note.issued`.
 - The emailed credit note is HTML, not PDF; the customer prints or saves it. A PDF needs a renderer (P2).
 - The admin inventory list still filters in memory (P2).
+
+## Review of the Phase 11 commit (`ddab22a`, 2026-11-27)
+
+| Finding | Fix | Verified by |
+|---|---|---|
+| Retrying a failed staff-cancel refund after the order shipped would cancel it and restock delivered goods | `retryFailed` refuses a not-yet-completed cancel unless the order is still PAID/PROCESSING (409 `ORDER_NOT_CANCELLABLE`); `recompute` completes a cancellation only when the order was unshipped when its cancel refund was requested (logged otherwise) | e2e "cannot be retried as a CANCEL once the order has shipped" |
+| After another warehouse became the default, restocks, refunds and adjustments failed (no stock row there) | `adjustInTx` / `restockInTx` create a missing row in an ACTIVE warehouse (`FOR SHARE` on the warehouse, so a switch-off waits); `restockCommittedInTx` returns goods to the warehouse they were reserved from | e2e "after another warehouse becomes the default…" |
+| Import screen opened with `products.create` alone (endpoint needs `pricing.update` too) | `ADMIN_SCREENS` supports `allOf`; Import needs both; buttons disabled without them | `admin-access.spec.ts` |
+| Customer search put the email/phone in the URL (access logs) | `POST /admin/customers/search` with a JSON body | customer-lookup e2e (GET form is a 404), `test-admin-screens.mjs` |
+| Phone lookup could match an unverified number (anyone's) | only verified numbers match | customer-lookup e2e |
+| Variant save could restore an old price without `pricing.update` (race) | price fields equal to the current value are not written | code review |
+| Two image edits of one gallery could deadlock | all the product's images are locked first, in id order | pool-starvation e2e (moves + alt text) |
+| Import report showed raw database/framework error text | known refusals only; anything else logged and shown as "internal error" | catalog-import e2e |
+| `updateExisting` import edited live products without `products.update` and left no price audit | needs `products.update` (console and CLI); each changed price audited `catalog.price.changed` with `source: catalog-import` | catalog-import e2e |
+| Two simultaneous confirmations of one dry run both ran | atomic counter: one apply per dry run | catalog-import e2e |
+| `REFUND_ALREADY_RETRIED` reported for any unique-key clash | only for `retry_of_id`; others are a plain conflict | code review |
+| CSV file names a day early (UTC) | India date (`indianIsoDate`) | unit test |
+| Audit viewer cut long periods silently; partial user ids silently ignored | the searched period is shown (with a note when cut); an incomplete id is flagged | `test-admin-screens.mjs` |
+| Categories hid Delete from a delete-only role; stale low-stock error; Customers kept the old customer when switching search type; Messages tabs incomplete for screen readers; no sidebar icons for the new screens | fixed | `test-admin-screens.mjs`, lint |
+
+Accepted / noted:
+- A REJECTED retry cannot be retried again; finish such an order with a normal admin refund (`POST /admin/refunds`),
+  which works on a REFUND_PENDING order.
+- The reporting role can now read `audit_logs.ip` and `metadata` (for the audit viewer); IP addresses are personal
+  data: mention them in the privacy notice's retention section (owner input, Phase 12).
+- When a step-up is needed while opening a document (invoice, credit note), the authenticator prompt shows in the
+  original tab while the new tab says "Preparing…".

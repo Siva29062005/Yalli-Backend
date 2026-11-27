@@ -3,7 +3,7 @@ import { ADMIN_SCREENS, canOpen, firstAllowedPath, screenFor } from './admin-acc
 
 describe('admin screen access', () => {
   it('lets each role open only its screens', () => {
-    const productManager = ['products.read', 'products.create', 'products.update'];
+    const productManager = ['products.read', 'products.create', 'products.update', 'pricing.update'];
     const open = ADMIN_SCREENS.filter((s) => canOpen(productManager, s)).map((s) => s.name);
     expect(open).toEqual(['Products', 'Categories', 'Brands', 'Import']);
     expect(ADMIN_SCREENS.filter((s) => canOpen([], s))).toEqual([]);
@@ -31,7 +31,10 @@ describe('admin screen access', () => {
     expect(canOpen(['users.manage'], screen('/admin/customers'))).toBe(false);
     expect(canOpen(['audit.read'], screen('/admin/audit'))).toBe(true);
     expect(canOpen(['users.manage', 'payments.read'], screen('/admin/audit'))).toBe(false);
-    expect(canOpen(['products.create'], screen('/admin/import'))).toBe(true);
+    // import needs BOTH (its endpoint requires products.create AND pricing.update)
+    expect(canOpen(['products.create', 'pricing.update'], screen('/admin/import'))).toBe(true);
+    expect(canOpen(['products.create'], screen('/admin/import'))).toBe(false);
+    expect(canOpen(['pricing.update'], screen('/admin/import'))).toBe(false);
     expect(canOpen(['products.read', 'products.update'], screen('/admin/import'))).toBe(false);
   });
 

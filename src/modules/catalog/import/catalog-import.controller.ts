@@ -115,6 +115,13 @@ export class CatalogImportController {
     const apply = opts.apply === 'true';
     const publish = opts.publish === 'true';
     const updateExisting = opts.updateExisting === 'true';
+    // Updating existing (possibly live) products is editing them: products.update, like the editor.
+    if (updateExisting && !a.permissions.has(Permission.ProductsUpdate))
+      throw new ForbiddenException({
+        message:
+          'Updating existing products needs the products.update permission',
+        code: ErrorCode.Forbidden,
+      });
     if (publish && !a.permissions.has(Permission.ProductsPublish))
       throw new ForbiddenException({
         message:
@@ -143,6 +150,16 @@ export class CatalogImportController {
           'Run a dry run of this exact file (and options) first, then confirm within 30 minutes',
         code: 'IMPORT_DRY_RUN_REQUIRED',
       });
+    // One confirmation per dry run: the atomic counter lets only the FIRST of two simultaneous "Import now" clicks run.
+    if (
+      apply &&
+      (await this.store.incr(`${key}:applied`, DRY_RUN_TTL_SECONDS)).count > 1
+    )
+      throw new BadRequestException({
+        message:
+          'This import is already running or was just applied; check the products, or run a new dry run',
+        code: 'IMPORT_DRY_RUN_REQUIRED',
+      });
 
     const report = await this.importer.run(parsed.plan, {
       apply,
@@ -151,7 +168,10 @@ export class CatalogImportController {
       actorId: apply ? a.userId : null,
     });
     if (apply) await this.store.del(key);
-    else await this.store.set(key, '1', DRY_RUN_TTL_SECONDS);
+    else {
+      await this.store.set(key, '1', DRY_RUN_TTL_SECONDS);
+      await this.store.del(`${key}:applied`); // a fresh dry run may be confirmed once again
+    }
     return report;
   }
 }

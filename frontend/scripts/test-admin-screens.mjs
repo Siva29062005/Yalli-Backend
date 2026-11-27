@@ -183,8 +183,8 @@ function handle(method, path, request) {
       totals: { taxableValueMinor: 42373, cgstMinor: 3813, sgstMinor: 3814, igstMinor: 0, totalMinor: 50000 },
     });
   // customers (support lookup)
-  if (m === 'GET /admin/customers')
-    return ok(new URL(request.url()).searchParams.get('email') === 'priya@example.test'
+  if (m === 'POST /admin/customers/search')
+    return ok(body?.email === 'priya@example.test'
       ? [{ id: 'u2', name: 'Priya R', email: 'pr•••@example.test', phone: '+91 ••••• •3210', status: 'ACTIVE', emailVerified: true, phoneVerified: false, mfaEnabled: false, createdAt: '2026-11-02T00:00:00Z', lastLoginAt: null }]
       : []);
   if (m === 'GET /admin/customers/u2')
@@ -501,6 +501,9 @@ try {
   await page.getByRole('region', { name: 'Customer details' }).getByText('YL26-000001').first().waitFor();
   assert.equal(await page.getByText('priya@example.test').count(), 0, 'the full address is never shown');
   await page.getByRole('region', { name: 'Customer details' }).getByRole('link', { name: 'Open' }).waitFor();
+  // the searched address travels in the request body, never in a URL
+  assert.ok(calls.filter((c) => c.path.startsWith('/admin/customers')).every((c) => !c.url.includes('priya')));
+  assert.deepEqual(lastCall('POST', '/admin/customers/search').body, { email: 'priya@example.test' });
 
   // ----------------------------------------------------------------------------------------------- messages
   await go('Messages', 'Messages');
@@ -508,7 +511,7 @@ try {
   await page.getByText('are not verified', { exact: false }).waitFor();
   await page.getByRole('button', { name: 'Mark as handled' }).click();
   await page.getByText('No new messages').waitFor();
-  await page.getByRole('tab', { name: 'Handled' }).click();
+  await page.getByRole('button', { name: 'Handled', exact: true }).click();
   await page.getByText('Kavya', { exact: false }).waitFor();
 
   // ----------------------------------------------------------------------------------------------- audit log

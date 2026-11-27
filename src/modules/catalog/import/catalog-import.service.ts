@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import {
   sanitizeRichText,
   stripTags,
@@ -40,6 +40,9 @@ export interface ImportReport {
 
 const isUnique = (e: unknown) => (e as { code?: string }).code === 'P2002';
 
+/** A refusal written by the importer itself: safe to show as it is. */
+class ImportRefusal extends Error {}
+
 /**
  * Idempotent catalogue import. Everything in the file was validated up front (see parseImportFile), so a bad file
  * writes nothing. Each product is its own transaction: a failure is reported and skipped, and re-running the same file
@@ -48,6 +51,8 @@ const isUnique = (e: unknown) => (e as { code?: string }).code === 'P2002';
  */
 @Injectable()
 export class CatalogImportService {
+  private readonly logger = new Logger(CatalogImportService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
@@ -76,9 +81,7 @@ export class CatalogImportService {
         report.products.failed += 1;
         report.failures.push({
           product: p.key ?? p.slug,
-          reason: isUnique(err)
-            ? 'a slug or SKU already exists'
-            : ((err as Error).message ?? 'unknown error').slice(0, 200),
+          reason: this.safeReason(err, p.key ?? p.slug),
         });
       }
     }
@@ -99,6 +102,23 @@ export class CatalogImportService {
         },
       });
     return report;
+  }
+
+  /**
+   * The failure text shown in the report (the console sends it to a browser): our own messages and known database
+   * refusals only; anything else is logged here and reported as an internal error (no SQL or framework text leaks).
+   */
+  private safeReason(err: unknown, product: string): string {
+    if (isUnique(err)) return 'a slug or SKU already exists';
+    if (err instanceof ImportRefusal || err instanceof HttpException)
+      return err.message.slice(0, 200);
+    const code = (err as { code?: unknown }).code;
+    if (code === 'P2003') return 'it refers to something that does not exist';
+    this.logger.error(
+      { product, err: (err as Error).message },
+      'catalogue import: product failed',
+    );
+    return 'internal error (details are in the server log)';
   }
 
   private async importCategories(
@@ -191,7 +211,7 @@ export class CatalogImportService {
     });
     const foreign = owners.find((o) => o.productId !== existing?.id);
     if (foreign)
-      throw new Error(
+      throw new ImportRefusal(
         `SKU "${foreign.sku}" already belongs to another product`,
       );
 
@@ -256,9 +276,14 @@ export class CatalogImportService {
       });
       await this.setTags(tx, productId, p.tags ?? []);
 
-      for (const v of oldVariants)
+      for (const v of oldVariants) {
+        const id = skuToVariant.get(v.sku)!;
+        const before = await tx.productVariant.findUniqueOrThrow({
+          where: { id },
+          select: { priceMinor: true, salePriceMinor: true },
+        });
         await tx.productVariant.update({
-          where: { id: skuToVariant.get(v.sku)! },
+          where: { id },
           data: {
             name: v.name ?? null,
             priceMinor: v.priceMinor,
@@ -266,6 +291,28 @@ export class CatalogImportService {
             weightGrams: v.weightGrams ?? null,
           },
         });
+        // A price changed by an import is audited like one changed in the editor (from/to), in the same transaction.
+        if (
+          before.priceMinor !== v.priceMinor ||
+          before.salePriceMinor !== (v.salePriceMinor ?? null)
+        )
+          await this.audit.recordInTx(tx, {
+            action: AuditAction.PriceChanged,
+            outcome: 'SUCCESS',
+            actorId: opts.actorId!,
+            resourceType: 'variant',
+            resourceId: id,
+            metadata: {
+              sku: v.sku,
+              source: 'catalog-import',
+              from: before,
+              to: {
+                priceMinor: v.priceMinor,
+                salePriceMinor: v.salePriceMinor ?? null,
+              },
+            },
+          });
+      }
       for (const [i, v] of newVariants.entries()) {
         const variant = await tx.productVariant.create({
           data: {

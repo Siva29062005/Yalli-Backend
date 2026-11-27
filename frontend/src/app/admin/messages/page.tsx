@@ -52,9 +52,9 @@ export default function AdminMessagesPage() {
     <AdminPage eyebrow="Support" title="Messages" subtitle="Questions sent with the contact form. Reply by email, then mark the message as handled.">
       <Alert kind="warning">The name, email and order number were typed by the sender and are not verified. Before sharing order or delivery details, check that the email is the one on that order.</Alert>
       {error && <Alert kind="error">{error}</Alert>}
-      <div role="tablist" aria-label="Message status" className="flex gap-2">
+      <div role="group" aria-label="Show messages" className="flex gap-2">
         {(['NEW', 'HANDLED'] as const).map((s) => (
-          <button key={s} role="tab" aria-selected={status === s} className={status === s ? adminButton : adminGhostButton} onClick={() => { setPage(1); setStatus(s); }}>
+          <button key={s} type="button" aria-pressed={status === s} className={status === s ? adminButton : adminGhostButton} onClick={() => { setPage(1); setStatus(s); }}>
             {s === 'NEW' ? 'To answer' : 'Handled'}
           </button>
         ))}

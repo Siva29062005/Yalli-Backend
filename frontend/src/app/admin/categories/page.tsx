@@ -167,8 +167,9 @@ export default function CategoriesPage() {
                       </p>
                     )}
                   </div>
-                  {canManage && (
+                  {(canManage || canDelete) && (
                     <div className="flex gap-2">
+                      {canManage && (
                       <button
                         type="button"
                         disabled={busy}
@@ -189,6 +190,7 @@ export default function CategoriesPage() {
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
+                      )}
                       {canDelete && (
                         <button
                           type="button"

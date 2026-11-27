@@ -17,6 +17,12 @@ import {
   MessageSquare,
   Truck,
   LogOut,
+  Tag,
+  Upload,
+  Landmark,
+  UserSearch,
+  Mail,
+  ScrollText,
 } from 'lucide-react';
 
 const ICONS: Record<string, React.ReactNode> = {
@@ -30,6 +36,12 @@ const ICONS: Record<string, React.ReactNode> = {
   '/admin/users': <Users className="w-5 h-5" />,
   '/admin/coupons': <Ticket className="w-5 h-5" />,
   '/admin/shipping': <Truck className="w-5 h-5" />,
+  '/admin/brands': <Tag className="w-5 h-5" />,
+  '/admin/import': <Upload className="w-5 h-5" />,
+  '/admin/finance': <Landmark className="w-5 h-5" />,
+  '/admin/customers': <UserSearch className="w-5 h-5" />,
+  '/admin/messages': <Mail className="w-5 h-5" />,
+  '/admin/audit': <ScrollText className="w-5 h-5" />,
 };
 
 export function AdminSidebar() {

@@ -46,7 +46,9 @@ export default function AdminAuditPage() {
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<string | null>(null);
   const options = useAdminQuery(() => adminGet<{ actions: string[]; categories: string[] }>('/admin/audit-logs/actions'), []);
-  const actor = /^[0-9a-f-]{36}$/i.test(actorId.trim()) ? actorId.trim() : undefined;
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const actor = UUID.test(actorId.trim()) ? actorId.trim() : undefined;
+  const actorInvalid = actorId.trim() !== '' && !actor;
   const list = useAdminQuery(
     () =>
       adminList<AuditRow>('/admin/audit-logs', {
@@ -63,6 +65,11 @@ export default function AdminAuditPage() {
   );
   useClampedPage(list.data?.meta, page, setPage);
   const rows = list.data?.items ?? [];
+  // the period the server really searched (it cuts a longer one to the most recent 92 days)
+  const raw = list.data?.rawMeta;
+  const searched = typeof raw?.from === 'string' && typeof raw?.to === 'string' ? { from: raw.from, to: raw.to } : null;
+  const requestedFrom = dayStart(from);
+  const cut = !!searched && !!requestedFrom && new Date(searched.from).getTime() > new Date(requestedFrom).getTime();
   const reset = <T,>(set: (v: T) => void) => (v: T) => {
     setPage(1);
     set(v);
@@ -95,10 +102,17 @@ export default function AdminAuditPage() {
           </select>
         </Field>
         <Field label="Person (user id)" hint="Paste an id from a row to see only that person.">
-          <input className={adminInput} maxLength={36} value={actorId} onChange={(e) => reset(setActorId)(e.target.value)} />
+          <input className={adminInput} maxLength={36} aria-invalid={actorInvalid} value={actorId} onChange={(e) => reset(setActorId)(e.target.value)} />
         </Field>
+        {actorInvalid && <p role="alert" className="text-xs text-red-700 sm:col-span-2">That is not a complete user id: the list is not filtered by person.</p>}
       </section>
 
+      {searched && (
+        <p className="text-sm text-[#4A5550]" role="status">
+          Showing {formatDateTime(searched.from)} to {formatDateTime(searched.to)}.
+          {cut && ' The server shows at most 92 days at a time: choose a later “From” date to see older events.'}
+        </p>
+      )}
       <section className={`${adminCard} min-w-0`}>
         <DataState loading={list.loading && !list.data} error={list.error} empty={rows.length === 0} emptyTitle="No events in this period" emptyHint="Widen the dates or clear a filter. Without dates, the last 7 days are shown.">
           <div className="overflow-x-auto">

@@ -38,7 +38,8 @@ export default function AdminImportPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const options = `${updateExisting}|${publish}`;
-  const ready = checked !== null && checked.file === file && checked.options === options && checked.report.products.failed === 0;
+  const allowed = can('products.create') && can('pricing.update');
+  const ready = allowed && checked !== null && checked.file === file && checked.options === options && checked.report.products.failed === 0;
 
   async function send(apply: boolean) {
     if (!file) return;
@@ -119,7 +120,7 @@ export default function AdminImportPage() {
         {!can('pricing.update') && <Alert kind="warning">Importing sets prices, so it also needs price access (pricing.update). Ask an administrator.</Alert>}
         {!can('inventory.adjust') && <p className="text-xs text-[#4A5550]">Files that set opening stock need stock access (inventory.adjust).</p>}
         <div className="flex flex-wrap gap-3">
-          <button type="button" className={adminGhostButton} disabled={!file || busy} onClick={() => void send(false)}>
+          <button type="button" className={adminGhostButton} disabled={!file || busy || !allowed} onClick={() => void send(false)}>
             {busy && !ready ? 'Checking…' : 'Check file'}
           </button>
           <button

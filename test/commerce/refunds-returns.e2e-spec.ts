@@ -482,6 +482,49 @@ describe('staff cancels a PAID order: the refund needs a second approver', () =>
     ).toBe(`cancel:${order.id}:1`);
   });
 
+  it('a failed staff-cancel refund cannot be retried as a CANCEL once the order has shipped (nothing restocked)', async () => {
+    const { order, variant } = await paidOrder(30_000, 1);
+    const om = await s.staff('ORDER_MANAGER');
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const finance = await s.staff('FINANCE_MANAGER');
+    await ctx
+      .http()
+      .post(`/api/v1/admin/orders/${order.id}/cancel`)
+      .set(authed(om))
+      .send({ reason: 'Customer called' })
+      .expect(200);
+    const first = (await shop.dbOrder(order.id)).refunds[0]!;
+    ctx.razorpay.failNext.push({ match: '/refund', mode: 'reject' });
+    await approve(finance, first.id).expect(200);
+    expect((await shop.dbOrder(order.id)).status).toBe('PAID'); // back where it was
+    // ... and it ships
+    const step = (body: Record<string, unknown>) =>
+      ctx
+        .http()
+        .post(`/api/v1/admin/orders/${order.id}/fulfilment`)
+        .set(authed(om))
+        .send(body)
+        .expect(200);
+    await step({ status: 'PROCESSING' });
+    await step({
+      status: 'SHIPPED',
+      trackingCarrier: 'DTDC',
+      trackingNumber: `T${randomBytes(6).toString('hex')}`,
+    });
+    const before = (await shop.stock(variant.id)).onHand;
+    const res = await ctx
+      .http()
+      .post(`/api/v1/admin/refunds/${first.id}/retry`)
+      .set({ ...authed(support), 'Idempotency-Key': idem() });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('ORDER_NOT_CANCELLABLE');
+    const db = await shop.dbOrder(order.id);
+    expect(db.status).toBe('SHIPPED');
+    expect(db.cancelledAt).toBeNull();
+    expect(db.refunds).toHaveLength(1);
+    expect((await shop.stock(variant.id)).onHand).toBe(before);
+  });
+
   it('a customer cancel of the same kind of order is still refunded at once (system request, no person to approve)', async () => {
     const { u, order, payment, total } = await paidOrder(59_000, 1);
     await ctx

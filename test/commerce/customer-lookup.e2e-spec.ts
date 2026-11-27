@@ -19,8 +19,13 @@ beforeAll(async () => {
 });
 afterAll(() => ctx.close());
 
+/** `query` is written like a query string for readability; it is sent as a JSON body. */
 const search = (who: Session, query: string) =>
-  ctx.http().get(`/api/v1/admin/customers?${query}`).set(authed(who));
+  ctx
+    .http()
+    .post('/api/v1/admin/customers/search')
+    .set(authed(who))
+    .send(Object.fromEntries(new URLSearchParams(query)));
 
 describe('support customer lookup (customers.read)', () => {
   it('finds a customer by exact email, phone or order number; shows masked contact details, orders and returns', async () => {
@@ -42,14 +47,19 @@ describe('support customer lookup (customers.read)', () => {
     expect(hit.email).toMatch(/^.{1,2}•••@/);
     expect(hit.email).not.toBe(u.email);
     expect(JSON.stringify(hit)).not.toContain(u.email);
-    if (user.phoneE164) {
-      expect(JSON.stringify(hit)).not.toContain(user.phoneE164);
-      const byPhone = await search(
-        support,
-        `phone=${encodeURIComponent(user.phoneE164)}`,
-      ).expect(200);
-      expect(byPhone.body.data[0]?.id).toBe(u.userId);
-    }
+    expect(user.phoneE164).toBeTruthy();
+    expect(JSON.stringify(hit)).not.toContain(user.phoneE164);
+    const phoneQuery = `phone=${encodeURIComponent(user.phoneE164!)}`;
+    // an UNVERIFIED number identifies nobody (someone else could have typed it)
+    expect((await search(support, phoneQuery).expect(200)).body.data).toEqual(
+      [],
+    );
+    await ctx.prisma.user.update({
+      where: { id: u.userId },
+      data: { phoneVerifiedAt: new Date() },
+    });
+    const byPhone = await search(support, phoneQuery).expect(200);
+    expect(byPhone.body.data[0]?.id).toBe(u.userId);
     const byOrder = await search(
       support,
       `order=${order.orderNumber.toLowerCase()}`,
@@ -133,6 +143,19 @@ describe('support customer lookup (customers.read)', () => {
             .set(authed(who))
         ).status,
       ).toBe(403);
-    await ctx.http().get('/api/v1/admin/customers?order=YL26-0001').expect(401);
+    await ctx
+      .http()
+      .post('/api/v1/admin/customers/search')
+      .send({ order: 'YL26-0001' })
+      .expect(401);
+    // the old GET form does not exist (nothing searchable in a URL)
+    expect(
+      (
+        await ctx
+          .http()
+          .get('/api/v1/admin/customers?order=YL26-0001')
+          .set(authed(support))
+      ).status,
+    ).toBe(404);
   });
 });

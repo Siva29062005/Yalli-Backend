@@ -6,7 +6,7 @@ import { Search } from 'lucide-react';
 import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, Pill, adminButton, adminCard, adminGhostButton, adminInput } from '@/components/AdminKit';
 import { RETURN_REASONS, ORDER_STATUS_LABEL, type ReturnReason } from '@/lib/account-api';
-import { adminGet } from '@/lib/admin-api';
+import { adminGet, adminPost } from '@/lib/admin-api';
 import type { OrderStatus } from '@/lib/checkout-api';
 import { formatDateTime, formatPaise } from '@/lib/formatters';
 
@@ -54,7 +54,8 @@ export default function AdminCustomersPage() {
     setError('');
     setDetail(null);
     try {
-      setResults(await withStepUp(() => adminGet<CustomerSummary[]>('/admin/customers', { [by]: value.trim() })));
+      // POST: the searched email/phone must never be part of a URL (access logs)
+      setResults(await withStepUp(() => adminPost<CustomerSummary[]>('/admin/customers/search', { [by]: value.trim() })));
     } catch (e) {
       setResults(null);
       setError(errorText(e));
@@ -81,7 +82,7 @@ export default function AdminCustomersPage() {
       <form onSubmit={search} className={`${adminCard} flex flex-wrap items-end gap-3 p-4`}>
         <label className="text-sm font-medium">
           Search by
-          <select className={`${adminInput} mt-1`} value={by} onChange={(e) => { setBy(e.target.value as By); setResults(null); }}>
+          <select className={`${adminInput} mt-1`} value={by} onChange={(e) => { setBy(e.target.value as By); setResults(null); setDetail(null); setValue(''); setError(''); }}>
             {(Object.keys(BY_LABEL) as By[]).map((k) => <option key={k} value={k}>{BY_LABEL[k]}</option>)}
           </select>
         </label>
@@ -103,7 +104,7 @@ export default function AdminCustomersPage() {
       </form>
 
       {results !== null && results.length === 0 && (
-        <Alert kind="warning">No customer matches. Check the spelling with the caller; staff accounts are not shown here.</Alert>
+        <Alert kind="warning">No customer matches. Check the spelling with the caller; a phone number is found only once the customer has verified it, and staff accounts are not shown here.</Alert>
       )}
       {results && results.length > 0 && !detail && (
         <ul className={`${adminCard} divide-y divide-[#E6EAE7]`} aria-label="Matching customers">

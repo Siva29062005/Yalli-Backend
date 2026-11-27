@@ -366,12 +366,14 @@ describe('no flow needs a second connection while it holds one', () => {
         ).body.data.id,
       );
     const moves = await Promise.all(
-      Array.from({ length: N }, (_, i) =>
-        ctx
-          .http()
-          .patch(`/api/v1/admin/images/${ids[i % 3]}`)
-          .set(authed(pm))
-          .send({ position: (i * 2) % 3 }),
+      Array.from(
+        { length: N },
+        (_, i) =>
+          ctx
+            .http()
+            .patch(`/api/v1/admin/images/${ids[i % 3]}`)
+            .set(authed(pm))
+            .send({ position: (i * 2) % 3, altText: `View ${i}` }), // field + move: the case that could deadlock
       ),
     );
     no5xx(moves, 'image moves');

@@ -336,6 +336,10 @@ Catalogue and content
 - [ ] Refund reconciliation is our side only; match it against Razorpay's settlement report manually until the live
       account exists (Phase 13: use the settlement recon API).
 - [ ] The emailed credit note is an HTML document; a PDF needs a server-side renderer (P2).
+- [x] (2026-11-27) Review of the Phase 11 commit: 2 high (cancel retry after shipping; default-warehouse switch) and
+      14 smaller findings fixed. Record: `docs/architecture/phase-11-admin.md`, last section.
+- [ ] Privacy notice: say that sign-in and security events (with IP addresses) are kept in the audit log, and for how
+      long (owner input; the audit viewer reads them).
 - [ ] No Content-Security-Policy on the frontend; "stock held for 30 minutes" is hard-coded instead of
       `PAYMENT_WINDOW_MINUTES`.
 

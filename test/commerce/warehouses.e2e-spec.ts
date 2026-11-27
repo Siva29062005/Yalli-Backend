@@ -155,6 +155,55 @@ describe('warehouses', () => {
     ).toBeGreaterThanOrEqual(6);
   });
 
+  it('after another warehouse becomes the default, stock can be received there and cancels restock where the goods came from', async () => {
+    const { variant } = await shop.fx.product({ stock: 5 });
+    const oldDefault = await ctx.prisma.warehouse.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    const u = await shop.customer();
+    const order = await shop.order(u, [{ variantId: variant.id, quantity: 2 }]);
+    await shop.paid(u, order.id); // 2 units committed from the old default
+
+    await api(im).create({ code: 'NEWDEF', name: 'New default' }).expect(201);
+    await api(im).update('NEWDEF', { isDefault: true }).expect(200);
+    const newDefault = await ctx.prisma.warehouse.findUniqueOrThrow({
+      where: { code: 'NEWDEF' },
+    });
+    // receiving stock for an OLD variant in the new warehouse creates its stock row
+    await ctx
+      .http()
+      .post('/api/v1/admin/inventory/adjustments')
+      .set(authed(im))
+      .send({
+        sku: variant.sku,
+        delta: 4,
+        type: 'RECEIPT',
+        reason: 'First delivery to the new warehouse',
+      })
+      .expect(201);
+    const row = (warehouseId: string) =>
+      ctx.prisma.inventory.findUniqueOrThrow({
+        where: {
+          variantId_warehouseId: { variantId: variant.id, warehouseId },
+        },
+      });
+    expect((await row(newDefault.id)).onHand).toBe(4);
+
+    // the customer cancels the paid order: the 2 units go back to the warehouse they were reserved from
+    const beforeOld = (await row(oldDefault.id)).onHand;
+    await ctx
+      .http()
+      .post(`/api/v1/orders/${order.id}/cancel`)
+      .set(authed(u))
+      .send({})
+      .expect(200);
+    expect((await row(oldDefault.id)).onHand).toBe(beforeOld + 2);
+    expect((await row(newDefault.id)).onHand).toBe(4);
+    expect((await shop.dbOrder(order.id)).status).toBe('REFUNDED');
+
+    await api(im).update(oldDefault.code, { isDefault: true }).expect(200);
+  });
+
   it('only inventory.adjust may change warehouses', async () => {
     for (const who of [await s.staff('ORDER_MANAGER'), await s.session()]) {
       expect((await api(who).create({ code: 'X1', name: 'Nope' })).status).toBe(

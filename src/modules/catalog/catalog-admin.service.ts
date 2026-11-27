@@ -530,7 +530,19 @@ export class CatalogAdminService {
         code: ErrorCode.ValidationFailed,
       });
     }
-    const { optionValues, ...rest } = dto;
+    const { optionValues, ...all } = dto;
+    // Price fields judged unchanged are NOT written: otherwise a save by someone without pricing.update could put an
+    // old price back over a change made since `before` was read (and leave no price audit entry).
+    const rest = Object.fromEntries(
+      Object.entries(all).filter(
+        ([k, v]) =>
+          !(PRICE_FIELDS as readonly string[]).includes(k) ||
+          !samePriceValue(
+            v as number | Date | null | undefined,
+            before[k as (typeof PRICE_FIELDS)[number]],
+          ),
+      ),
+    ) as typeof all;
     const after = await this.prisma.productVariant.update({
       where: { id: variantId },
       data: {
@@ -692,6 +704,13 @@ export class CatalogAdminService {
         code: ErrorCode.ValidationFailed,
       });
     await this.prisma.$transaction(async (tx) => {
+      // Lock ALL the product's images FIRST, always in id order: two edits of the same gallery queue up instead of
+      // each holding one row and waiting for the other's (deadlock).
+      const rows = await tx.$queryRaw<
+        { id: string; position: number; created_at: Date }[]
+      >`
+        SELECT id, position, created_at FROM product_images WHERE product_id = ${image.productId}::uuid
+        ORDER BY id FOR UPDATE`;
       await tx.productImage.update({
         where: { id: imageId },
         data: {
@@ -702,11 +721,15 @@ export class CatalogAdminService {
         },
       });
       if (dto.position === undefined) return;
-      // Lock the product's images so two reorders cannot interleave.
-      const rows = await tx.$queryRaw<{ id: string }[]>`
-        SELECT id FROM product_images WHERE product_id = ${image.productId}::uuid
-        ORDER BY position, created_at, id FOR UPDATE`;
-      const order = rows.map((r) => r.id).filter((id) => id !== imageId);
+      const order = [...rows]
+        .sort(
+          (a, b) =>
+            a.position - b.position ||
+            a.created_at.getTime() - b.created_at.getTime() ||
+            a.id.localeCompare(b.id),
+        )
+        .map((r) => r.id)
+        .filter((id) => id !== imageId);
       order.splice(Math.min(dto.position, order.length), 0, imageId);
       for (const [position, id] of order.entries())
         await tx.productImage.update({ where: { id }, data: { position } });

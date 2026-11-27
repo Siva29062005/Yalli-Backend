@@ -37,6 +37,7 @@ import { ErrorCode } from '../../common/exceptions/error-codes.js';
 import { toCsv } from '../../common/utils/csv.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, requestContext } from '../audit/audit.service.js';
+import { indianIsoDate } from './gstr1-export.js';
 import { REFUND_EXPORT_COLUMNS, refundRows } from './refund-export.js';
 import { CheckoutService } from '../checkout/checkout.service.js';
 import {
@@ -709,7 +710,7 @@ export class AdminRefundsController {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="refunds-${q.from.toISOString().slice(0, 10)}.csv"`,
+      `attachment; filename="refunds-${indianIsoDate(q.from)}.csv"`,
     );
     res.setHeader('Cache-Control', 'no-store');
     return new StreamableFile(Buffer.from(csv, 'utf8'));
@@ -960,7 +961,7 @@ export class AdminCreditNotesController {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="credit-notes-${q.from.toISOString().slice(0, 10)}.csv"`,
+      `attachment; filename="credit-notes-${indianIsoDate(q.from)}.csv"`,
     );
     res.setHeader('Cache-Control', 'no-store');
     return new StreamableFile(Buffer.from(csv, 'utf8'));

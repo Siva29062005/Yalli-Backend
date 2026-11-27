@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  Req,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -45,10 +53,12 @@ const searchSchema = z
 export class CustomerLookupController {
   constructor(private readonly lookup: CustomerLookupService) {}
 
-  @Get()
+  /** POST, not GET: the searched email/phone must not end up in URLs (CDN, load-balancer and proxy access logs). */
+  @Post('search')
+  @HttpCode(200)
   search(
     @CurrentPrincipal() a: AuthPrincipal,
-    @Query({ schema: searchSchema }) q: z.infer<typeof searchSchema>,
+    @Body({ schema: searchSchema }) q: z.infer<typeof searchSchema>,
     @Req() req: Request,
   ) {
     const by = q.email

@@ -10,6 +10,8 @@ export interface PageMeta {
 export interface AdminPageResult<T> {
   items: T[];
   meta: PageMeta;
+  /** The server's meta as sent (some lists add fields, e.g. the period an audit search really covered). */
+  rawMeta: Record<string, unknown>;
 }
 
 type Params = Record<string, string | number | boolean | null | undefined>;
@@ -37,6 +39,7 @@ export async function adminList<T>(path: string, params: Params = {}): Promise<A
       total: Number(m.total ?? data.length),
       totalPages: Number(m.totalPages ?? 1),
     },
+    rawMeta: m,
   };
 }
 

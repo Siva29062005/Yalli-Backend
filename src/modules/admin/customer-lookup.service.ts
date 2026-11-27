@@ -38,7 +38,9 @@ export class CustomerLookupService {
               where:
                 q.by === 'email'
                   ? { emailNormalized: normalizeEmail(q.value) }
-                  : { phoneE164: q.value },
+                  : // only a VERIFIED number is unique (users_verified_phone_uniq): an unverified one could be
+                    // anyone's, so it never identifies a caller
+                    { phoneE164: q.value, phoneVerifiedAt: { not: null } },
               select: { id: true },
             })
           )?.id ?? null);

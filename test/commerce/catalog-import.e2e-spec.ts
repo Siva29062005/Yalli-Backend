@@ -334,7 +334,10 @@ describe('failure isolation', () => {
     const r = await run(f);
     spy.mockRestore();
     expect(r.products.failed).toBe(1);
-    expect(r.failures[0]!.reason).toContain('ledger unavailable');
+    // an unexpected error is logged on the server, never shown as raw text (the console sends the report to a browser)
+    expect(r.failures[0]!.reason).toBe(
+      'internal error (details are in the server log)',
+    );
     expect(
       await ctx.prisma.product.count({ where: { name: `Momos Maker ${t}` } }),
     ).toBe(0);
@@ -414,6 +417,68 @@ describe('console import (POST /admin/catalog/import)', () => {
         where: { action: 'catalog.imported', actorId: admin.userId },
       }),
     ).toBe(1);
+  });
+
+  it('updating existing products needs products.update, and an import price change is audited from/to', async () => {
+    const admin = await s.staff('ADMIN');
+    const file = makeFile();
+    for (const prod of file.products)
+      for (const v of prod.variants) v.stock = 0;
+    await upload(admin, file).expect(200);
+    await upload(admin, file, { apply: 'true' }).expect(200);
+    // same products, new price, updateExisting
+    const repriced = structuredClone(file);
+    repriced.products[1]!.variants[0]!.priceMinor = 27_500;
+    const opts = { updateExisting: 'true' };
+    // a role that may create and price products but not EDIT them cannot overwrite existing ones
+    const role = await ctx.prisma.role.upsert({
+      where: { name: 'TEST_IMPORT_CREATOR' },
+      update: {},
+      create: { name: 'TEST_IMPORT_CREATOR', rank: 40, isSystem: false },
+    });
+    for (const name of ['products.read', 'products.create', 'pricing.update']) {
+      const perm = await ctx.prisma.permission.findUniqueOrThrow({
+        where: { name },
+      });
+      await ctx.prisma.rolePermission.upsert({
+        where: {
+          roleId_permissionId: { roleId: role.id, permissionId: perm.id },
+        },
+        update: {},
+        create: { roleId: role.id, permissionId: perm.id },
+      });
+    }
+    const creator = await s.staff('TEST_IMPORT_CREATOR');
+    expect((await upload(creator, repriced, opts)).status).toBe(403);
+
+    await upload(admin, repriced, opts).expect(200);
+    await upload(admin, repriced, { ...opts, apply: 'true' }).expect(200);
+    const variant = await ctx.prisma.productVariant.findFirstOrThrow({
+      where: { sku: repriced.products[1]!.variants[0]!.sku },
+    });
+    expect(variant.priceMinor).toBe(27_500);
+    const audit = await ctx.prisma.auditLog.findFirstOrThrow({
+      where: { action: 'catalog.price.changed', resourceId: variant.id },
+    });
+    expect(audit).toMatchObject({ actorId: admin.userId });
+    expect(audit.metadata).toMatchObject({
+      source: 'catalog-import',
+      from: { priceMinor: 25_000 },
+      to: { priceMinor: 27_500 },
+    });
+  });
+
+  it('confirming the same dry run twice runs the import once', async () => {
+    const admin = await s.staff('ADMIN');
+    const file = makeFile();
+    for (const prod of file.products)
+      for (const v of prod.variants) v.stock = 0;
+    await upload(admin, file).expect(200);
+    const [a, b] = await Promise.all([
+      upload(admin, file, { apply: 'true' }),
+      upload(admin, file, { apply: 'true' }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 400]);
   });
 
   it('a bad file writes nothing and lists the problems; publish and stock need their own permissions', async () => {

@@ -20,7 +20,7 @@ import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, type RequestContext } from '../audit/audit.service.js';
 import { InventoryService } from '../inventory/inventory.service.js';
 import { OrderLifecycleService } from '../orders/order-lifecycle.service.js';
-import { REFUNDABLE } from '../orders/order-state-machine.js';
+import { PAID_CANCELLABLE, REFUNDABLE } from '../orders/order-state-machine.js';
 import { OutboxService } from '../outbox/outbox.service.js';
 import {
   PaymentProvider,
@@ -223,7 +223,7 @@ export class RefundService {
       retry = await this.prisma.$transaction(async (tx) => {
         const failed = await tx.refund.findUnique({ where: { id: failedId } });
         if (!failed) throw new NotFoundException('Refund not found');
-        await this.lifecycle.lock(tx, failed.orderId); // ORDER first, as everywhere (requestInTx locks it again)
+        const order = await this.lifecycle.lock(tx, failed.orderId); // ORDER first (requestInTx locks it again)
         const current = await tx.refund.findUniqueOrThrow({
           where: { id: failedId },
           include: { retriedBy: { select: { id: true } } },
@@ -242,6 +242,17 @@ export class RefundService {
         const isCancel =
           current.idempotencyKey === cancelPrefix ||
           current.idempotencyKey.startsWith(`${cancelPrefix}:`);
+        // A staff cancel whose refund failed left the order where it was, and it may have shipped since. Retrying the
+        // CANCEL then would cancel (and restock) goods the customer already has: only while it is still cancellable.
+        if (
+          isCancel &&
+          !order.cancelledAt &&
+          !PAID_CANCELLABLE.includes(order.status)
+        )
+          throw new ConflictException({
+            message: `This order is now ${order.status.toLowerCase().replaceAll('_', ' ')}, so it can no longer be cancelled: raise a refund for it instead`,
+            code: 'ORDER_NOT_CANCELLABLE',
+          });
         const idempotencyKey = isCancel
           ? `${cancelPrefix}:${await tx.refund.count({ where: { orderId: current.orderId, idempotencyKey: { startsWith: cancelPrefix } } })}`
           : `retry:${current.id}`;
@@ -262,11 +273,23 @@ export class RefundService {
       });
     } catch (err) {
       // two people retrying at the same moment: the unique retry_of_id decides
-      if ((err as { code?: string }).code === 'P2002')
-        throw new ConflictException({
-          message: 'This refund was already retried',
-          code: 'REFUND_ALREADY_RETRIED',
-        });
+      if ((err as { code?: string }).code === 'P2002') {
+        // retry_of_id: someone retried it at the same moment; any other unique key (two cancel attempts numbered
+        // at once): a plain conflict, try again
+        const where = JSON.stringify((err as { meta?: unknown }).meta ?? {});
+        throw new ConflictException(
+          /retry_?of_?id/i.test(where)
+            ? {
+                message: 'This refund was already retried',
+                code: 'REFUND_ALREADY_RETRIED',
+              }
+            : {
+                message:
+                  'Another change to this order happened at the same moment; please try again',
+                code: ErrorCode.Conflict,
+              },
+        );
+      }
       throw err;
     }
     await this.audit.record({
@@ -591,7 +614,17 @@ export class RefundService {
           r.idempotencyKey.startsWith(`cancel:${orderId}:`)), // a later attempt after a rejected/failed one
     );
     let cancelledAt = order.cancelledAt;
-    if (cancelRefund && !cancelledAt) {
+    // Only an order that was still unshipped when its cancel refund was requested is cancelled (and restocked) here.
+    const wasCancellable =
+      order.status === 'REFUND_PENDING' &&
+      order.statusBeforeRefund !== null &&
+      PAID_CANCELLABLE.includes(order.statusBeforeRefund);
+    if (cancelRefund && !cancelledAt && !wasCancellable)
+      this.logger.error(
+        { orderId },
+        'A cancel refund was processed for an order that had shipped: not cancelled or restocked; check it by hand',
+      );
+    if (cancelRefund && !cancelledAt && wasCancellable) {
       const done = await this.lifecycle.markPaidOrderCancelledInTx(
         tx,
         orderId,

@@ -83,6 +83,7 @@ async function main(): Promise<number> {
         Permission.ProductsCreate,
         Permission.PricingUpdate,
         ...(flag('publish') ? [Permission.ProductsPublish] : []),
+        ...(flag('update-existing') ? [Permission.ProductsUpdate] : []),
         ...(receivesStock ? [Permission.InventoryAdjust] : []),
       ];
       const allowed =

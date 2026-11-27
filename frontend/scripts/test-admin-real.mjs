@@ -525,7 +525,7 @@ try {
   await page.getByRole('heading', { name: 'Recent orders' }).waitFor();
   step('support finds a caller by order number (customers.read)');
   await go('Messages', 'Messages');
-  await page.getByRole('tab', { name: 'To answer' }).waitFor();
+  await page.getByRole('button', { name: 'To answer', exact: true }).waitFor();
   await page.getByText('are not verified', { exact: false }).waitFor();
   step('support opens the contact inbox (real endpoint, step-up handled)');
   assert.deepEqual(forbidden, [], `UI made requests the role is forbidden to make: ${forbidden}`);

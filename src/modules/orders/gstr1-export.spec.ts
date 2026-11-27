@@ -5,6 +5,7 @@ import {
   creditNoteRows,
   csvCell,
   indianDate,
+  indianIsoDate,
   placeOfSupplyCode,
   rupees,
   toCsv,
@@ -153,6 +154,12 @@ describe('CSV safety and format', () => {
     expect(rupees(123_456_789)).toBe('1234567.89');
     expect(rupees(-150)).toBe('-1.50');
     expect(() => rupees(1.5)).toThrow(RangeError);
+  });
+  it('file-name dates are India calendar days too', () => {
+    // 1 Nov 00:00 in India is 31 Oct 18:30 UTC
+    expect(indianIsoDate(new Date('2026-11-01T00:00:00+05:30'))).toBe(
+      '2026-11-01',
+    );
   });
   it('dates are India calendar days', () => {
     expect(indianDate(new Date('2026-03-31T19:00:00Z'))).toBe('01-04-2026');

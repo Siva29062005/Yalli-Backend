@@ -157,13 +157,13 @@ export default function AdminInventoryPage() {
                           <form className="mt-2 flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); void saveLevel(); }}>
                             <input aria-label={`Low-stock level for ${r.sku}`} inputMode="numeric" autoFocus className={`${adminInput} w-20 py-1`} value={levelFor.value} onChange={(e) => setLevelFor({ ...levelFor, value: e.target.value })} />
                             <button className="text-xs font-semibold text-[#116644]">Save</button>
-                            <button type="button" className="text-xs text-[#4A5550]" onClick={() => setLevelFor(null)}>Cancel</button>
+                            <button type="button" className="text-xs text-[#4A5550]" onClick={() => { setLevelFor(null); setRowError(''); }}>Cancel</button>
                           </form>
                         ) : (
                           <span className="mt-1 block text-xs text-[#4A5550]">
                             low at {r.lowStockThreshold}
                             {can('inventory.adjust') && (
-                              <button type="button" className="ml-1 font-semibold text-[#116644] underline" aria-label={`Change low-stock level for ${r.sku}`} onClick={() => setLevelFor({ sku: r.sku, warehouse: r.warehouse, value: String(r.lowStockThreshold) })}>
+                              <button type="button" className="ml-1 font-semibold text-[#116644] underline" aria-label={`Change low-stock level for ${r.sku}`} onClick={() => { setRowError(''); setLevelFor({ sku: r.sku, warehouse: r.warehouse, value: String(r.lowStockThreshold) }); }}>
                                 change
                               </button>
                             )}
