@@ -11,7 +11,8 @@ import { ProductCard } from "@/components/ProductCard";
 import type { Metadata } from "next";
 import { JsonLd } from "@/components/JsonLd";
 import { listProducts } from "@/lib/catalog-api";
-import { BUSINESS } from "@/lib/business";
+import { BUSINESS, HOME_HERO } from "@/lib/business";
+import { ProductImage } from "@/components/ProductImage";
 import { websiteJsonLd } from "@/lib/seo";
 import { SITE_URL, canonicalFor } from "@/lib/site";
 
@@ -23,9 +24,12 @@ export default async function HomePage() {
     .then((p) => p.items)
     .catch(() => []);
   // The sale card is shown only while something is really on sale (best-effort, like the row above).
-  const onSale = await listProducts({ special: true, pageSize: 1 })
-    .then((p) => p.meta.total)
-    .catch(() => 0);
+  const sale = await listProducts({ special: true, pageSize: 5 })
+    .then((p) => ({ items: p.items, total: p.meta.total }))
+    .catch(() => ({ items: [], total: 0 }));
+  const onSale = sale.total;
+  // The banner the owner supplied, else a real product photo (never a stock photo), else none.
+  const heroProduct = [...sale.items, ...bestsellers].find((p) => p.imageUrl);
 
   return (
     <>
@@ -41,7 +45,7 @@ export default async function HomePage() {
         <section className="bg-[#EEFFEE]/60 rounded-3xl p-6 md:p-12 lg:p-16 border border-[#E0EFE5] overflow-hidden">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
             {/* Left Column (~45%) */}
-            <div className="lg:col-span-6 space-y-6">
+            <div className={`${HOME_HERO.image || heroProduct ? "lg:col-span-6" : "lg:col-span-12"} space-y-6`}>
               <span className="inline-block text-[11px] font-bold text-[#116644] bg-white px-3 py-1.5 rounded-full border border-[#116644]/30 uppercase tracking-wider">
                 Good Living. Great Company.
               </span>
@@ -70,20 +74,16 @@ export default async function HomePage() {
               </div>
             </div>
 
-            {/* Right Column: Hero Photo */}
-            <div
-              className="lg:col-span-6 relative aspect-[16/10] rounded-2xl overflow-hidden shadow-sm"
-              style={{ position: "relative" }}
-            >
-              <Image
-                src="https://images.unsplash.com/photo-1556911220-e15b29be8c8f?auto=format&fit=crop&w=1200&q=80"
-                alt="Yalli Kitchen & Home Essentials"
-                fill
-                priority
-                sizes="(max-width: 1024px) 100vw, 50vw"
-                className="object-cover"
-              />
-            </div>
+            {/* Right Column: the owner's banner (public/), else a real product photo linking to it */}
+            {HOME_HERO.image ? (
+              <div className="lg:col-span-6 relative aspect-[16/10] rounded-2xl overflow-hidden shadow-sm">
+                <Image src={HOME_HERO.image} alt={HOME_HERO.alt} fill priority sizes="(max-width: 1024px) 100vw, 50vw" className="object-cover" />
+              </div>
+            ) : heroProduct ? (
+              <Link href={`/products/${heroProduct.slug}`} className="lg:col-span-6 relative block aspect-[16/10] rounded-2xl overflow-hidden shadow-sm bg-white">
+                <ProductImage src={heroProduct.imageUrl} alt={heroProduct.name} priority sizes="(max-width: 1024px) 100vw, 50vw" className="object-contain" />
+              </Link>
+            ) : null}
           </div>
         </section>
 
@@ -119,6 +119,27 @@ export default async function HomePage() {
             </p>
           )}
         </section>
+
+        {/* 2b. What is on sale right now (only while something is) */}
+        {sale.items.length > 0 && (
+          <section className="space-y-6" aria-labelledby="sale-h">
+            <div className="flex items-end justify-between">
+              <div>
+                <span className="text-[11px] font-bold text-[#A65500] uppercase tracking-wider block">On sale now</span>
+                <h2 id="sale-h" className="font-heading text-[24px] md:text-[28px] font-bold text-[#113322]">Special prices</h2>
+              </div>
+              <Link href="/specials" className="text-[14px] font-semibold text-[#116644] hover:underline flex items-center gap-1">
+                <span>See all offers</span>
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              {sale.items.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* 3. Category tiles (from the catalogue) */}
         <CategoryTiles />

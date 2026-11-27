@@ -42,8 +42,19 @@ describe('validateEnv', () => {
       /SELLER_GSTIN/,
     );
     expect(
-      validateEnv({ ...base, SELLER_GSTIN: '33ABCDE1234F1Z5' }).SELLER_GSTIN,
-    ).toBe('33ABCDE1234F1Z5');
+      validateEnv({ ...base, SELLER_GSTIN: '33ABCDE1234F1Z7' }).SELLER_GSTIN,
+    ).toBe('33ABCDE1234F1Z7');
+    // a typo (check character) and a GSTIN from another state than SELLER_STATE are refused
+    expect(() =>
+      validateEnv({ ...base, SELLER_GSTIN: '33ABCDE1234F1Z5' }),
+    ).toThrow(/check character/);
+    expect(() =>
+      validateEnv({
+        ...base,
+        SELLER_GSTIN: '29ABCDE1234F1ZW',
+        SELLER_STATE: 'Tamil Nadu',
+      }),
+    ).toThrow(/registered in Karnataka/);
     expect(() => validateEnv({ ...base, PAYMENT_WINDOW_MINUTES: '1' })).toThrow(
       /PAYMENT_WINDOW_MINUTES/,
     );

@@ -29,6 +29,9 @@
     "seed": "node dist/cli/seed.js",
     "create:test-admin": "node dist/cli/create-test-admin.js",
     "import:catalog": "node dist/cli/import-catalog.js",
+    "convert:opencart": "node dist/cli/convert-opencart.js",
+    "import:images": "node dist/cli/import-images.js",
+    "check:launch": "node dist/cli/check-launch-config.js",
     "rotate:mfa-key": "node dist/cli/rotate-mfa-key.js"
   },
   "dependencies": {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { checkGstin } from '../common/india/gst.js';
 
 const bool = z
   .enum(['true', 'false'])
@@ -160,6 +161,23 @@ export const envSchema = z
       .default(30_000),
   })
   .superRefine((env, ctx) => {
+    // The GSTIN is printed on every tax invoice: a typo (check character) or a state that does not match
+    // SELLER_STATE (which decides CGST+SGST vs IGST) must never reach a customer.
+    if (env.SELLER_GSTIN) {
+      const g = checkGstin(env.SELLER_GSTIN);
+      if (!g.ok)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['SELLER_GSTIN'],
+          message: g.reason,
+        });
+      else if (g.state && g.state !== env.SELLER_STATE.trim())
+        ctx.addIssue({
+          code: 'custom',
+          path: ['SELLER_GSTIN'],
+          message: `is registered in ${g.state} but SELLER_STATE is ${env.SELLER_STATE}`,
+        });
+    }
     if (env.CAPTCHA_PROVIDER === 'turnstile' && !env.TURNSTILE_SECRET) {
       ctx.addIssue({
         code: 'custom',

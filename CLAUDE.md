@@ -7,6 +7,7 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 ## Commands
 - `npm run check` — the quality gate: prettier, oxlint (type-aware), tsc, unit tests (root Vitest also runs `frontend/src` specs), e2e tests, build, then `check:frontend` (eslint with `--max-warnings 0`, `next build`, frontend tsc). Must pass before finishing any task.
 - `npm run test:browser` — every fake-backend Playwright script in one go (mock API + a test build in `frontend/.next-browser-tests` on free ports); needs `PLAYWRIGHT_MODULE` unless Playwright is installed in `frontend/`. `--only a,b`, `--skip-build`.
+- `npm run convert:opencart` / `npm run import:images` / `npm run check:launch` — Phase 12 migration tooling (after `npm run build`; see docs/ops/catalogue-migration.md).
 - `npm run create:test-admin` — dev-only extra SUPER_ADMIN; needs `NODE_ENV=development` + `ALLOW_TEST_ADMIN=1`; the MFA secret goes to an owner-only temp file, never the terminal.
 - `npm test` / `npm run test:e2e` — Vitest (unit `*.spec.ts`, e2e `*.e2e-spec.ts`). Mocks are `vi.fn()`, not `jest.fn()`.
 - `npm run seed` / `docker compose --profile tools run --rm seed` — sync roles+permissions, create first SUPER_ADMIN from `BOOTSTRAP_ADMIN_*` (idempotent).
@@ -89,6 +90,12 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 - Warehouses: default always active; no switching off with stock or reservations; thresholds via `InventoryService.setLowStockThreshold` (never write `inventory` elsewhere). Stock rows are created on demand in ACTIVE warehouses (`ensureRowInTx`, `FOR SHARE` on the warehouse); committed goods are restocked to the warehouse they were reserved from.
 - Console catalogue import: same service as the CLI; applying needs a dry run of the same bytes+options by the same person in 30 min, once (atomic counter); publish needs products.publish, stock inventory.adjust, update-existing products.update (CLI too); import price changes are audited per variant; failure reasons are safe text (raw errors only in the server log). Console cap 2 MB / 500 products.
 - New admin screens: Brands, Import, Finance, Customers, Messages, Audit log (plus the rebuilt Categories). Add every new screen to `ADMIN_SCREENS` (`anyOf`, plus `allOf` when the endpoint requires several permissions), `test-admin-access.mjs`, `test-admin-screens.mjs` and `test-admin-real.mjs`.
+
+## Phase 12 conventions (catalogue and business setup; runbook docs/ops/catalogue-migration.md)
+- OpenCart data enters ONLY through files: `npm run convert:opencart` (pure `catalog/import/opencart.ts`: phpMyAdmin JSON export -> import file, paise by string maths, warnings for everything adjusted), then the normal importer. No live connection to OpenCart.
+- Images from OpenCart: `npm run import:images` reads a LOCAL folder (`image-paths.ts` refuses `..`, absolute paths and links out of it) and uploads through `CatalogAdminService.uploadImage`. Never fetch image URLs (SSRF).
+- GSTIN: `common/india/gst.ts` (`checkGstin`: shape, check character, state code; GST state codes live there). The backend refuses an invalid `SELLER_GSTIN` or one from another state than `SELLER_STATE`. `npm run check:launch` (`common/launch-config.ts`) compares both apps' business settings; it prints problems, never values.
+- Home page: the hero is the owner's banner (`NEXT_PUBLIC_HOME_HERO_IMAGE`, a file in `frontend/public/`) or a real product photo, never a stock photo; the "on sale" row shows only while something is on sale.
 
 ## Frontend (`frontend/`)
 - Next.js 16.4 / React 19.3 / Tailwind 4.3.5 / zustand. This Next version has breaking changes: read `frontend/node_modules/next/dist/docs/` before writing Next code (see `frontend/AGENTS.md`).

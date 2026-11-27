@@ -227,6 +227,13 @@ Goal: the new store holds the real shop, not test data. Mostly owner work, suppo
 Exit: the staging catalogue matches the live site; policy pages show real details; sign-offs recorded in
 `docs/policies/store-policies-and-tax.md`.
 
+**Status (2026-11-27): tooling done, owner work open.** Built: the OpenCart converter (`npm run convert:opencart`, with
+the GST/HSN review sheet and the redirect map), the local image importer (`npm run import:images`), GSTIN validation
+(check character and state) in the backend settings, the launch check (`npm run check:launch`), the owner's home banner
+and a live "on sale" row, and the sign-off table. Runbook: `docs/ops/catalogue-migration.md`. Still owner input: the
+export of the live store, the images folder, the GST rates/HSN codes, the business details, banner images and the
+sign-offs (none of which can be invented).
+
 ## Phase 13: infrastructure and live integrations
 
 Goal: a staging environment on AWS that is identical to production except for test-mode keys. Follows

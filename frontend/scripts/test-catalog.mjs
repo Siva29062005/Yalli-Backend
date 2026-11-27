@@ -102,6 +102,15 @@ if (process.argv[2] === '--mock-api') {
   const page = await browser.newPage();
   const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 
+  // Home: real data only. The on-sale row lists sale products; the hero shows a real product photo (no banner set).
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+  await page.getByRole('heading', { name: 'Special prices', exact: true }).waitFor();
+  const saleRow = page.locator('section', { has: page.getByRole('heading', { name: 'Special prices', exact: true }) });
+  assert.equal(await saleRow.locator('article').count(), 5, 'five products on sale in the row');
+  const heroLink = page.locator('section').first().locator('a[href^="/products/"]');
+  assert.equal(await heroLink.count(), 1, 'the hero links to the product it shows');
+
   // Listing: server-side pagination, 24 per page.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${base}/catalog`, { waitUntil: 'load' });

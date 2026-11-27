@@ -24,6 +24,16 @@ export const BUSINESS = {
   grievanceOfficerPhone: clean(process.env.NEXT_PUBLIC_BUSINESS_GRIEVANCE_OFFICER_PHONE),
 } as const;
 
+/**
+ * The home page banner, supplied by the owner: an image in `public/` (e.g. `/banners/home-hero.webp`) and its alt text.
+ * Only a local path is used (no third-party image host). Without it the hero shows a real product photo, or none.
+ */
+const heroImage = clean(process.env.NEXT_PUBLIC_HOME_HERO_IMAGE);
+export const HOME_HERO = {
+  image: heroImage && /^\/[A-Za-z0-9/_.-]+\.(webp|jpe?g|png|avif)$/i.test(heroImage) && !heroImage.includes('..') ? heroImage : undefined,
+  alt: clean(process.env.NEXT_PUBLIC_HOME_HERO_ALT) ?? '',
+} as const;
+
 /** Name to print as the seller: the registered legal name when configured, otherwise the trading name. */
 export const sellerName = (): string => BUSINESS.legalName ?? BUSINESS.tradeName;
 

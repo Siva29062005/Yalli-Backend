@@ -365,7 +365,15 @@ Catalogue and content
 ### Commerce and operations
 - [ ] Courier integration (e.g. Shiprocket) behind `ShippingService.applyEventInTx`. Staff enter tracking by hand today.
 - [ ] Refund reconciliation: a dashboard or CSV export to match against Razorpay settlement reports.
-- [ ] OpenCart data import: convert the real store's export, and add product images (not imported today).
+- [x] (2026-11-27, Phase 12) OpenCart conversion tooling: `npm run convert:opencart` (phpMyAdmin JSON export ->
+      import file, GST/HSN review sheet, image list, redirect map, warnings) and `npm run import:images` (local image
+      folder, validated uploads, idempotent). Runbook: `docs/ops/catalogue-migration.md`.
+- [ ] **Owner:** export the live OpenCart tables and the image folder, run the conversion, have the accountant fill
+      `tax-review.csv`, import on staging, review the drafts, publish. OpenCart options become variants by hand.
+- [ ] **Owner:** business details (`NEXT_PUBLIC_BUSINESS_*`, `SELLER_*`), home banner image, and the sign-offs in
+      `docs/policies/store-policies-and-tax.md` section 5; then `npm run check:launch` must report no errors.
+- [ ] Decorative Unsplash photos remain on the empty-cart and sign-in pages (a third-party request): replace them with
+      owner images or remove them.
 - [x] Sitemap and SEO (2026-11-20): `robots.txt`, a dynamic `sitemap.xml` (static pages, categories, every published product; survives an API outage), canonical links, Open Graph defaults, Product structured data (INR price from the server, stock, rating only when reviews exist), WebSite search data, `noindex` for search/filter/paged listings, and `X-Robots-Tag: noindex` on account, cart, checkout, auth, order, compare and admin pages.
 - [ ] **Owner input for SEO:** set `NEXT_PUBLIC_BUSINESS_WEBSITE_URL` (e.g. https://yalli.in) when building for production. Without it no canonical links or sitemap URLs are emitted (a wrong host is worse than none). Also submit the sitemap in Google Search Console / Bing Webmaster Tools after launch.
 - [ ] SEO later: a default social-share image (Open Graph/Twitter), an Organization logo, per-category descriptions, and `hreflang` only if you add languages.

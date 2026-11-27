@@ -77,11 +77,28 @@ What the shop does:
 
 The pages never invent these. Set them in `frontend/.env.local` (or the hosting environment) before launch; anything
 missing is simply left out in production (and flagged in development):
-`NEXT_PUBLIC_BUSINESS_LEGAL_NAME`, `..._REGISTERED_ADDRESS`, `..._GSTIN`, `..._SUPPORT_EMAIL`, `..._SUPPORT_PHONE`,
+`NEXT_PUBLIC_BUSINESS_LEGAL_NAME`, `..._ADDRESS`, `..._GSTIN`, `..._SELLER_STATE`, `..._SUPPORT_EMAIL`, `..._SUPPORT_PHONE`,
 `..._SUPPORT_HOURS`, `..._GRIEVANCE_OFFICER_NAME`, `..._GRIEVANCE_OFFICER_DESIGNATION`, `..._GRIEVANCE_OFFICER_EMAIL`,
-`..._GRIEVANCE_OFFICER_PHONE`, `..._WEBSITE_URL`. The backend needs `SELLER_STATE` and (in production) `SELLER_GSTIN`.
+`..._GRIEVANCE_OFFICER_PHONE`, `..._WEBSITE_URL`. The backend needs `SELLER_LEGAL_NAME` (as on the GST registration),
+`SELLER_STATE` and (in production) `SELLER_GSTIN`; it refuses a GSTIN with a wrong check character or a state code that
+does not match `SELLER_STATE`. `npm run check:launch` compares both apps before launch (`docs/ops/catalogue-migration.md`).
+The home page banner is the owner's image in `frontend/public/` (`NEXT_PUBLIC_HOME_HERO_IMAGE`, `..._ALT`); without it
+the hero shows a real product photo.
 
-## 5. Sources
+## 5. Sign-offs (record them here; change the pages first if anything is asked)
+
+| Topic | Who | Decision / changes asked | Date |
+|---|---|---|---|
+| GST on delivery fees: apportioned over the lines, taxed at each line's rate (section 3) | Accountant | _pending_ | |
+| Credit-note format, numbering and the 30 November reporting limit (section 3) | Accountant | _pending_ | |
+| Credit notes for goodwill refunds (Finance Act 2026, s.34) | Accountant | _pending_ | |
+| GSTR-1 table for the credit-note CSV (CDNUR or B2CS) and the CSV columns (Admin → Finance) | Accountant | _pending_ | |
+| GST rate and HSN code per SKU (`tax-review.csv`) | Accountant | _pending_ | |
+| Privacy notice (incl. security logs with IP addresses and how long they are kept) | Lawyer | _pending_ | |
+| Terms of use and sale | Lawyer | _pending_ | |
+| Returns and refunds page (7-day window, payment window, refund rules) | Lawyer | _pending_ | |
+
+## 6. Sources
 
 - GST on delivery: [Section 8 composite supplies](https://gstgyaan.com/section-8-gst-liability-on-composite-and-mixed-supplies), [GST treatment of shipping and packing fees](https://emerge.fibre2fashion.com/blogs/10925/shipping-cod-charges-packing-fees-gst-treatment-that-won-t-break-your-books), [West Bengal appellate body on Flipkart delivery](https://www.angelone.in/news/unlisted-companies/west-bengal-apellate-body-rejects-flipkart-s-gta-claim-18-gst-to-apply-on-delivery-charges)
 - Credit notes: [Section 34 explained](https://taxguru.in/goods-and-service-tax/section-34-understanding-credit-notes-gst.html), [credit notes and refunds](https://taxguru.in/goods-and-service-tax/adjustment-tax-liability-refund-gst-credit-note.html)
