@@ -505,7 +505,9 @@ export class RefundService {
     // order is cancelled for real: stock back on the shelf, cancelledAt, the order.cancelled event.
     const cancelRefund = refunds.find(
       (r) =>
-        r.idempotencyKey === `cancel:${orderId}` && r.status === 'PROCESSED',
+        r.status === 'PROCESSED' &&
+        (r.idempotencyKey === `cancel:${orderId}` ||
+          r.idempotencyKey.startsWith(`cancel:${orderId}:`)), // a later attempt after a rejected/failed one
     );
     let cancelledAt = order.cancelledAt;
     if (cancelRefund && !cancelledAt) {

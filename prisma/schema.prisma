@@ -237,6 +237,9 @@ model UserSession {
   authenticatedAt DateTime  @default(now()) @map("authenticated_at") @db.Timestamptz(6)
   /// "Keep me signed in": the refresh cookie gets an expiry. Otherwise it is a browser-session cookie. Never for staff.
   persistent      Boolean   @default(false)
+  /// Issued to a browser in cookie mode. Only such sessions get the refresh grace window for racing tabs: a session
+  /// issued in body mode (API / mobile) keeps strict reuse detection even if a client sends its token as a cookie.
+  cookieMode      Boolean   @default(false) @map("cookie_mode")
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]

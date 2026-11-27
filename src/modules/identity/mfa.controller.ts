@@ -117,6 +117,7 @@ export class MfaController {
       challenge.userId,
       ctx,
       dto.remember === true,
+      this.cookies.isCookieMode(req),
     );
     const base = {
       mfaRequired: false,

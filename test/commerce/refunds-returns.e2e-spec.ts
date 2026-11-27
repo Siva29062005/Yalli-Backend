@@ -279,6 +279,64 @@ describe('staff cancels a PAID order: the refund needs a second approver', () =>
       .expect(200);
   });
 
+  it('after a REJECTED staff cancel, the customer can still cancel: refunded in full, restocked once', async () => {
+    const { u, order, variant, payment, total } = await paidOrder(59_000, 1);
+    const om = await s.staff('ORDER_MANAGER');
+    const finance = await s.staff('FINANCE_MANAGER');
+    const stockBefore = await shop.stock(variant.id);
+    await staffCancel(om, order.id).expect(200);
+    const first = (await shop.dbOrder(order.id)).refunds[0]!;
+    await ctx
+      .http()
+      .post(`/api/v1/admin/refunds/${first.id}/reject`)
+      .set(authed(finance))
+      .send({ reason: 'Customer asked us to keep it' })
+      .expect(200);
+    await ctx
+      .http()
+      .post(`/api/v1/orders/${order.id}/cancel`)
+      .set(authed(u))
+      .send({ reason: 'Changed my mind after all' })
+      .expect(200);
+    const db = await shop.dbOrder(order.id);
+    expect(refunded(payment.id)).toBe(total);
+    expect(db.status).toBe('REFUNDED');
+    expect(db.cancelledAt).not.toBeNull();
+    expect((await shop.stock(variant.id)).onHand).toBe(stockBefore.onHand + 1);
+  });
+
+  it('a staff cancel can be requested again after a rejection, and a cancelled order is never fulfilled', async () => {
+    const { order } = await paidOrder(59_000, 1);
+    const om = await s.staff('ORDER_MANAGER');
+    const finance = await s.staff('FINANCE_MANAGER');
+    await staffCancel(om, order.id).expect(200);
+    const first = (await shop.dbOrder(order.id)).refunds[0]!;
+    await ctx
+      .http()
+      .post(`/api/v1/admin/refunds/${first.id}/reject`)
+      .set(authed(finance))
+      .send({ reason: 'Wrong order' })
+      .expect(200);
+    await staffCancel(om, order.id).expect(200);
+    const refunds = (await shop.dbOrder(order.id)).refunds;
+    const second = refunds.find((r) => r.status === 'PENDING_APPROVAL');
+    expect(second).toBeDefined(); // a NEW request is waiting for approval
+    expect(second!.idempotencyKey).toBe(`cancel:${order.id}:1`);
+    await approve(finance, second!.id).expect(200);
+    const db = await shop.dbOrder(order.id);
+    expect(db.status).toBe('REFUNDED');
+    expect(db.cancelledAt).not.toBeNull();
+    expect(
+      (
+        await ctx
+          .http()
+          .post(`/api/v1/admin/orders/${order.id}/fulfilment`)
+          .set(authed(om))
+          .send({ status: 'PROCESSING' })
+      ).status,
+    ).toBe(409);
+  });
+
   it('after a partial refund, a customer cancel whose refund FAILS stays cancelled-and-waiting (never back to PAID)', async () => {
     const { u, order } = await paidOrder(100_000, 1);
     const req = await requestRefund(await s.staff('CUSTOMER_SUPPORT'), {

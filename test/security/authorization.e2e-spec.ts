@@ -283,6 +283,16 @@ describe('role management rules', () => {
     const old = await ctx.http().get('/api/v1/me').set(as(target));
     expect(old.status).toBe(401);
     expect(old.body.error.code).toBe('ACCESS_TOKEN_INVALID');
+    // …and its refresh token is dead too (that "remembered" session was the risk).
+    expect(
+      (
+        await ctx
+          .http()
+          .post('/api/v1/auth/refresh')
+          .set('X-Forwarded-For', target.ip)
+          .send({ refreshToken: target.refreshToken })
+      ).status,
+    ).toBe(401);
     const login = await s.login(target.email, target.password, target.ip);
     expect(login.body.data.mfaRequired).toBe(true);
     const verified = await ctx
@@ -304,6 +314,20 @@ describe('role management rules', () => {
       },
     });
     expect(audit.metadata).toMatchObject({ role: 'ORDER_MANAGER' });
+  });
+
+  it('re-granting a role the person already holds changes nothing and signs nobody out', async () => {
+    const admin = await s.staff('ADMIN');
+    const staff = await s.staff('ORDER_MANAGER');
+    await ctx
+      .http()
+      .post(`/api/v1/admin/users/${staff.userId}/roles`)
+      .set(as(admin))
+      .send({ role: 'ORDER_MANAGER' })
+      .expect(200);
+    expect((await ctx.http().get('/api/v1/me').set(as(staff))).status).toBe(
+      200,
+    );
   });
 
   it('a staff role is refused until the person has two-step verification: nobody can enrol the first authenticator on a privileged account', async () => {

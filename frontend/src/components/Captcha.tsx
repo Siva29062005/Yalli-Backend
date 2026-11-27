@@ -62,12 +62,20 @@ export function Captcha({ onToken, action, resetKey = 0 }: { onToken: (token: st
     loadTurnstile()
       .then(() => {
         if (cancelled || !box.current) return;
-        if (!window.turnstile) return fail();
+        if (!window.turnstile) {
+          // The script answered but did not set up Turnstile: forget it so "try again" loads a fresh copy.
+          loading = null;
+          document.querySelector(`script[src="${SCRIPT}"]`)?.remove();
+          return fail();
+        }
         setFailed(false);
         id = window.turnstile.render(box.current, {
           sitekey: TURNSTILE_SITE_KEY,
           action,
-          callback: (token: string) => callback.current(token),
+          callback: (token: string) => {
+            setFailed(false); // Turnstile can recover on its own after an error
+            callback.current(token);
+          },
           'expired-callback': () => callback.current(null),
           'error-callback': fail,
         });
@@ -85,7 +93,7 @@ export function Captcha({ onToken, action, resetKey = 0 }: { onToken: (token: st
       <div ref={box} className="min-h-[65px]" />
       {failed && (
         <p role="alert" className="text-[13px] text-[#B42318]">
-          The security check could not load. If you use a content blocker or a strict network, allow
+          The security check could not be completed. If you use a content blocker or a strict network, allow
           challenges.cloudflare.com, then{' '}
           <button type="button" className="font-semibold underline" onClick={() => setAttempt((n) => n + 1)}>
             try again

@@ -689,6 +689,32 @@ describe('failures, retries and out-of-order delivery', () => {
     ).toHaveLength(1);
   });
 
+  it('NO DOUBLE CHARGE (stale claim): a second authorization arriving later applies the capture that happened instead', async () => {
+    const { order, init } = await pending();
+    ctx.razorpay.failNext.push({
+      match: '/capture',
+      mode: 'timeout-after-effect',
+    });
+    const a = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    await shop.webhook(ctx.razorpay.paymentWebhook('payment.authorized', a));
+    expect(ctx.razorpay.payments.get(a.id)!.status).toBe('captured');
+    // the claim of that attempt has gone stale before anything else happened
+    await ctx.prisma.payment.updateMany({
+      where: { orderId: order.id },
+      data: { captureStartedAt: new Date(Date.now() - 3 * 60_000) },
+    });
+    const capturesBefore = ctx.razorpay.calls.filter((c) =>
+      c.path.endsWith('/capture'),
+    ).length;
+    const b = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    await shop.webhook(ctx.razorpay.paymentWebhook('payment.authorized', b));
+    expect(
+      ctx.razorpay.calls.filter((c) => c.path.endsWith('/capture')).length,
+    ).toBe(capturesBefore); // no capture call
+    expect(ctx.razorpay.payments.get(b.id)!.status).toBe('authorized');
+    expect(await status(order.id)).toBe('PAID'); // A's capture was found and applied
+  });
+
   it('an authorization for the wrong amount is a mismatch: not captured, and the order can still expire', async () => {
     const { order, init } = await pending(59_000);
     const odd = ctx.razorpay.pay(init.providerOrderId, 'authorized', {

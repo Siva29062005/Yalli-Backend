@@ -77,3 +77,20 @@ An adversarial review of commit `02eff2a` found, and this follow-up fixed:
 Not changed on purpose: order line snapshots (`order_items.product_name`) written before the `stripTags` fix keep the
 encoded text, because order lines are immutable records; only development data is affected.
 
+## Second follow-up (review of `e19076c`, 2026-11-27)
+
+| Issue | Fix | Verified by |
+|---|---|---|
+| A customer cancel after a REJECTED staff cancel restocked and marked the order cancelled but refunded nothing (the idempotency lookup returned the rejected refund), and the order could still ship | Every cancel attempt gets its own refund key (`cancel:<order>`, then `cancel:<order>:<n>`) once earlier ones were rejected or failed; the customer cancel requests its refund FIRST and only then cancels the fulfilment; fulfilment refuses any order with `cancelledAt` | "after a REJECTED staff cancel, the customer can still cancel" |
+| A repeated staff cancel after a rejection silently did nothing | Same per-attempt key: a new PENDING refund appears for approval | "a staff cancel can be requested again after a rejection" |
+| The `pendingRefundApproval` audit flag was set for every staff cancel | Set only when a staff refund was actually requested | code review |
+| The "no double charge" test did not exercise the already-captured branch | New test: stale claim, then a second authorization's webhook applies the capture that happened, with no capture call | "NO DOUBLE CHARGE (stale claim)" |
+| A body-mode (API) session could still get the refresh grace window by sending its token as a cookie with a self-chosen CSRF pair | Sessions record `cookie_mode` at sign-in; only cookie-mode sessions get grace (migration `20261127000500_session_cookie_mode`) | "a session issued in BODY mode gets no grace" |
+| Re-granting a role the person already holds signed them out | No-op when the role is already held | "re-granting a role … signs nobody out" |
+| Captcha: the error stayed after Turnstile recovered; "try again" could not recover from a script that loaded without Turnstile | Error cleared on a token; the broken script is forgotten and removed | `test-auth.mjs` |
+
+Residual (accepted): a sign-in already in progress when a staff role is granted could, in a window of milliseconds, create a
+customer-type session after the revocation; the person still needs MFA, and the next refresh keeps its customer limits.
+If Razorpay does not yet list a capture that timed out (beyond the 2-minute claim), a second authorization could be
+captured; capture calls time out after 10 s, so this needs the provider to lag by minutes.
+

@@ -159,7 +159,11 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.auth.login(dto, requestContext(req));
+    const result = await this.auth.login(
+      dto,
+      requestContext(req),
+      this.cookies.isCookieMode(req),
+    );
     if (result.kind === 'mfa')
       return {
         mfaRequired: true,

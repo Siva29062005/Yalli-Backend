@@ -189,6 +189,11 @@ export class AdminAccessService {
         });
       }
     }
+    const held = await this.prisma.userRole.findUnique({
+      where: { userId_roleId: { userId: target.id, roleId: role.id } },
+      select: { userId: true },
+    });
+    if (held) return; // already granted: nothing changes, nobody is signed out, no misleading audit row
     await this.prisma.userRole.upsert({
       where: { userId_roleId: { userId: target.id, roleId: role.id } },
       update: {},

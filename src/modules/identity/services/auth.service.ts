@@ -98,7 +98,11 @@ export class AuthService {
 
   // ---------------------------------------------------------------------------------------- login
 
-  async login(dto: LoginDto, ctx: RequestContext): Promise<LoginResult> {
+  async login(
+    dto: LoginDto,
+    ctx: RequestContext,
+    cookieMode = false,
+  ): Promise<LoginResult> {
     const email = normalizeEmail(dto.email);
     const user = await this.prisma.user.findUnique({
       where: { emailNormalized: email },
@@ -184,6 +188,7 @@ export class AuthService {
         mfaVerified: false,
         deviceLabel: dto.deviceLabel,
         remember: dto.remember === true,
+        cookieMode,
       },
     );
     return { kind: 'tokens', ...tokens };
@@ -280,6 +285,7 @@ export class AuthService {
     userId: string,
     ctx: RequestContext,
     remember = false,
+    cookieMode = false,
   ): Promise<SessionTokens> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -291,7 +297,7 @@ export class AuthService {
       user.email,
       displayName(user.customer),
       ctx,
-      { mfaVerified: true, remember },
+      { mfaVerified: true, remember, cookieMode },
     );
   }
 
@@ -306,6 +312,7 @@ export class AuthService {
       mfaVerified: boolean;
       deviceLabel?: string | undefined;
       remember?: boolean;
+      cookieMode?: boolean;
     },
   ): Promise<SessionTokens> {
     const hash = deviceHash(ctx.userAgent);
@@ -341,6 +348,7 @@ export class AuthService {
         mfaVerified: opts.mfaVerified,
         authenticatedAt: now,
         persistent,
+        cookieMode: opts.cookieMode === true,
         refreshTokens: {
           create: {
             tokenHash: sha256Hex(refreshToken),
@@ -439,7 +447,7 @@ export class AuthService {
     const now = new Date();
 
     const reused = async (): Promise<GraceTokens> => {
-      if (opts.browserGrace) {
+      if (opts.browserGrace && session.cookieMode) {
         const again = await this.prisma.refreshToken.findUnique({
           where: { id: row.id },
           select: { usedAt: true },

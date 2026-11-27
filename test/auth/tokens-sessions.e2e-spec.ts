@@ -576,6 +576,27 @@ describe('cookie mode (browser) and CSRF', () => {
     expect(session.revokedReason).toBe('REFRESH_REUSE');
   });
 
+  it('a session issued in BODY mode gets no grace even when its token is sent as a cookie with a self-chosen CSRF pair', async () => {
+    const a = await s.session(); // body mode (API client)
+    expect((await refresh(a.refreshToken, a.ip)).status).toBe(200);
+    const replay = await ctx
+      .http()
+      .post('/api/v1/auth/refresh')
+      .set({
+        'X-Forwarded-For': freshIp(),
+        'X-Auth-Mode': 'cookie',
+        'X-CSRF-Token': 'attacker-chosen-csrf-value',
+        Cookie: `yalli_rt=${a.refreshToken}; yalli_csrf=attacker-chosen-csrf-value`,
+      })
+      .send({});
+    expect(replay.status).toBe(401);
+    const session = await ctx.prisma.userSession.findFirstOrThrow({
+      where: { userId: a.userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(session.revokedReason).toBe('REFRESH_REUSE');
+  });
+
   it('the grace window yields at most two extra access tokens per refresh token, then it is theft', async () => {
     const c = await cookieLogin();
     expect((await cookieRefresh(c, c.refresh)).status).toBe(200); // the real rotation

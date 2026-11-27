@@ -133,7 +133,7 @@ export class OrderService {
       });
       if (!own) throw new NotFoundException('Order not found');
     }
-    const refundToExecute = await this.prisma.$transaction(async (tx) => {
+    const outcome = await this.prisma.$transaction(async (tx) => {
       const order = await this.lifecycle.lock(tx, orderId);
       if (order.status === 'CANCELLED') return null; // idempotent
       if (UNPAID_CANCELLABLE.includes(order.status)) {
@@ -174,6 +174,20 @@ export class OrderService {
       if (byStaff && !actor.id)
         throw new Error('A staff cancellation must name the staff member');
       const cancelReason = `Order cancelled: ${reason}`.slice(0, 200);
+      // One refund key per cancel ATTEMPT: an earlier cancel refund that was REJECTED or FAILED must not be returned
+      // again by the idempotency lookup (that would cancel without refunding). An open or processed one is reused.
+      const earlier = await tx.refund.findMany({
+        where: { orderId, idempotencyKey: { startsWith: `cancel:${orderId}` } },
+        select: { idempotencyKey: true, status: true },
+      });
+      const live = earlier.find(
+        (r) => r.status !== 'REJECTED' && r.status !== 'FAILED',
+      );
+      const idempotencyKey =
+        live?.idempotencyKey ??
+        (earlier.length === 0
+          ? `cancel:${orderId}`
+          : `cancel:${orderId}:${earlier.length}`);
       if (byStaff) {
         await this.refunds.requestInTx(tx, {
           paymentId: payment.id,
@@ -182,16 +196,11 @@ export class OrderService {
           reason: cancelReason,
           requestedById: actor.id ?? null,
           autoApprove: false,
-          idempotencyKey: `cancel:${orderId}`,
+          idempotencyKey,
         });
-        return null;
+        return { refund: null, pendingApproval: true };
       }
-      await this.lifecycle.markPaidOrderCancelledInTx(
-        tx,
-        orderId,
-        reason,
-        this.inventory,
-      );
+      // Refund FIRST (claims the refundable amount, moves the order to REFUND_PENDING), then cancel the fulfilment.
       const refund = await this.refunds.requestInTx(tx, {
         paymentId: payment.id,
         kind: 'CUSTOMER_CANCEL',
@@ -199,10 +208,25 @@ export class OrderService {
         reason: cancelReason,
         requestedById: null,
         autoApprove: true,
-        idempotencyKey: `cancel:${orderId}`,
+        idempotencyKey,
       });
-      // The refund request above already moved the order to REFUND_PENDING (and recorded it in the history).
-      return refund;
+      if (
+        refund.status !== 'APPROVED' &&
+        refund.status !== 'PROCESSING' &&
+        refund.status !== 'PROCESSED'
+      )
+        throw new ConflictException({
+          message:
+            'This order cannot be cancelled automatically. Please contact support.',
+          code: 'ORDER_NOT_CANCELLABLE',
+        });
+      await this.lifecycle.markPaidOrderCancelledInTx(
+        tx,
+        orderId,
+        reason,
+        this.inventory,
+      );
+      return { refund, pendingApproval: false };
     });
     await this.audit.record({
       action: AuditAction.OrderCancelled,
@@ -215,13 +239,11 @@ export class OrderService {
       metadata: {
         reason,
         by: actor.type,
-        ...(actor.type === 'ADMIN' && !refundToExecute
-          ? { pendingRefundApproval: true }
-          : {}),
+        ...(outcome?.pendingApproval ? { pendingRefundApproval: true } : {}),
       },
     });
-    if (refundToExecute)
-      await this.refunds.execute(refundToExecute.id).catch(() => undefined);
+    if (outcome?.refund?.status === 'APPROVED')
+      await this.refunds.execute(outcome.refund.id).catch(() => undefined);
   }
 
   // ----------------------------------------------------------------------------- invoice
@@ -393,6 +415,12 @@ export class OrderService {
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
       const order = await this.lifecycle.lock(tx, orderId);
+      // Defence in depth: a cancelled order (its stock already back on the shelf) is never fulfilled.
+      if (order.cancelledAt)
+        throw new ConflictException({
+          message: 'This order was cancelled',
+          code: 'INVALID_ORDER_TRANSITION',
+        });
       if (order.status !== step.from && order.status !== to)
         throw new ConflictException({
           message: `Order is ${order.status}; expected ${step.from}`,
