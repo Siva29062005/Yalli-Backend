@@ -1,5 +1,6 @@
 import {
   allocateProportionally,
+  apportionExactly,
   couponDiscount,
   priceCart,
   type CouponRule,
@@ -183,6 +184,58 @@ describe('priceCart', () => {
     expect(() => allocateProportionally(31, [10, 20])).toThrow(RangeError);
   });
 
+  it('apportions a delivery fee exactly, even when it is bigger than the goods', () => {
+    expect(apportionExactly(4_900, [1_000, 1_000])).toEqual([2_450, 2_450]);
+    expect(apportionExactly(100, [1, 2])).toEqual([33, 67]);
+    expect(apportionExactly(1, [5_000, 5_000])).toEqual([1, 0]);
+    expect(apportionExactly(0, [0, 0])).toEqual([0, 0]);
+    expect(() => apportionExactly(10, [0, 0])).toThrow(RangeError);
+  });
+
+  it("taxes the delivery fee with the goods, at each line's rate (composite supply)", () => {
+    // one 18% line: the whole ₹49 fee carries 18% GST inside it
+    const one = priceCart([line({ unitPriceMinor: 100_000 })], null, 4_900);
+    expect(one.lines[0]!.shippingShareMinor).toBe(4_900);
+    expect(one.shippingGstMinor).toBe(747); // 4900 * 18 / 118 = 747.46 -> 747
+    expect(one.gstIncludedMinor).toBe(15_254 + 747); // goods 100000*18/118 = 15254.2 -> 15254
+    expect(one.totalMinor).toBe(104_900);
+    // mixed rates: the fee is split by value and each part is taxed at its own line's rate
+    const mixed = priceCart(
+      [
+        line({ key: 'a', unitPriceMinor: 30_000, gstRateBps: 500 }),
+        line({ key: 'b', unitPriceMinor: 10_000, gstRateBps: 1800 }),
+      ],
+      null,
+      4_000,
+    );
+    expect(mixed.lines.map((l) => l.shippingShareMinor)).toEqual([
+      3_000, 1_000,
+    ]);
+    expect(mixed.lines.map((l) => l.shippingGstMinor)).toEqual([143, 153]); // 3000*5/105, 1000*18/118
+    expect(mixed.shippingGstMinor).toBe(296);
+    // free delivery changes nothing
+    const free = priceCart([line()], null, 0);
+    expect(free.shippingGstMinor).toBe(0);
+    expect(free.lines[0]!.shippingShareMinor).toBe(0);
+    expect(() => priceCart([], null, 100)).toThrow(RangeError);
+  });
+
+  it('a coupon that makes the goods free still lets the delivery fee be taxed', () => {
+    const r = priceCart(
+      [line({ unitPriceMinor: 500 })],
+      rule({
+        discountType: 'FIXED_AMOUNT',
+        percentBps: null,
+        amountMinor: 500,
+      }),
+      4_900,
+    );
+    expect(r.lines[0]!.totalMinor).toBe(0);
+    expect(r.lines[0]!.shippingShareMinor).toBe(4_900);
+    expect(r.gstIncludedMinor).toBe(747);
+    expect(r.totalMinor).toBe(4_900);
+  });
+
   // Property test: thousands of random carts and coupons; the invariants must ALWAYS hold.
   it('invariants hold for 5,000 random carts', () => {
     let seed = 42;
@@ -219,7 +272,8 @@ describe('priceCart', () => {
               categoryIds: new Set([`c${rand(3)}`]),
               minCartMinor: rand(5) === 0 ? rand(3_000_000) : 0,
             });
-      const r = priceCart(lines, coupon);
+      const shipping = rand(3) === 0 ? 0 : rand(20_000);
+      const r = priceCart(lines, coupon, shipping);
       const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
       const ints = [
         r.subtotalMinor,
@@ -234,9 +288,21 @@ describe('priceCart', () => {
         ]),
       ];
       expect(ints.every((n) => Number.isSafeInteger(n) && n >= 0)).toBe(true);
-      expect(sum(r.lines.map((l) => l.totalMinor))).toBe(r.totalMinor);
+      expect(sum(r.lines.map((l) => l.totalMinor)) + shipping).toBe(
+        r.totalMinor,
+      );
       expect(sum(r.lines.map((l) => l.discountMinor))).toBe(r.discountMinor);
-      expect(r.totalMinor).toBe(r.subtotalMinor - r.discountMinor);
+      expect(r.totalMinor).toBe(r.subtotalMinor - r.discountMinor + shipping);
+      // the delivery fee is fully allocated, and its tax never exceeds it
+      expect(sum(r.lines.map((l) => l.shippingShareMinor))).toBe(shipping);
+      expect(sum(r.lines.map((l) => l.shippingGstMinor))).toBe(
+        r.shippingGstMinor,
+      );
+      expect(r.shippingGstMinor).toBeLessThanOrEqual(shipping);
+      expect(r.gstIncludedMinor).toBe(
+        sum(r.lines.map((l) => l.gstIncludedMinor)) + r.shippingGstMinor,
+      );
+      expect(r.gstIncludedMinor).toBeLessThanOrEqual(r.totalMinor);
       expect(r.discountMinor).toBeLessThanOrEqual(
         sum(
           r.lines.filter((l) => l.couponEligible).map((l) => l.subtotalMinor),
@@ -246,6 +312,7 @@ describe('priceCart', () => {
         expect(l.discountMinor).toBeLessThanOrEqual(l.subtotalMinor);
         if (!l.couponEligible) expect(l.discountMinor).toBe(0);
         expect(l.gstIncludedMinor).toBeLessThanOrEqual(l.totalMinor);
+        expect(l.shippingGstMinor).toBeLessThanOrEqual(l.shippingShareMinor);
       }
       if (!coupon) expect(r.discountMinor).toBe(0);
     }

@@ -23,6 +23,7 @@ import { Permission } from '../access/permissions.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, type RequestContext } from '../audit/audit.service.js';
 import { InventoryService } from '../inventory/inventory.service.js';
+import { effectivePrice } from '../pricing/price.js';
 import { CatalogQueryService } from './catalog-query.service.js';
 import type {
   CreateProductDto,
@@ -706,11 +707,52 @@ export class CatalogAdminService {
           status: true,
           updatedAt: true,
           _count: { select: { variants: true, images: true } },
+          categories: { select: { category: { select: { name: true } } } },
+          variants: {
+            where: { deletedAt: null, isActive: true },
+            select: {
+              id: true,
+              priceMinor: true,
+              salePriceMinor: true,
+              saleStartsAt: true,
+              saleEndsAt: true,
+            },
+          },
         },
       }),
       this.prisma.product.count({ where }),
     ]);
-    return paginated(items, total, q);
+    // Same price rule as the storefront (effectivePrice) and stock only through InventoryService.
+    const stock = await this.inventory.availability(
+      items.flatMap((p) => p.variants.map((v) => v.id)),
+    );
+    const now = new Date();
+    return paginated(
+      items.map(({ variants, categories, ...p }) => {
+        const prices = variants.map((v) => effectivePrice(v, now));
+        const units = variants.map((v) => stock.get(v.id));
+        return {
+          ...p,
+          categories: categories.map((c) => c.category.name).sort(),
+          /** Current customer price across the live (active) variants; null when none is on sale to customers. */
+          price:
+            prices.length === 0
+              ? null
+              : {
+                  minMinor: Math.min(...prices.map((x) => x.unitPriceMinor)),
+                  maxMinor: Math.max(...prices.map((x) => x.unitPriceMinor)),
+                  onSale: prices.some((x) => x.onSale),
+                },
+          /** Sellable units (on hand minus reserved) over live variants, and whether any is at/below its threshold. */
+          stock: {
+            available: units.reduce((n, u) => n + (u?.available ?? 0), 0),
+            lowStock: units.some((u) => u?.lowStock ?? false),
+          },
+        };
+      }),
+      total,
+      q,
+    );
   }
 
   async getProduct(id: string) {

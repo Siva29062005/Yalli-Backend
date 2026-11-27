@@ -9,6 +9,12 @@ describe('admin screen access', () => {
     expect(ADMIN_SCREENS.filter((s) => canOpen([], s))).toEqual([]);
   });
 
+  it('lets moderators (and only them) open Reviews', () => {
+    const reviews = ADMIN_SCREENS.find((s) => s.href === '/admin/reviews')!;
+    expect(canOpen(['reviews.moderate'], reviews)).toBe(true);
+    expect(canOpen(['products.read', 'orders.read'], reviews)).toBe(false);
+  });
+
   it('opens refunds & returns with either payments.read or orders.read', () => {
     const refunds = ADMIN_SCREENS.find((s) => s.href === '/admin/refunds')!;
     expect(canOpen(['payments.read'], refunds)).toBe(true);
@@ -33,7 +39,7 @@ describe('admin screen access', () => {
   it('lands on the first screen the role can use, or nowhere', () => {
     expect(firstAllowedPath(['analytics.read', 'orders.read'])).toBe('/admin/analytics');
     expect(firstAllowedPath(['inventory.read'])).toBe('/admin/inventory');
-    expect(firstAllowedPath(['reviews.moderate'])).toBeNull();
+    expect(firstAllowedPath(['audit.read'])).toBeNull();
     expect(firstAllowedPath([])).toBeNull();
   });
 });

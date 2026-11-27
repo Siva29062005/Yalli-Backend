@@ -552,6 +552,96 @@ describe('admin catalogue management', () => {
   });
 });
 
+describe('admin product list shows what staff need at a glance', () => {
+  it('reports categories, the current customer price range and sellable stock, with the storefront price rules', async () => {
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const cat = await fx.category('Glance Kitchen');
+    const tag = randomBytes(4).toString('hex');
+    // a live sale on one variant: the customer price is the sale price, not the list price
+    const { product } = await fx.product({
+      name: `Glance Steamer ${tag}`,
+      priceMinor: 79_900,
+      salePriceMinor: 49_000,
+      stock: 12,
+      categoryIds: [cat.id],
+    });
+    // a second variant whose sale has ENDED (regular price applies), plus an inactive one that must not count
+    const second = await ctx.prisma.productVariant.create({
+      data: {
+        productId: product.id,
+        sku: `GL2-${tag}`,
+        priceMinor: 99_900,
+        salePriceMinor: 10_000,
+        saleEndsAt: new Date(Date.now() - 86_400_000),
+      },
+    });
+    await ctx.prisma.inventory.create({
+      data: {
+        variantId: second.id,
+        warehouseId: (
+          await ctx.prisma.warehouse.findFirstOrThrow({
+            where: { isDefault: true },
+          })
+        ).id,
+        onHand: 5,
+        reserved: 2,
+      },
+    });
+    await ctx.prisma.productVariant.create({
+      data: {
+        productId: product.id,
+        sku: `GL3-${tag}`,
+        priceMinor: 1_000,
+        isActive: false,
+      },
+    });
+
+    const res = await ctx
+      .http()
+      .get('/api/v1/admin/products')
+      .query({ q: `Glance Steamer ${tag}` })
+      .set(authed(pm))
+      .expect(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0]).toMatchObject({
+      id: product.id,
+      categories: ['Glance Kitchen'],
+      price: { minMinor: 49_000, maxMinor: 99_900, onSale: true },
+      stock: { available: 12 + 3 }, // 12 on hand + (5 on hand - 2 reserved)
+    });
+    // customers (no products.read) still cannot see any of it
+    await ctx
+      .http()
+      .get('/api/v1/admin/products')
+      .set(authed(await s.session()))
+      .expect(403);
+  });
+
+  it('a product with no live variant has no price and no stock', async () => {
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const tag = randomBytes(4).toString('hex');
+    const { product, variant } = await fx.product({
+      name: `Glance Empty ${tag}`,
+      stock: 4,
+    });
+    await ctx.prisma.productVariant.update({
+      where: { id: variant.id },
+      data: { isActive: false },
+    });
+    const res = await ctx
+      .http()
+      .get('/api/v1/admin/products')
+      .query({ q: `Glance Empty ${tag}` })
+      .set(authed(pm))
+      .expect(200);
+    expect(res.body.data[0]).toMatchObject({
+      id: product.id,
+      price: null,
+      stock: { available: 0, lowStock: false },
+    });
+  });
+});
+
 describe('image upload security', () => {
   const upload = async (
     bytes: Buffer,

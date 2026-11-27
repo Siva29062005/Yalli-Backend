@@ -132,9 +132,8 @@ spot-check a few products against the live site.
 
 ## Known limitations and risks
 
-- **GST on delivery fees is not computed** (items only). Delivery charges are generally taxable: confirm the treatment with
-  your accountant before enabling paid shipping. The GST summary says so in its response.
-- The GST summary is not reduced for refunds (no credit notes yet).
+- ~~GST on delivery fees is not computed~~: done 2026-11-20 (taxed with the goods per line; see `docs/policies/store-policies-and-tax.md`).
+- ~~The GST summary is not reduced for refunds~~: credit notes are issued and netted since 2026-11-20.
 - One shipment per order (no split shipments); no live courier integration (tracking is entered by staff). A courier adapter
   (e.g. Shiprocket) fits behind the same `applyEventInTx` path.
 - No review helpfulness votes, photos or seller replies. Reviews are moderated, not auto-screened.

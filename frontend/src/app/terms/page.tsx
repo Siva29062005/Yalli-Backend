@@ -1,3 +1,4 @@
+import { canonicalFor } from '@/lib/site';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SellerDetails } from '@/components/BusinessInfo';
@@ -5,6 +6,7 @@ import { BUSINESS } from '@/lib/business';
 import { List, POLICY_UPDATED, PolicyPage, Section, textLink, type PolicySection } from '@/components/PolicyPage';
 
 export const metadata: Metadata = {
+  ...canonicalFor('/terms'),
   title: 'Terms of use & sale | Yalli',
   description: 'The terms that apply when you use the Yalli website and buy from us.',
 };
@@ -71,7 +73,7 @@ export default function TermsPage() {
             full.
           </li>
           <li>One coupon can be used on a cart, and coupons have their own conditions, such as dates and minimum order value.</li>
-          <li>We issue a GST tax invoice for every paid order. You can see it under My orders.</li>
+          <li>We issue a GST tax invoice for every paid order, and a credit note for every refund against it. You can see both under My orders.</li>
         </List>
       </Section>
 

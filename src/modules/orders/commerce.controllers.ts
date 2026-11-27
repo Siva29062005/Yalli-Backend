@@ -36,6 +36,7 @@ import {
 } from '../idempotency/idempotency.service.js';
 import { PaymentService } from '../payments/payment.service.js';
 import { RefundService } from '../refunds/refund.service.js';
+import { CreditNoteService } from './credit-note.service.js';
 import { OrderService } from './order.service.js';
 import { ReturnService } from './return.service.js';
 
@@ -159,6 +160,7 @@ export class OrdersController {
     private readonly payments: PaymentService,
     private readonly returns: ReturnService,
     private readonly idem: IdempotencyService,
+    private readonly creditNotes: CreditNoteService,
   ) {}
 
   @Get('orders')
@@ -216,6 +218,15 @@ export class OrdersController {
     @Param('id', { schema: uuid }) id: string,
   ) {
     return this.orders.invoice(p, id);
+  }
+
+  /** GST credit notes issued against this order's invoice (one per processed refund). */
+  @Get('orders/:id/credit-notes')
+  creditNotesForOrder(
+    @CurrentPrincipal() p: AuthPrincipal,
+    @Param('id', { schema: uuid }) id: string,
+  ) {
+    return this.creditNotes.forCustomer(p.userId, id);
   }
 
   /** Starts (or resumes) payment: returns what Razorpay's checkout needs. Idempotent. */
@@ -618,6 +629,7 @@ export class AdminRefundsController {
           processedAt: true,
           failureReason: true,
           order: { select: { orderNumber: true } },
+          creditNote: { select: { id: true, creditNoteNumber: true } },
         },
       }),
       this.prisma.refund.count({ where }),
@@ -714,3 +726,46 @@ type PaginationQuery = z.infer<typeof paginationSchema> & {
     | 'REJECTED'
     | undefined;
 };
+
+// ---------------------------------------------------------------------------------- admin: credit notes
+
+const creditNoteListSchema = paginationSchema
+  .extend({
+    from: z.iso
+      .datetime({ offset: true })
+      .transform((v) => new Date(v))
+      .optional(),
+    to: z.iso
+      .datetime({ offset: true })
+      .transform((v) => new Date(v))
+      .optional(),
+  })
+  .strict();
+
+/** Finance view of the GST credit notes (for filing and for reprints). Read-only: notes are issued automatically. */
+@ApiTags('admin-credit-notes')
+@Controller('admin/credit-notes')
+@RequireStepUp(1800)
+@RequirePermissions(Permission.PaymentsRead)
+@RateLimit({
+  name: 'admin-credit-notes',
+  limit: 120,
+  windowSeconds: 60,
+  key: 'principal',
+})
+export class AdminCreditNotesController {
+  constructor(private readonly creditNotes: CreditNoteService) {}
+
+  @Get()
+  list(
+    @Query({ schema: creditNoteListSchema })
+    q: z.infer<typeof creditNoteListSchema>,
+  ) {
+    return this.creditNotes.adminList(q);
+  }
+
+  @Get(':id')
+  get(@Param('id', { schema: uuid }) id: string) {
+    return this.creditNotes.adminGet(id);
+  }
+}

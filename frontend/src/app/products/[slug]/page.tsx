@@ -6,7 +6,10 @@ import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { CartDrawer } from '@/components/CartDrawer';
 import { ProductDetailClient } from '@/components/ProductDetailClient';
+import { JsonLd } from '@/components/JsonLd';
 import { getProduct, getReviews, listProducts } from '@/lib/catalog-api';
+import { productJsonLd } from '@/lib/seo';
+import { SITE_URL, canonicalFor } from '@/lib/site';
 
 const load = cache(getProduct);
 
@@ -19,7 +22,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return {
     title: `${product.name} | Yalli`,
     description: product.summary ?? undefined,
-    openGraph: { title: product.name, images: image ? [image] : undefined },
+    ...canonicalFor(`/products/${product.slug}`),
+    openGraph: { type: 'website', title: product.name, description: product.summary ?? undefined, images: image ? [image] : undefined },
   };
 }
 
@@ -37,6 +41,13 @@ export default async function ProductPage({ params }: Params) {
 
   return (
     <>
+      <JsonLd
+        data={productJsonLd({
+          product,
+          rating: reviews.status === 'fulfilled' ? reviews.value.summary : null,
+          url: SITE_URL ? `${SITE_URL}/products/${product.slug}` : undefined,
+        })}
+      />
       <AnnouncementBar />
       <Header />
       <CartDrawer />

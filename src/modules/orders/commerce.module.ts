@@ -19,10 +19,13 @@ import { CommerceWorker } from './commerce-worker.js';
 import {
   AdminOrdersController,
   AdminRefundsController,
+  AdminCreditNotesController,
   CheckoutController,
   OrdersController,
   WebhooksController,
 } from './commerce.controllers.js';
+import { CreditNoteConsumer } from './credit-note.consumer.js';
+import { CreditNoteService } from './credit-note.service.js';
 import { OrderEventsConsumer } from './order-events.consumer.js';
 import { OrderLifecycleService } from './order-lifecycle.service.js';
 import { OrderViewService } from './order-view.service.js';
@@ -48,6 +51,7 @@ import { ReturnService } from './return.service.js';
     WebhooksController,
     AdminOrdersController,
     AdminRefundsController,
+    AdminCreditNotesController,
     AnalyticsController,
   ],
   providers: [
@@ -61,6 +65,8 @@ import { ReturnService } from './return.service.js';
     CommerceWorker,
     AnalyticsService,
     OrderEventsConsumer,
+    CreditNoteService,
+    CreditNoteConsumer,
     { provide: RazorpayHttp, useClass: FetchRazorpayHttp },
     { provide: PaymentProvider, useClass: RazorpayAdapter },
   ],

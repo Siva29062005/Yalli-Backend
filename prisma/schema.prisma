@@ -814,13 +814,14 @@ model Order {
   createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user     User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
-  items    OrderItem[]
-  history  OrderStatusHistory[]
-  payments Payment[]
-  refunds  Refund[]
-  returns  ReturnRequest[]
-  shipment Shipment?
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items       OrderItem[]
+  history     OrderStatusHistory[]
+  payments    Payment[]
+  refunds     Refund[]
+  returns     ReturnRequest[]
+  creditNotes CreditNote[]
+  shipment    Shipment?
 
   @@index([userId, placedAt(sort: Desc)])
   @@index([status, paymentExpiresAt])
@@ -828,29 +829,36 @@ model Order {
 }
 
 model OrderItem {
-  id                String  @id @default(uuid(7)) @db.Uuid
-  orderId           String  @map("order_id") @db.Uuid
-  variantId         String  @map("variant_id") @db.Uuid
-  productId         String  @map("product_id") @db.Uuid
-  sku               String  @db.VarChar(64)
-  productName       String  @map("product_name") @db.VarChar(200)
-  variantName       String? @map("variant_name") @db.VarChar(120)
-  imageKey          String? @map("image_key") @db.VarChar(120)
-  hsnCode           String? @map("hsn_code") @db.VarChar(10)
-  unitPriceMinor    Int     @map("unit_price_minor")
-  compareAtMinor    Int?    @map("compare_at_minor")
-  quantity          Int
-  lineSubtotalMinor Int     @map("line_subtotal_minor")
-  lineDiscountMinor Int     @default(0) @map("line_discount_minor")
-  lineTotalMinor    Int     @map("line_total_minor")
-  gstRateBps        Int     @map("gst_rate_bps")
-  gstIncludedMinor  Int     @map("gst_included_minor")
-  cgstMinor         Int     @default(0) @map("cgst_minor")
-  sgstMinor         Int     @default(0) @map("sgst_minor")
-  igstMinor         Int     @default(0) @map("igst_minor")
+  id                 String  @id @default(uuid(7)) @db.Uuid
+  orderId            String  @map("order_id") @db.Uuid
+  variantId          String  @map("variant_id") @db.Uuid
+  productId          String  @map("product_id") @db.Uuid
+  sku                String  @db.VarChar(64)
+  productName        String  @map("product_name") @db.VarChar(200)
+  variantName        String? @map("variant_name") @db.VarChar(120)
+  imageKey           String? @map("image_key") @db.VarChar(120)
+  hsnCode            String? @map("hsn_code") @db.VarChar(10)
+  unitPriceMinor     Int     @map("unit_price_minor")
+  compareAtMinor     Int?    @map("compare_at_minor")
+  quantity           Int
+  lineSubtotalMinor  Int     @map("line_subtotal_minor")
+  lineDiscountMinor  Int     @default(0) @map("line_discount_minor")
+  lineTotalMinor     Int     @map("line_total_minor")
+  gstRateBps         Int     @map("gst_rate_bps")
+  gstIncludedMinor   Int     @map("gst_included_minor")
+  cgstMinor          Int     @default(0) @map("cgst_minor")
+  sgstMinor          Int     @default(0) @map("sgst_minor")
+  igstMinor          Int     @default(0) @map("igst_minor")
+  /// This line's share of the order's delivery fee (composite supply: taxed at the line's GST rate) and the GST in it.
+  shippingShareMinor Int     @default(0) @map("shipping_share_minor")
+  shippingGstMinor   Int     @default(0) @map("shipping_gst_minor")
+  shippingCgstMinor  Int     @default(0) @map("shipping_cgst_minor")
+  shippingSgstMinor  Int     @default(0) @map("shipping_sgst_minor")
+  shippingIgstMinor  Int     @default(0) @map("shipping_igst_minor")
 
-  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  returns ReturnRequest[]
+  order       Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  returns     ReturnRequest[]
+  creditLines CreditNoteLine[]
 
   @@index([orderId])
   @@map("order_items")
@@ -958,12 +966,77 @@ model Refund {
   updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   processedAt      DateTime?    @map("processed_at") @db.Timestamptz(6)
 
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment    Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  creditNote CreditNote?
 
   @@index([orderId])
   @@index([status, createdAt])
   @@map("refunds")
+}
+
+/// GST credit note (CGST Act s.34), one per processed refund of an invoiced order. Immutable once issued (trigger).
+model CreditNote {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  /// Consecutive per financial year, e.g. CN/2627/000001 (max 16 characters, as for GST documents).
+  creditNoteNumber  String   @unique @map("credit_note_number") @db.VarChar(16)
+  /// Indian financial year (April-March), e.g. 2026-27.
+  financialYear     String   @map("financial_year") @db.Char(7)
+  refundId          String   @unique @map("refund_id") @db.Uuid
+  orderId           String   @map("order_id") @db.Uuid
+  /// The invoice this note adjusts.
+  invoiceNumber     String   @map("invoice_number") @db.VarChar(30)
+  reason            String   @db.VarChar(200)
+  supply            String   @db.VarChar(12)
+  placeOfSupply     String   @map("place_of_supply") @db.VarChar(60)
+  taxableValueMinor Int      @map("taxable_value_minor")
+  cgstMinor         Int      @map("cgst_minor")
+  sgstMinor         Int      @map("sgst_minor")
+  igstMinor         Int      @map("igst_minor")
+  totalMinor        Int      @map("total_minor")
+  issuedAt          DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
+
+  refund Refund           @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  order  Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  lines  CreditNoteLine[]
+
+  @@index([orderId])
+  @@index([issuedAt])
+  @@map("credit_notes")
+}
+
+model CreditNoteLine {
+  id                String  @id @default(uuid(7)) @db.Uuid
+  creditNoteId      String  @map("credit_note_id") @db.Uuid
+  /// The invoice line this adjusts (null only for a delivery charge recorded before delivery was tax-split).
+  orderItemId       String? @map("order_item_id") @db.Uuid
+  position          Int
+  /// GOODS or DELIVERY
+  kind              String  @db.VarChar(10)
+  description       String  @db.VarChar(250)
+  hsnCode           String? @map("hsn_code") @db.VarChar(10)
+  gstRateBps        Int     @map("gst_rate_bps")
+  taxableValueMinor Int     @map("taxable_value_minor")
+  cgstMinor         Int     @map("cgst_minor")
+  sgstMinor         Int     @map("sgst_minor")
+  igstMinor         Int     @map("igst_minor")
+  totalMinor        Int     @map("total_minor")
+
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Restrict)
+  orderItem  OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@index([creditNoteId])
+  @@index([orderItemId])
+  @@map("credit_note_lines")
+}
+
+/// Gapless numbering for statutory documents: the row is locked by the UPDATE that takes the next number, inside the
+/// same transaction that writes the document, so a rollback never leaves a hole in the series.
+model DocumentCounter {
+  name      String @id @db.VarChar(40)
+  nextValue Int    @map("next_value")
+
+  @@map("document_counters")
 }
 
 model ReturnRequest {

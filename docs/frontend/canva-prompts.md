@@ -13,7 +13,8 @@ does** — no fake buttons, no dead-end screens.
 > Fonts: Poppins for headings/display, Inter for body/UI text.
 > Shape language: rounded corners (16–20px), soft card shadows, pill-shaped chips/buttons.
 > Tone: clean, trustworthy, premium-but-warm. Prices always in ₹ (Indian Rupees, GST inclusive).
-> Categories in the main nav (exactly these 8): All, Electronics and Gadgets, Home Accessories,
+> Categories in the main nav, as sample content (the live site loads them from the catalogue, so
+> the number and names change): All, Electronics and Gadgets, Home Accessories,
 > Kitchen and Dining, Combo, Outdoor and Travel, Health and Wellness, Yalli Products.
 
 ---
@@ -29,7 +30,8 @@ does** — no fake buttons, no dead-end screens.
 > Hero section: full-width banner with mint #EEFFEE background, Poppins headline
 > "Everything for a happier home" in #113322, green CTA button "Shop all categories" and a
 > secondary saffron #FF9900 "View deals" button.
-> Below: a row of 8 circular category tiles with icons: All, Electronics and Gadgets, Home
+> Below: a row of circular category tiles with icons (sample names; the row must wrap for more or
+> fewer): All, Electronics and Gadgets, Home
 > Accessories, Kitchen and Dining, Combo, Outdoor and Travel, Health and Wellness, Yalli
 > Products. Evenly spaced, green icon circles on white cards with soft shadows.
 > Next: "Trending now" grid of 4 product cards (image, name, star rating, price ₹299–₹1,499,
@@ -165,7 +167,7 @@ does** — no fake buttons, no dead-end screens.
 > Design a square (1:1) promo banner for Yalli category "Electronics and Gadgets". Mint
 > background, large Poppins headline "Smart gadgets for every home" in #113322, saffron
 > sticker "Up to 40% off" rotated −8°, green pill button "Shop now", and 2–3 floating product
-> cutouts with soft shadows. Yalli wordmark bottom-left in green. Keep the 8-category name
+> cutouts with soft shadows. Yalli wordmark bottom-left in green. Keep the category name
 > style visible somewhere small.
 
 ### 15. Combo-offer flyer
@@ -248,6 +250,7 @@ does** — no fake buttons, no dead-end screens.
   CUSTOMER — don't invent others.
 - **Guest carts**: a visitor can add to cart without an account; cart merges after login —
   there is no "cart requires login" wall in the design.
-- **The 8 categories** are fixed — any mega-menu, footer, or category-tile design must use
-  exactly: All, Electronics and Gadgets, Home Accessories, Kitchen and Dining, Combo,
-  Outdoor and Travel, Health and Wellness, Yalli Products.
+- **Categories are data, not design**: staff manage them in Admin > Categories and the site loads
+  them from `/catalog/categories` (no hard-coded list). Use the names above only as sample content,
+  and design mega-menus, footers and tile rows to wrap or scroll for any number of categories and
+  long names (up to 100 characters).

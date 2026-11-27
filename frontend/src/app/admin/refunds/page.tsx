@@ -3,7 +3,8 @@
 import { useRef, useState } from 'react';
 import { useAdminSession } from '@/components/AdminContext';
 import { Alert, AdminPage, DataState, Field, Pager, Pill, adminButton, adminCard, adminDangerButton, adminGhostButton, adminInput } from '@/components/AdminKit';
-import { adminList, adminPost, newIdempotencyKey, rupeesToPaise } from '@/lib/admin-api';
+import { adminGet, adminList, adminPost, newIdempotencyKey, rupeesToPaise } from '@/lib/admin-api';
+import type { CreditNote } from '@/lib/account-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
 import { RETURN_REASONS, type ReturnReason } from '@/lib/account-api';
 import { formatDateTime, formatPaise } from '@/lib/formatters';
@@ -13,6 +14,8 @@ interface RefundRow {
   id: string;
   orderId: string;
   order: { orderNumber: string };
+  /** Issued automatically once the refund is processed (for invoiced orders). */
+  creditNote: { id: string; creditNoteNumber: string } | null;
   kind: string;
   amountMinor: number;
   status: RefundStatus;
@@ -145,6 +148,25 @@ function RefundsTab() {
                     <p className="break-words text-sm text-[#4A5550]">{r.reason}</p>
                     <p className="text-xs text-[#4A5550]">{r.kind.toLowerCase().replaceAll('_', ' ')} · requested {formatDateTime(r.createdAt)}{r.processedAt ? ` · refunded ${formatDateTime(r.processedAt)}` : ''}</p>
                     {r.failureReason && <p className="text-xs text-red-700">{r.failureReason}</p>}
+                    {r.creditNote && (
+                      <button
+                        type="button"
+                        className="mt-1 text-xs font-semibold text-[#116644] underline"
+                        onClick={() =>
+                          void withStepUp(() => adminGet<CreditNote>(`/admin/credit-notes/${r.creditNote!.id}`))
+                            .then(async (cn) => {
+                              const { creditNoteHtml } = await import('@/lib/invoice');
+                              const w = window.open('', '_blank');
+                              if (!w) throw new Error('Allow pop-ups for this site to view the credit note.');
+                              w.document.write(creditNoteHtml(cn));
+                              w.document.close();
+                            })
+                            .catch((e: unknown) => setError(errorText(e)))
+                        }
+                      >
+                        Credit note {r.creditNote.creditNoteNumber}
+                      </button>
+                    )}
                   </div>
                   <Pill tone={REFUND_TONE[r.status]}>{REFUND_LABEL[r.status]}</Pill>
                 </div>

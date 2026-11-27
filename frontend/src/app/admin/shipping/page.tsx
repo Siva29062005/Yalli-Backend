@@ -168,8 +168,8 @@ function MethodForm({
         <Field label="Delivery fee (₹)" hint="Use 0 for free delivery."><input required inputMode="decimal" className={adminInput} value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
         {(rupeesToPaise(fee) ?? 0) > 0 && (
           <div className="sm:col-span-2">
-            <Alert kind="warning">
-              GST on delivery charges is not calculated on invoices yet. In India a delivery charge billed with the goods is generally taxed at the goods&apos; GST rate, so keep delivery free until that is added, or confirm the treatment with your accountant first.
+            <Alert kind="success">
+              The fee is GST-inclusive, like product prices. On each invoice it is taxed with the goods it carries, at their GST rate (split by value when an order mixes rates).
             </Alert>
           </div>
         )}

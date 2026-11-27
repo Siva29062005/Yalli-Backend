@@ -1,3 +1,4 @@
+import { invoiceLines } from './tax-documents.js';
 import {
   ConflictException,
   Injectable,
@@ -247,26 +248,14 @@ export class OrderService {
       placeOfSupply: o.shipState,
       supply: intra ? 'INTRA_STATE' : 'INTER_STATE',
       currency: o.currency,
-      lines: o.items.map((i) => ({
-        description:
-          i.productName + (i.variantName ? ` (${i.variantName})` : ''),
-        sku: i.sku,
-        hsn: i.hsnCode,
-        quantity: i.quantity,
-        unitPriceMinor: i.unitPriceMinor,
-        discountMinor: i.lineDiscountMinor,
-        taxableValueMinor: i.lineTotalMinor - i.gstIncludedMinor,
-        gstRateBps: i.gstRateBps,
-        cgstMinor: i.cgstMinor,
-        sgstMinor: i.sgstMinor,
-        igstMinor: i.igstMinor,
-        lineTotalMinor: i.lineTotalMinor,
-      })),
+      // Goods first, then the delivery charge per GST rate (composite supply: taxed with the goods it carries).
+      lines: invoiceLines(o.items, o.shippingMinor),
       totals: {
         subtotalMinor: o.subtotalMinor,
         discountMinor: o.discountMinor,
         shippingMinor: o.shippingMinor,
-        taxableValueMinor: o.totalMinor - o.shippingMinor - o.gstIncludedMinor,
+        // GST is included in every amount, delivery too: the taxable value is the total without it.
+        taxableValueMinor: o.totalMinor - o.gstIncludedMinor,
         gstIncludedMinor: o.gstIncludedMinor,
         totalMinor: o.totalMinor,
       },

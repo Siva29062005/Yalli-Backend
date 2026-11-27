@@ -44,6 +44,18 @@ interface BasketLine {
   categoryIds: string[];
 }
 
+/** Order-line columns for the line's share of the delivery fee and the CGST/SGST or IGST inside it. */
+function shippingTax(shareMinor: number, gstMinor: number, sameState: boolean) {
+  const split = splitGst(gstMinor, sameState);
+  return {
+    shippingShareMinor: shareMinor,
+    shippingGstMinor: gstMinor,
+    shippingCgstMinor: split.cgstMinor,
+    shippingSgstMinor: split.sgstMinor,
+    shippingIgstMinor: split.igstMinor,
+  };
+}
+
 @Injectable()
 export class CheckoutService {
   private readonly sellerState: string;
@@ -439,6 +451,8 @@ export class CheckoutService {
                 gstRateBps: l.gstRateBps,
                 gstIncludedMinor: p.gstIncludedMinor,
                 ...splitGst(p.gstIncludedMinor, same),
+                // The delivery fee is taxed with the goods it carries (composite supply), at this line's rate.
+                ...shippingTax(p.shippingShareMinor, p.shippingGstMinor, same),
               };
             }),
           },

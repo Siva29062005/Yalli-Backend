@@ -77,18 +77,59 @@ try {
   // ------------------------------------------------------------------------------------------------- overview
   console.log('overview');
   await page.getByRole('heading', { name: 'The everyday, at a glance.', level: 1 }).waitFor();
-  // 2 x 690.00 + 1,790.00 + 3 x 690.00 = 5,240.00 paid in the period (the unpaid order is not counted)
-  await page.getByText('₹5,240.00').first().waitFor();
-  step('revenue = ₹5,240.00 (server totals, unpaid order excluded)');
+  // 2 x 690.00 + 1,790.00 + 3 x 690.00 + 690.00 = 5,930.00 paid in the period (the unpaid order is not counted)
+  await page.getByText('₹5,930.00').first().waitFor();
+  step('revenue = ₹5,930.00 (server totals, unpaid order excluded)');
   assert.equal(await page.getByRole('button', { name: /paid order/ }).count(), 30);
   await page.getByText(/Best day:/).waitFor();
   await page.getByText('Momo Steamer 2 Tier').first().waitFor();
   step('chart, top products and GST render from real data');
+  await page.getByText('After credit notes').waitFor();
+  await page.getByText('Net for the period').waitFor();
+
+  // ------------------------------------------------------------------------------------------------- reviews
+  console.log('reviews');
+  await go('Reviews', 'Reviews');
+  const pendingKettle = page.locator('li').filter({ hasText: 'Sturdy and quick' });
+  await pendingKettle.getByText('Boils fast and the gooseneck pours neatly.').waitFor();
+  const beforeApproval = await (await fetch(`${BACKEND}/api/v1/catalog/products/${info.kettleSlug}/reviews`)).json();
+  assert.equal(beforeApproval.data.length, 0, 'a pending review is not public');
+  await pendingKettle.getByRole('button', { name: 'Approve' }).click();
+  await page.getByText('Review published on the product page.').waitFor();
+  const afterApproval = await (await fetch(`${BACKEND}/api/v1/catalog/products/${info.kettleSlug}/reviews`)).json();
+  assert.equal(afterApproval.data.length, 1, 'approving publishes it on the storefront API');
+  assert.ok(!JSON.stringify(afterApproval).includes('@'), 'no reviewer email or contact is exposed publicly');
+  step('review approved: invisible before, public after (reviewer name masked)');
+  const pendingBowls = page.locator('li').filter({ hasText: 'Not what I expected' });
+  await pendingBowls.getByRole('button', { name: 'Reject…' }).click();
+  await page.getByLabel('Reason (shown to the customer)').fill('x');
+  await page.getByRole('button', { name: 'Reject review' }).click(); // browser validation (3+ characters) blocks it
+  assert.equal(await page.getByText(/Review rejected/).count(), 0, 'a too-short reason is not sent');
+  await page.getByLabel('Reason (shown to the customer)').fill('Please describe the problem in more detail');
+  await page.getByRole('button', { name: 'Reject review' }).click();
+  await page.getByText(/Review rejected/).waitFor();
+  const bowlsPublic = await (await fetch(`${BACKEND}/api/v1/catalog/products/${info.bowlsSlug}/reviews`)).json();
+  assert.equal(bowlsPublic.data.length, 0, 'a rejected review never appears publicly');
+  await page.getByRole('tab', { name: 'Rejected' }).click();
+  await page.getByText('Moderator note: Please describe the problem in more detail').waitFor();
+  await page.getByRole('tab', { name: 'Waiting for review' }).click();
+  await page.getByText('Nothing is waiting').waitFor();
+  step('review rejected with a reason; shown under Rejected; never public');
 
   // ------------------------------------------------------------------------------------------------- products
   console.log('products');
   await go('Products', 'Products');
   for (const name of Object.values(info.products)) await page.getByRole('link', { name, exact: true }).waitFor();
+  // at-a-glance columns computed by the real server (effective price rule, stock ledger, categories)
+  const steamerListRow = page.locator('tr').filter({ hasText: 'Momo Steamer 2 Tier' });
+  await steamerListRow.getByText('Kitchen and Dining').waitFor();
+  await steamerListRow.getByText('₹690.00').waitFor(); // sale price, not the ₹799 list price
+  await steamerListRow.getByText('On sale', { exact: true }).waitFor();
+  const kettleListRow = page.locator('tr').filter({ hasText: 'Slow Mornings Kettle' });
+  await kettleListRow.getByText('Home Accessories').waitFor();
+  await kettleListRow.getByText('₹1,790.00').waitFor();
+  step('product list shows real category, current price (sale applied) and stock'); 
+
   await page.getByPlaceholder('Search by name or SKU').fill('kettle');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await page.getByRole('link', { name: 'Slow Mornings Kettle' }).waitFor();
@@ -207,6 +248,22 @@ try {
   await pending.getByRole('button', { name: 'Approve' }).click();
   await page.getByText(/Refund approved/).waitFor();
   step('refund raised by support approved by a second person');
+  // the credit note is issued from the refund.processed event (outbox relay), so it can take a moment to appear
+  for (let i = 0; i < 15 && !(await page.getByRole('button', { name: /^Credit note CN\/\d{4}\/\d{6}$/ }).count()); i++) {
+    await page.getByRole('tab', { name: 'Return requests' }).click();
+    await page.getByRole('tab', { name: 'Refunds' }).click();
+    await page.waitForTimeout(700);
+  }
+  const cnButton = page.getByRole('button', { name: /^Credit note CN\/\d{4}\/\d{6}$/ }).first();
+  await cnButton.waitFor();
+  const [cnPopup] = await Promise.all([page.waitForEvent('popup'), cnButton.click()]);
+  await cnPopup.waitForLoadState();
+  const cnText = await cnPopup.locator('body').innerText();
+  assert.match(cnText, /Credit note/);
+  assert.match(cnText, /Against invoice INV-/);
+  assert.match(cnText, /Total credited\s+₹200\.00/);
+  await cnPopup.close();
+  step('approved refund got a GST credit note (CN/...) that finance can reprint');
   await page.getByRole('button', { name: 'Request a refund' }).click();
   await page.getByLabel('Find the order').fill(info.orders.c);
   await page.getByRole('button', { name: 'Search', exact: true }).click();
@@ -314,8 +371,8 @@ try {
   await page.getByLabel('Authenticator code').fill(await nextCode('support'));
   await page.getByRole('button', { name: 'Verify and continue' }).click();
   await page.getByRole('heading', { name: 'Products', exact: true, level: 1 }).waitFor();
-  const links = (await page.locator('aside a').allInnerTexts()).map((t) => t.trim()).filter((t) => ['Overview', 'Products', 'Categories', 'Inventory', 'Orders', 'Refunds & returns', 'Users & roles', 'Coupons', 'Shipping'].includes(t));
-  assert.deepEqual(links, ['Products', 'Categories', 'Orders', 'Refunds & returns']);
+  const links = (await page.locator('aside a').allInnerTexts()).map((t) => t.trim()).filter((t) => ['Overview', 'Products', 'Categories', 'Inventory', 'Orders', 'Refunds & returns', 'Reviews', 'Users & roles', 'Coupons', 'Shipping'].includes(t));
+  assert.deepEqual(links, ['Products', 'Categories', 'Orders', 'Refunds & returns', 'Reviews']);
   step(`landed on Products; menu shows only: ${links.join(', ')}`);
   assert.equal(await page.getByRole('link', { name: 'Add product' }).count(), 0);
   await page.getByRole('link', { name: 'Momo Steamer 2 Tier XL' }).click();
@@ -356,9 +413,9 @@ try {
   // ------------------------------------------------------------------------------------------------- final
   console.log('overview again + phone layout');
   await go('Overview', 'The everyday, at a glance.');
-  await page.getByText('₹5,240.00').first().waitFor();
+  await page.getByText('₹5,930.00').first().waitFor();
   await page.setViewportSize({ width: 375, height: 800 });
-  for (const [name, heading] of [['Products', 'Products'], ['Inventory', 'Inventory'], ['Orders', 'Orders & fulfilment'], ['Refunds & returns', 'Refunds & returns'], ['Coupons', 'Coupons'], ['Shipping', 'Shipping methods'], ['Users & roles', 'Users & roles']]) {
+  for (const [name, heading] of [['Products', 'Products'], ['Inventory', 'Inventory'], ['Orders', 'Orders & fulfilment'], ['Refunds & returns', 'Refunds & returns'], ['Reviews', 'Reviews'], ['Coupons', 'Coupons'], ['Shipping', 'Shipping methods'], ['Users & roles', 'Users & roles']]) {
     await go(name, heading);
     await page.waitForTimeout(400);
     const wide = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);

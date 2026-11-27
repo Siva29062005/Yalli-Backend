@@ -143,58 +143,82 @@ export class AnalyticsService {
   }
 
   /**
-   * GST collected on paid orders, by rate, split CGST/SGST/IGST as recorded on each order line.
-   * Not reduced for refunds (credit notes are a later feature) and delivery fees are not tax-split yet.
+   * GST on orders PAID in the period, by rate, split CGST/SGST/IGST as recorded on each order line, delivery included
+   * (a delivery charge is taxed with the goods it carries). Credit notes ISSUED in the period are reported by rate too,
+   * and `net` = invoiced - credited, which is what the period's GST return is based on.
    */
   async gstSummary(from?: string, to?: string) {
     const r = resolveRange(from, to);
-    const rows = await this.db.client.$queryRaw<
-      {
-        rate: number;
-        taxable: bigint;
-        cgst: bigint;
-        sgst: bigint;
-        igst: bigint;
-        total: bigint;
-      }[]
-    >`SELECT oi.gst_rate_bps AS rate,
-             SUM(oi.line_total_minor - oi.gst_included_minor)::bigint AS taxable,
-             SUM(oi.cgst_minor)::bigint AS cgst, SUM(oi.sgst_minor)::bigint AS sgst,
-             SUM(oi.igst_minor)::bigint AS igst, SUM(oi.gst_included_minor)::bigint AS total
+    type Row = {
+      rate: number;
+      taxable: bigint;
+      cgst: bigint;
+      sgst: bigint;
+      igst: bigint;
+      total: bigint;
+    };
+    const [invoiced, credited, [notes]] = await Promise.all([
+      this.db.client.$queryRaw<Row[]>`SELECT oi.gst_rate_bps AS rate,
+             SUM(oi.line_total_minor - oi.gst_included_minor + oi.shipping_share_minor - oi.shipping_gst_minor)::bigint AS taxable,
+             SUM(oi.cgst_minor + oi.shipping_cgst_minor)::bigint AS cgst,
+             SUM(oi.sgst_minor + oi.shipping_sgst_minor)::bigint AS sgst,
+             SUM(oi.igst_minor + oi.shipping_igst_minor)::bigint AS igst,
+             SUM(oi.gst_included_minor + oi.shipping_gst_minor)::bigint AS total
       FROM order_items oi JOIN orders o ON o.id = oi.order_id
       WHERE ${between(Prisma.sql`o.paid_at`, r)}
-      GROUP BY oi.gst_rate_bps ORDER BY oi.gst_rate_bps`;
-    const byRate = rows.map((x) => ({
-      rateBps: x.rate,
-      taxableValueMinor: n(x.taxable),
-      cgstMinor: n(x.cgst),
-      sgstMinor: n(x.sgst),
-      igstMinor: n(x.igst),
-      totalGstMinor: n(x.total),
-    }));
-    const sum = (
-      k:
-        | 'taxableValueMinor'
-        | 'cgstMinor'
-        | 'sgstMinor'
-        | 'igstMinor'
-        | 'totalGstMinor',
-    ) => byRate.reduce((a, b) => a + b[k], 0);
+      GROUP BY oi.gst_rate_bps ORDER BY oi.gst_rate_bps`,
+      this.db.client.$queryRaw<Row[]>`SELECT l.gst_rate_bps AS rate,
+             SUM(l.taxable_value_minor)::bigint AS taxable,
+             SUM(l.cgst_minor)::bigint AS cgst, SUM(l.sgst_minor)::bigint AS sgst, SUM(l.igst_minor)::bigint AS igst,
+             SUM(l.cgst_minor + l.sgst_minor + l.igst_minor)::bigint AS total
+      FROM credit_note_lines l JOIN credit_notes c ON c.id = l.credit_note_id
+      WHERE ${between(Prisma.sql`c.issued_at`, r)}
+      GROUP BY l.gst_rate_bps ORDER BY l.gst_rate_bps`,
+      this.db.client.$queryRaw<{ count: number }[]>`
+        SELECT count(*)::int AS count FROM credit_notes c WHERE ${between(Prisma.sql`c.issued_at`, r)}`,
+    ]);
+    const shape = (rows: Row[]) =>
+      rows.map((x) => ({
+        rateBps: x.rate,
+        taxableValueMinor: n(x.taxable),
+        cgstMinor: n(x.cgst),
+        sgstMinor: n(x.sgst),
+        igstMinor: n(x.igst),
+        totalGstMinor: n(x.total),
+      }));
+    type Line = ReturnType<typeof shape>[number];
+    const keys = [
+      'taxableValueMinor',
+      'cgstMinor',
+      'sgstMinor',
+      'igstMinor',
+      'totalGstMinor',
+    ] as const;
+    const totalsOf = (rows: Line[]) =>
+      Object.fromEntries(
+        keys.map((k) => [k, rows.reduce((a, b) => a + b[k], 0)]),
+      ) as Record<(typeof keys)[number], number>;
+    const byRate = shape(invoiced);
+    const creditByRate = shape(credited);
+    const totals = totalsOf(byRate);
+    const creditTotals = totalsOf(creditByRate);
     return {
       range: r,
       timezone: REPORT_TZ,
       currency: 'INR',
       byRate,
-      totals: {
-        taxableValueMinor: sum('taxableValueMinor'),
-        cgstMinor: sum('cgstMinor'),
-        sgstMinor: sum('sgstMinor'),
-        igstMinor: sum('igstMinor'),
-        totalGstMinor: sum('totalGstMinor'),
+      totals,
+      creditNotes: {
+        count: notes?.count ?? 0,
+        byRate: creditByRate,
+        totals: creditTotals,
       },
+      net: Object.fromEntries(
+        keys.map((k) => [k, totals[k] - creditTotals[k]]),
+      ) as Record<(typeof keys)[number], number>,
       notes: [
-        'Not reduced for refunds (credit notes are not generated yet).',
-        'Delivery fees are not tax-split yet; confirm treatment with your accountant.',
+        'Invoiced: orders paid in the period, delivery charges included (taxed at the rate of the goods they carry).',
+        'Credit notes: issued in the period for processed refunds. Net = invoiced minus credit notes.',
       ],
     };
   }

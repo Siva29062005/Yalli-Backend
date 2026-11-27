@@ -1,3 +1,7 @@
+import { randomBytes } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { generateSecret, generateURI } from 'otplib';
 import { AppModule } from '../app.module.js';
@@ -8,18 +12,18 @@ import { AuditService } from '../modules/audit/audit.service.js';
 import { passwordViolations } from '../modules/identity/crypto/password-policy.js';
 import { PasswordService } from '../modules/identity/crypto/password.service.js';
 import { SecretBox } from '../modules/identity/crypto/secret-box.service.js';
+import { testAdminRefusal } from './test-admin-guard.js';
 
 /**
  * DEVELOPMENT ONLY: creates an extra SUPER_ADMIN with a pre-enrolled TOTP secret so it can sign in
- * (password + authenticator code). Refuses to run in production and never modifies an existing user.
+ * (password + authenticator code). Needs NODE_ENV=development AND ALLOW_TEST_ADMIN=1 (`testAdminRefusal`), never
+ * modifies an existing user, and writes the MFA secret to a private file instead of the terminal or logs.
  */
 async function main(): Promise<void> {
-  if (process.env['NODE_ENV'] === 'production')
-    throw new Error('create-test-admin is disabled in production');
-  const email = process.env['TEST_ADMIN_EMAIL']?.trim();
-  const password = process.env['TEST_ADMIN_PASSWORD'];
-  if (!email || !password)
-    throw new Error('TEST_ADMIN_EMAIL and TEST_ADMIN_PASSWORD are required');
+  const refusal = testAdminRefusal(process.env);
+  if (refusal) throw new Error(refusal);
+  const email = process.env['TEST_ADMIN_EMAIL']!.trim();
+  const password = process.env['TEST_ADMIN_PASSWORD']!;
   const violations = passwordViolations(password, { email });
   if (violations.length > 0)
     throw new Error(`Password ${violations.join(', ')}`);
@@ -76,10 +80,25 @@ async function main(): Promise<void> {
       resourceId: user.id,
     });
 
+    // Owner-only file (0600, must not already exist): keeps the secret out of scrollback, CI logs and screen shares.
+    const file = join(
+      tmpdir(),
+      `yalli-test-admin-${randomBytes(6).toString('hex')}.txt`,
+    );
+    writeFileSync(
+      file,
+      [
+        `email: ${email}`,
+        `MFA secret (add to an authenticator app): ${secret}`,
+        `otpauth URI: ${generateURI({ issuer: 'Yalli (dev)', label: email, secret })}`,
+        'Delete this file once the secret is in your authenticator.',
+        '',
+      ].join('\n'),
+      { mode: 0o600, flag: 'wx' },
+    );
     console.log(`Created SUPER_ADMIN ${email}`);
-    console.log(`MFA secret (add to authenticator): ${secret}`);
     console.log(
-      `otpauth URI: ${generateURI({ issuer: 'Yalli (dev)', label: email, secret })}`,
+      `MFA secret written to ${file} (owner-only); delete it after use.`,
     );
   } finally {
     await app.close();

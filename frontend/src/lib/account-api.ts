@@ -35,11 +35,35 @@ export interface Invoice {
   supply: 'INTRA_STATE' | 'INTER_STATE';
   currency: string;
   lines: {
-    description: string; sku: string; hsn: string | null; quantity: number; unitPriceMinor: number;
+    /** GOODS, or the delivery charge (taxed with the goods it carries, shown per GST rate). */
+    kind: 'GOODS' | 'DELIVERY';
+    description: string; sku: string | null; hsn: string | null; quantity: number; unitPriceMinor: number;
     discountMinor: number; taxableValueMinor: number; gstRateBps: number;
     cgstMinor: number; sgstMinor: number; igstMinor: number; lineTotalMinor: number;
   }[];
   totals: Record<string, number>;
+}
+
+/** GST credit note: issued automatically for every processed refund of an invoiced order. */
+export interface CreditNote {
+  id: string;
+  creditNoteNumber: string;
+  issuedAt: string;
+  financialYear: string;
+  invoiceNumber: string;
+  orderNumber: string;
+  reason: string;
+  taxDocument: boolean;
+  seller: { name: string; state: string; gstin: string | null };
+  buyer: { name: string; email: string };
+  placeOfSupply: string;
+  supply: 'INTRA_STATE' | 'INTER_STATE';
+  currency: string;
+  lines: {
+    kind: 'GOODS' | 'DELIVERY'; description: string; hsn: string | null; gstRateBps: number;
+    taxableValueMinor: number; cgstMinor: number; sgstMinor: number; igstMinor: number; totalMinor: number;
+  }[];
+  totals: { taxableValueMinor: number; cgstMinor: number; sgstMinor: number; igstMinor: number; totalMinor: number };
 }
 
 export const RETURN_REASONS = {
@@ -113,6 +137,7 @@ export const accountApi = {
   order: (orderId: string) => customerSession.request<CustomerOrder>(`/orders/${id(orderId)}`),
   tracking: (orderId: string) => customerSession.request<{ shipment: Shipment | null }>(`/orders/${id(orderId)}/tracking`),
   invoice: (orderId: string) => customerSession.request<Invoice>(`/orders/${id(orderId)}/invoice`),
+  creditNotes: (orderId: string) => customerSession.request<CreditNote[]>(`/orders/${id(orderId)}/credit-notes`),
   cancelOrder: (orderId: string, reason: string) =>
     customerSession.request<CustomerOrder>(`/orders/${id(orderId)}/cancel`, send('POST', { reason })),
 

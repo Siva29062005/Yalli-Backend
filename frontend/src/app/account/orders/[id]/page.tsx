@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { FileText, Package, Truck, Undo2, XCircle } from "lucide-react";
 import { AccountShell, PanelError, PanelLoading, inputClass, primaryButton, secondaryButton } from "@/components/AccountShell";
 import { ProductImage } from "@/components/ProductImage";
-import { accountApi, ORDER_STATUS_LABEL, RETURN_REASONS, statusTone, type ReturnReason, type Shipment } from "@/lib/account-api";
+import { type CreditNote, accountApi, ORDER_STATUS_LABEL, RETURN_REASONS, statusTone, type ReturnReason, type Shipment } from "@/lib/account-api";
 import { AWAITING_PAYMENT, formatPhone, type CustomerOrder } from "@/lib/checkout-api";
 import { formatIndianDate, formatPaise } from "@/lib/formatters";
 import { ApiError } from "@/lib/http";
@@ -64,6 +64,20 @@ export default function OrderDetailPage() {
     }
   };
 
+  // Credit notes exist only for refunds of a paid order; they appear as soon as a refund is processed.
+  const creditNotes = useAsync<CreditNote[]>(
+    () => (order?.paidAt ? accountApi.creditNotes(order.id) : Promise.resolve([])),
+    [order?.id, order?.paidAt, order?.status],
+  );
+  const openCreditNote = async (cn: CreditNote) => {
+    setActionError(null);
+    const { creditNoteHtml } = await import("@/lib/invoice");
+    const w = window.open("", "_blank");
+    if (!w) return setActionError("Allow pop-ups for this site to view the credit note.");
+    w.document.write(creditNoteHtml(cn));
+    w.document.close();
+  };
+
   const downloadInvoice = async () => {
     if (!order) return;
     setInvoiceBusy(true);
@@ -107,6 +121,11 @@ export default function OrderDetailPage() {
                       <FileText className="h-4 w-4" /> {invoiceBusy ? "Preparing…" : "Invoice"}
                     </button>
                   )}
+                  {(creditNotes.data ?? []).map((cn) => (
+                    <button key={cn.id} type="button" className={secondaryButton} onClick={() => void openCreditNote(cn)}>
+                      <FileText className="h-4 w-4" /> Credit note {cn.creditNoteNumber}
+                    </button>
+                  ))}
                   {AWAITING_PAYMENT.includes(order.status) && (
                     <Link href={`/orders/${order.id}/confirmation`} className={primaryButton}>
                       Complete payment

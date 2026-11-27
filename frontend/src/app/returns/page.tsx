@@ -1,8 +1,10 @@
+import { canonicalFor } from '@/lib/site';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { List, POLICY_UPDATED, PolicyPage, Section, textLink, type PolicySection } from '@/components/PolicyPage';
 
 export const metadata: Metadata = {
+  ...canonicalFor('/returns'),
   title: 'Returns, cancellations & refunds | Yalli',
   description: 'How to cancel an order, return an item within 7 days of delivery, and when and how refunds reach you.',
 };
@@ -97,7 +99,7 @@ export default function ReturnsPage() {
             <strong>Checked first.</strong> Refunds raised by our team are approved by a second person before the money is sent.
             Refunds for orders you cancel before shipping are started automatically.
           </li>
-          <li>You get an email when your refund has been processed.</li>
+          <li>You get an email when your refund has been processed, and a credit note for it appears next to the invoice in My orders.</li>
         </List>
       </Section>
 

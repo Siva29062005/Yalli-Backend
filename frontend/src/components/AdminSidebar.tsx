@@ -14,6 +14,7 @@ import {
   RotateCcw,
   Users,
   Ticket,
+  MessageSquare,
   Truck,
   LogOut,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ const ICONS: Record<string, React.ReactNode> = {
   '/admin/inventory': <Boxes className="w-5 h-5" />,
   '/admin/orders': <ShoppingCart className="w-5 h-5" />,
   '/admin/refunds': <RotateCcw className="w-5 h-5" />,
+  '/admin/reviews': <MessageSquare className="w-5 h-5" />,
   '/admin/users': <Users className="w-5 h-5" />,
   '/admin/coupons': <Ticket className="w-5 h-5" />,
   '/admin/shipping': <Truck className="w-5 h-5" />,

@@ -2,8 +2,11 @@
 
 Enterprise-grade e-commerce API for yalli.in (NestJS 12 · TypeScript strict · PostgreSQL · Prisma 7 · Redis · RabbitMQ).
 
-Status: **Phase 5 (checkout & payments) implemented**: authentication/RBAC/audit, customers, catalogue & search, inventory, pricing, coupons, cart, checkout, orders, Razorpay payments + webhooks, refunds, returns, transactional outbox + RabbitMQ events. Shipping, reviews, wishlists, notifications channels, admin analytics arrive in Phase 6 — see
-[docs/architecture/PROPOSAL.md](docs/architecture/PROPOSAL.md) for the approved architecture, schema, threat model and roadmap.
+Status: **backend Phases 2-7 implemented** (authentication/RBAC/audit, catalogue and search, inventory, pricing, coupons,
+cart, checkout, Razorpay payments and webhooks, refunds and returns, GST invoices and credit notes, shipping, reviews,
+notifications, analytics, outbox + RabbitMQ, hardening), plus a Next.js storefront, customer account and admin console in
+[frontend/](frontend/). Not deployed yet. Architecture: [docs/architecture/PROPOSAL.md](docs/architecture/PROPOSAL.md);
+the plan to launch: [docs/ROADMAP.md](docs/ROADMAP.md); open work: [docs/PENDING.md](docs/PENDING.md).
 Reference screenshots of the current storefront are in [reference/](reference/).
 
 ## Requirements
@@ -36,8 +39,28 @@ permissions, run `docker compose --profile tools run --rm seed` after. `./script
 
 ## Quality gate
 ```bash
-npm run check    # prettier, oxlint (type-aware), tsc, unit tests, e2e tests, build
+npm run check            # backend: prettier, oxlint (type-aware), tsc, unit + frontend unit specs, e2e, build;
+                         # then check:frontend: eslint (no warnings), next build, tsc
+npm run check:frontend   # the frontend part only
 ```
+Browser regressions (opt-in; Playwright is not a dependency of this repo):
+```bash
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs npm run test:browser   # all fake-backend scripts
+npm run test:browser -- --only cart,seo --skip-build                   # some scripts, reuse the last test build
+```
+It starts the catalogue mock API, builds the storefront into `frontend/.next-browser-tests` (never touching `.next`), starts
+it on free ports and prints a summary. The real-backend admin run is separate: `npm run serve:browser`, then
+`frontend/scripts/test-admin-real.mjs`.
+
+## Test admin (development only)
+```bash
+npm run build
+NODE_ENV=development ALLOW_TEST_ADMIN=1 TEST_ADMIN_EMAIL=dev-admin@example.test TEST_ADMIN_PASSWORD='…' \
+  npm run create:test-admin
+```
+Creates an extra SUPER_ADMIN with MFA already enrolled. It refuses to run without both flags, never changes an existing
+user, and writes the MFA secret to an owner-only file in the OS temp folder (the path is printed): add it to an
+authenticator app, then delete the file.
 
 ## Payments
 Flow, invariants, operations runbook and the honest list of what is not yet verified (live Razorpay sandbox, real broker):
@@ -48,8 +71,10 @@ Authentication, authorization and audit are documented in [docs/security/phase-3
 and [docs/architecture/auth-flows.md](docs/architecture/auth-flows.md). Tests run against a real PostgreSQL (embedded) with the production role split.
 
 ## Frontend
-Feature map of everything this API supports (storefront, checkout, account, admin portal) with endpoint
-references and API conventions: [docs/frontend/README.md](docs/frontend/README.md).
+Next.js 16 app in [frontend/](frontend/) (storefront, account, admin console), served same-origin with `/api/v1` proxied to
+the API. Run it with `npm run dev -- --port 3001` in `frontend/`. Status and conventions:
+[docs/frontend/production-readiness.md](docs/frontend/production-readiness.md) and the Frontend section of
+[CLAUDE.md](CLAUDE.md).
 
 ## Layout
 `src/common` (envelope, filters, middleware) · `src/config` (validated env) · `src/infrastructure` (Prisma, Redis) ·

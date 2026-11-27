@@ -1,9 +1,11 @@
+import { canonicalFor } from '@/lib/site';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { GrievanceOfficer, SellerDetails, SupportDetails } from '@/components/BusinessInfo';
 import { PolicyPage, Section, textLink } from '@/components/PolicyPage';
 
 export const metadata: Metadata = {
+  ...canonicalFor('/contact'),
   title: 'Contact us | Yalli',
   description: 'How to reach Yalli customer support, seller details and our grievance officer.',
 };

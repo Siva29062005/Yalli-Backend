@@ -23,8 +23,11 @@
     "prisma:validate": "prisma validate",
     "audit:deps": "npm audit --omit=dev --audit-level=high",
     "postinstall": "prisma generate",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:e2e && npm run build",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:e2e && npm run build && npm run check:frontend",
+    "check:frontend": "npm --prefix frontend run lint && npm --prefix frontend run build && npm --prefix frontend run typecheck",
+    "test:browser": "node frontend/scripts/run-browser-tests.mjs",
     "seed": "node dist/cli/seed.js",
+    "create:test-admin": "node dist/cli/create-test-admin.js",
     "import:catalog": "node dist/cli/import-catalog.js",
     "rotate:mfa-key": "node dist/cli/rotate-mfa-key.js"
   },

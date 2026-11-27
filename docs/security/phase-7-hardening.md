@@ -41,6 +41,6 @@ Every finding was re-verified against the code before acting; each fix has a tes
 
 ## Not done / needs you
 - AWS deployment, S3 image storage, WAF, alarms (no access). Live Razorpay, SES, MSG91 checks.
-- Courier integration, credit notes, GST on delivery fees, contact/newsletter/info pages and sitemap (roadmap items from the
+- Courier integration and a guest newsletter (credit notes, GST on delivery, info/contact pages and the sitemap were added on 2026-11-19/20; roadmap items from the
   original storefront scope that were not part of the approved Phase 6 list).
 - Captcha-after-failures on login; PIN↔state validation.

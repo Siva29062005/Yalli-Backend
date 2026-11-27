@@ -7,7 +7,7 @@ import { Alert, AdminPage, DataState, Pager, Pill, adminButton, adminCard, admin
 import { useAdminSession } from '@/components/AdminContext';
 import { adminDelete, adminList, adminPost } from '@/lib/admin-api';
 import { useAdminQuery } from '@/lib/useAdminQuery';
-import { formatIndianDate } from '@/lib/formatters';
+import { formatIndianDate, formatPaise } from '@/lib/formatters';
 
 type ProductStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 
@@ -18,6 +18,12 @@ interface AdminProductRow {
   status: ProductStatus;
   updatedAt: string;
   _count: { variants: number; images: number };
+  /** Category names. */
+  categories: string[];
+  /** Current customer price across the live variants; null when no variant is active. */
+  price: { minMinor: number; maxMinor: number; onSale: boolean } | null;
+  /** Sellable units across the live variants. */
+  stock: { available: number; lowStock: boolean };
 }
 
 const STATUS_TONE = { PUBLISHED: 'green', DRAFT: 'amber', ARCHIVED: 'gray' } as const;
@@ -109,13 +115,14 @@ export default function AdminProductsPage() {
           emptyHint={q || status ? 'Try another search or status.' : 'Add your first product. It starts as a draft.'}
         >
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
+            <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="bg-[#F7F9F8] text-xs uppercase tracking-wide text-[#4A5550]">
                 <tr>
                   <th className="p-4">Product</th>
+                  <th className="p-4">Category</th>
+                  <th className="p-4 text-right">Price</th>
+                  <th className="p-4 text-right">Stock</th>
                   <th className="p-4">Status</th>
-                  <th className="p-4">Variants</th>
-                  <th className="p-4">Images</th>
                   <th className="p-4">Updated</th>
                   <th className="p-4 text-right">Actions</th>
                 </tr>
@@ -128,10 +135,27 @@ export default function AdminProductsPage() {
                         {row.name}
                       </Link>
                       <p className="break-all text-xs text-[#4A5550]">{row.slug}</p>
+                      <p className="text-xs text-[#4A5550]">
+                        {row._count.variants} variant{row._count.variants === 1 ? '' : 's'}
+                        {row._count.images === 0 ? <span className="font-semibold text-amber-700"> · no images</span> : ` · ${row._count.images} image${row._count.images === 1 ? '' : 's'}`}
+                      </p>
+                    </td>
+                    <td className="p-4 text-[#4A5550]">{row.categories.length ? row.categories.join(', ') : <span className="text-amber-700">None</span>}</td>
+                    <td className="p-4 text-right tabular-nums">
+                      {row.price === null ? (
+                        <span className="text-amber-700">No live variant</span>
+                      ) : (
+                        <>
+                          {row.price.minMinor === row.price.maxMinor ? formatPaise(row.price.minMinor) : `${formatPaise(row.price.minMinor)} – ${formatPaise(row.price.maxMinor)}`}
+                          {row.price.onSale && <span className="mt-1 block"><Pill tone="amber">On sale</Pill></span>}
+                        </>
+                      )}
+                    </td>
+                    <td className="p-4 text-right tabular-nums">
+                      {row.stock.available}
+                      {row.price !== null && (row.stock.available <= 0 ? <span className="mt-1 block"><Pill tone="red">Out of stock</Pill></span> : row.stock.lowStock ? <span className="mt-1 block"><Pill tone="amber">Low</Pill></span> : null)}
                     </td>
                     <td className="p-4"><Pill tone={STATUS_TONE[row.status]}>{STATUS_LABEL[row.status]}</Pill></td>
-                    <td className="p-4">{row._count.variants}</td>
-                    <td className="p-4">{row._count.images}</td>
                     <td className="p-4 whitespace-nowrap">{formatIndianDate(row.updatedAt)}</td>
                     <td className="p-4">
                       <div className="flex flex-wrap justify-end gap-2">

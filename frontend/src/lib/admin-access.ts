@@ -17,6 +17,7 @@ export const ADMIN_SCREENS: readonly AdminScreen[] = [
   { name: 'Inventory', href: '/admin/inventory', anyOf: ['inventory.read'] },
   { name: 'Orders', href: '/admin/orders', anyOf: ['orders.read'] },
   { name: 'Refunds & returns', href: '/admin/refunds', anyOf: ['payments.read', 'orders.read', 'refunds.create'] },
+  { name: 'Reviews', href: '/admin/reviews', anyOf: ['reviews.moderate'] },
   { name: 'Users & roles', href: '/admin/users', anyOf: ['users.manage'] },
   { name: 'Coupons', href: '/admin/coupons', anyOf: ['coupons.manage'] },
   { name: 'Shipping', href: '/admin/shipping', anyOf: ['shipments.manage'] },

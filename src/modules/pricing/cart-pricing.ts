@@ -29,9 +29,15 @@ export type CouponRejection = 'MIN_CART_VALUE' | 'NO_ELIGIBLE_ITEMS';
 export interface PricedLine extends PricingLine {
   subtotalMinor: Minor;
   discountMinor: Minor;
+  /** What the goods on this line cost after discount (delivery NOT included). */
   totalMinor: Minor;
+  /** GST included in `totalMinor` (the goods). */
   gstIncludedMinor: Minor;
   couponEligible: boolean;
+  /** This line's share of the delivery fee (composite supply: delivery follows the goods it carries). */
+  shippingShareMinor: Minor;
+  /** GST included in `shippingShareMinor`, at this line's rate. */
+  shippingGstMinor: Minor;
 }
 
 export interface PricingResult {
@@ -40,7 +46,10 @@ export interface PricingResult {
   discountMinor: Minor;
   shippingMinor: Minor;
   totalMinor: Minor;
+  /** ALL GST included in `totalMinor`: on the goods AND on the delivery fee. */
   gstIncludedMinor: Minor;
+  /** The part of `gstIncludedMinor` that is on the delivery fee. */
+  shippingGstMinor: Minor;
   coupon: { code: string; discountMinor: Minor } | null;
   couponRejection: CouponRejection | null;
 }
@@ -95,6 +104,37 @@ export function allocateProportionally(
 }
 
 /**
+ * Splits `total` across `weights` in proportion, exactly (largest remainder; ties to the earlier line). Unlike
+ * `allocateProportionally` the total may EXCEED the weights: a delivery fee can cost more than a small order.
+ */
+export function apportionExactly(
+  total: Minor,
+  weights: readonly Minor[],
+): Minor[] {
+  assertMinor(total, 'total');
+  const sum = sumMinor(weights);
+  if (total === 0) return weights.map(() => 0);
+  if (sum === 0) throw new RangeError('cannot apportion over zero weights');
+  if (!Number.isSafeInteger(total * Math.max(...weights)))
+    throw new RangeError('overflow');
+  const parts = weights.map((w) => Math.floor((total * w) / sum));
+  let left = total - sumMinor(parts);
+  const order = weights
+    .map((w, i) => ({ i, r: (total * w) % sum }))
+    .sort((a, b) => b.r - a.r || a.i - b.i);
+  for (const { i } of order) {
+    if (left === 0) break;
+    parts[i]! += 1;
+    left--;
+  }
+  return parts;
+}
+
+/** GST included in a GST-inclusive amount at `rateBps`: amount * r / (1 + r), rounded half-up. */
+export const includedGst = (amountMinor: Minor, rateBps: number): Minor =>
+  divRoundHalfUp(amountMinor * rateBps, 10_000 + rateBps);
+
+/**
  * Prices a cart. Pure and deterministic: given the same inputs it always yields the same paise.
  * Invariants (property-tested): sum(line totals) = total; sum(line discounts) = discount <= eligible subtotal;
  * 0 <= gstIncluded <= total; every value is a non-negative integer.
@@ -116,6 +156,8 @@ export function priceCart(
       throw new RangeError('invalid GST rate');
   }
   assertMinor(shippingMinor, 'shipping');
+  if (shippingMinor > 0 && lines.length === 0)
+    throw new RangeError('a delivery fee needs at least one line to carry it');
 
   const subtotals = lines.map((l) =>
     assertMinor(l.unitPriceMinor * l.quantity, 'line subtotal'),
@@ -137,30 +179,41 @@ export function priceCart(
     subtotals.map((s, i) => (eligible[i] ? s : 0)),
   );
 
-  const priced: PricedLine[] = lines.map((l, i) => {
-    const total = subtotals[i]! - lineDiscounts[i]!;
-    return {
-      ...l,
-      subtotalMinor: subtotals[i]!,
-      discountMinor: lineDiscounts[i]!,
-      totalMinor: total,
-      // GST is INCLUDED in the price: tax = total * r / (1 + r), rounded half-up per line.
-      gstIncludedMinor: divRoundHalfUp(
-        total * l.gstRateBps,
-        10_000 + l.gstRateBps,
-      ),
-      couponEligible: eligible[i]!,
-    };
-  });
+  const lineTotals = subtotals.map((s, i) => s - lineDiscounts[i]!);
+  // Delivery billed with the goods is one composite supply taxed at the goods' rate (CGST Act s.8): the fee is split
+  // over the lines by value (by list value if a coupon made every line free) and each share is GST-inclusive at that
+  // line's rate. A mixed-rate cart is apportioned, never taxed at the highest rate, so tax is not overstated.
+  const shippingShares =
+    shippingMinor === 0
+      ? lines.map(() => 0)
+      : apportionExactly(
+          shippingMinor,
+          sumMinor(lineTotals) > 0 ? lineTotals : subtotals,
+        );
+
+  const priced: PricedLine[] = lines.map((l, i) => ({
+    ...l,
+    subtotalMinor: subtotals[i]!,
+    discountMinor: lineDiscounts[i]!,
+    totalMinor: lineTotals[i]!,
+    // GST is INCLUDED in the price: tax = total * r / (1 + r), rounded half-up per line.
+    gstIncludedMinor: includedGst(lineTotals[i]!, l.gstRateBps),
+    couponEligible: eligible[i]!,
+    shippingShareMinor: shippingShares[i]!,
+    shippingGstMinor: includedGst(shippingShares[i]!, l.gstRateBps),
+  }));
 
   const itemsTotal = sumMinor(priced.map((p) => p.totalMinor));
+  const shippingGstMinor = sumMinor(priced.map((p) => p.shippingGstMinor));
   return {
     lines: priced,
     subtotalMinor,
     discountMinor: discount,
     shippingMinor,
     totalMinor: itemsTotal + shippingMinor,
-    gstIncludedMinor: sumMinor(priced.map((p) => p.gstIncludedMinor)),
+    gstIncludedMinor:
+      sumMinor(priced.map((p) => p.gstIncludedMinor)) + shippingGstMinor,
+    shippingGstMinor,
     coupon:
       coupon && couponRejection === null
         ? { code: coupon.code, discountMinor: discount }

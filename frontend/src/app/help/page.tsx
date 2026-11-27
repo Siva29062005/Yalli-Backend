@@ -1,9 +1,11 @@
+import { canonicalFor } from '@/lib/site';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { PolicyPage, Section, textLink, type PolicySection } from '@/components/PolicyPage';
 
 export const metadata: Metadata = {
+  ...canonicalFor('/help'),
   title: 'Help & FAQs | Yalli',
   description: 'Answers about ordering, payment, delivery, returns, refunds and your Yalli account.',
 };
@@ -56,7 +58,7 @@ export default function HelpPage() {
           <Faq q="Are the prices final? What about GST?">
             <p>
               Prices are in rupees and include GST. A delivery charge, if there is one, is shown as a separate line before you pay.
-              We issue a GST tax invoice for every paid order, under My orders.
+              We issue a GST tax invoice for every paid order, under My orders. A delivery charge includes GST at the rate of the goods it carries.
             </p>
           </Faq>
           <Faq q="How long do I have to pay after placing an order?">

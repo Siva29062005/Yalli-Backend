@@ -1,3 +1,4 @@
+import { canonicalFor } from '@/lib/site';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { complaintEmail } from '@/lib/business';
@@ -5,6 +6,7 @@ import { SellerDetails } from '@/components/BusinessInfo';
 import { List, POLICY_UPDATED, PolicyPage, Section, textLink, type PolicySection } from '@/components/PolicyPage';
 
 export const metadata: Metadata = {
+  ...canonicalFor('/privacy'),
   title: 'Privacy policy | Yalli',
   description: 'What personal data Yalli collects, why, who sees it, how long we keep it and how you can control it.',
 };

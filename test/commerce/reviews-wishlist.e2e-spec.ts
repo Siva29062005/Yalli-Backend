@@ -382,6 +382,26 @@ describe('rating summary', () => {
     const list = await ctx.http().get(`${reviewsUrl(product.slug)}?pageSize=2`);
     expect(list.body.data).toHaveLength(2);
     expect(list.body.meta.total).toBe(3);
+
+    // The listing card shows the same rating (served by the reviews module, not a catalogue SQL join).
+    const cards = await ctx
+      .http()
+      .get(`/api/v1/catalog/products?q=${encodeURIComponent(product.name)}`);
+    const card = cards.body.data.find(
+      (c: { slug: string }) => c.slug === product.slug,
+    );
+    expect(card.rating).toEqual({ average: 3.3, count: 3 });
+  });
+
+  it('shows no rating on listing cards for products without approved reviews', async () => {
+    const { product } = await shop.fx.product();
+    const cards = await ctx
+      .http()
+      .get(`/api/v1/catalog/products?q=${encodeURIComponent(product.name)}`);
+    const card = cards.body.data.find(
+      (c: { slug: string }) => c.slug === product.slug,
+    );
+    expect(card.rating).toEqual({ average: null, count: 0 });
   });
 });
 

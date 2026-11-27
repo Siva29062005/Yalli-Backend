@@ -1,8 +1,10 @@
+import { canonicalFor } from '@/lib/site';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { List, PolicyPage, Section, textLink, type PolicySection } from '@/components/PolicyPage';
 
 export const metadata: Metadata = {
+  ...canonicalFor('/shipping'),
   title: 'Shipping & delivery | Yalli',
   description: 'Where Yalli delivers, what delivery costs, how long it takes and how to track your order.',
 };
@@ -43,7 +45,7 @@ export default function ShippingPage() {
             counts.
           </li>
           <li>When we offer more than one delivery option for your address, you choose one. We never pick a price for you.</li>
-          <li>Product prices already include GST. See the tax invoice for the breakdown.</li>
+          <li>Product prices and any delivery charge already include GST. On the tax invoice the delivery charge is taxed at the same rate as the goods it carries.</li>
         </List>
       </Section>
 

@@ -22,7 +22,8 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
 8. SES: verify the sender domain (SPF/DKIM/DMARC), request production access. MSG91: DLT sender + approved OTP template.
 9. WAF managed rules + rate rule in front; CloudWatch alarms on 5xx, p99 latency, DB connections, outbox backlog, DLQ depth.
 10. Backups, PITR and the restore drill (docs/ops/backup-restore.md); rotate keys (docs/ops/key-rotation.md).
-11. Pin GitHub Actions to SHAs after the first push; enable branch protection requiring the CI jobs.
+11. No CI by the owner's decision (2026-11-19): run `npm run check` (backend and frontend) locally before every deploy; the
+    deploy script planned in Phase 13 of `docs/ROADMAP.md` refuses to run without it.
 
 ## Rollback
 Previous image + its schema: because migrations are additive, the previous image runs on the new schema. A destructive

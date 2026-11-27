@@ -1,6 +1,6 @@
 # Store policies, fees and tax decisions
 
-Decisions adopted on 2026-11-19 so work does not wait on external answers. Each row says what the shop does today
+Decisions adopted on 2026-11-19 (GST on delivery and credit notes built on 2026-11-20) so work does not wait on external answers. Each row says what the shop does today
 (checked in the code), the rule it rests on, and where it is configured. The research came from public sources, mostly
 secondary (tax-practitioner sites, Razorpay documentation); none of it is legal or tax advice. **Have your accountant
 and a lawyer review this page, the public policy pages and the invoice format before you take real orders.**
@@ -43,27 +43,34 @@ registered website must match the checkout domain.
 
 ## 3. Tax decisions
 
-**GST on delivery fees (decision, not yet implemented).** Under section 8 of the CGST Act a delivery charge billed with
-the goods is part of one composite supply and takes the goods' rate; standalone delivery billed as its own service is
-generally 18%. The rule adopted for this shop:
-- Delivery charges stay **free** until the items below are built (the Admin > Shipping form warns when a fee is entered).
-- When paid delivery is enabled: the fee is GST-inclusive like prices, apportioned across the order's lines in proportion
-  to line value (`allocateProportionally` already exists in `cart-pricing.ts`), and taxed at each line's rate. That means:
-  `priceCart` allocates shipping to lines, orders store the per-line share, the invoice shows delivery inside the lines
-  (or as an apportioned line), and the analytics GST summary includes it.
-- A mixed-rate cart is apportioned, not "highest rate", so the tax is never overstated.
-- Confirm with your accountant before charging, because litigation on delivery charges is unsettled (a West Bengal
-  appellate body recently refused to let an e-commerce operator split delivery out of a composite supply).
-  Section 9(5) (e-commerce operator liability on local delivery) concerns marketplaces; this is a single-seller store.
+**GST on delivery fees (implemented 2026-11-20).** Under section 8 of the CGST Act a delivery charge billed with the
+goods is part of one composite supply and takes the goods' rate; standalone delivery billed as its own service is
+generally 18%. What the shop does:
+- The delivery fee is GST-inclusive like prices. `priceCart` apportions it across the order's lines in proportion to their
+  value (exact to the paisa) and each share is taxed at that line's rate, so a mixed-rate cart is apportioned, never taxed
+  at the highest rate. If a coupon makes every line free, the fee is apportioned by list value.
+- Each order line stores its share and the CGST/SGST or IGST in it; the invoice shows delivery as one line per rate; the
+  order's GST and the analytics GST summary include it. Orders placed before this change keep an untaxed delivery line.
+- Confirm with your accountant: litigation on delivery charges is unsettled (a West Bengal appellate body refused to let
+  an e-commerce operator split delivery out of a composite supply). Section 9(5) concerns marketplaces; this is a
+  single-seller store.
 
-**Credit notes (decision, not yet implemented).** Section 34 of the CGST Act: when goods are returned or a refund
-reduces the taxable value, the seller issues a credit note referencing the original invoice. There is no time limit to
-issue one, but to reduce your tax liability it must be reported in your return by **30 November following the end of the
-financial year of the original supply** (or the annual-return date, if earlier). The Finance Act 2026 amended section 34
-for post-sale discounts; verify the current text. Until built, finance issues credit notes manually from the refund list
-(Admin > Refunds) in the accounting system, and the GST summary does not net refunds (it says so). Planned build: a credit
-note document per PROCESSED refund (number series, original invoice reference, proportional CGST/SGST/IGST split, PDF for
-the customer) and a GST summary that nets them.
+**Credit notes (implemented 2026-11-20).** Section 34 of the CGST Act: when a refund reduces the value of an invoiced
+supply, the seller issues a credit note referencing the invoice; to reduce the tax liability it must be reported by
+**30 November following the end of the financial year of the original supply** (or the annual-return date, if earlier).
+What the shop does:
+- One credit note per PROCESSED refund of an order that was invoiced (paid). Late payments on cancelled orders, which were
+  never invoiced, get no note.
+- Number `CN/2627/000001`: consecutive and gapless within the Indian financial year (April-March, India time), at most 16
+  characters. Dated when issued; it states the original invoice number, the reason, place of supply and supply type.
+- Amount split: a return refund credits the returned item first; any other refund (cancellation, goodwill, correction)
+  spreads by value over what the invoice has not yet credited, delivery included. The tax in each part is proportional to
+  the GST actually invoiced on that line, so a full refund credits exactly the invoiced tax and repeated partial refunds can
+  never credit more than was invoiced.
+- Notes are immutable. Customers see them under My orders, finance in Admin > Refunds; the GST summary reports
+  invoiced, credited and net per rate.
+- The Finance Act 2026 amended s.34 for post-sale discounts; confirm with your accountant whether goodwill refunds should
+  carry a credit note (they currently do).
 
 ## 4. Business details the public pages need (owner input)
 

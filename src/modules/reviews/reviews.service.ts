@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  type OnModuleInit,
 } from '@nestjs/common';
 import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
 import { ErrorCode } from '../../common/exceptions/error-codes.js';
@@ -17,6 +18,11 @@ import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, type RequestContext } from '../audit/audit.service.js';
 import { CatalogQueryService } from '../catalog/catalog-query.service.js';
+import {
+  ProductRatings,
+  type ProductRating,
+  type ProductRatingSource,
+} from '../catalog/product-ratings.js';
 import { OrderService } from '../orders/order.service.js';
 import { cleanReviewText, displayName, summarise } from './review-rules.js';
 
@@ -34,13 +40,41 @@ const tooShort = () =>
   });
 
 @Injectable()
-export class ReviewsService {
+export class ReviewsService implements ProductRatingSource, OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly catalog: CatalogQueryService,
     private readonly orders: OrderService,
     private readonly audit: AuditService,
+    private readonly ratings: ProductRatings,
   ) {}
+
+  onModuleInit(): void {
+    this.ratings.register(this);
+  }
+
+  /** Approved-review ratings for listing cards; same rounding as the product page summary (`summarise`). */
+  async ratingsFor(
+    productIds: readonly string[],
+  ): Promise<Map<string, ProductRating>> {
+    const groups = await this.prisma.productReview.groupBy({
+      by: ['productId', 'rating'],
+      where: { productId: { in: [...productIds] }, status: 'APPROVED' },
+      _count: { _all: true },
+    });
+    const counts = new Map<string, Partial<Record<number, number>>>();
+    for (const g of groups) {
+      const c = counts.get(g.productId) ?? {};
+      c[g.rating] = g._count._all;
+      counts.set(g.productId, c);
+    }
+    return new Map(
+      [...counts].map(([id, c]) => {
+        const { average, count } = summarise(c);
+        return [id, { average, count }];
+      }),
+    );
+  }
 
   // -------------------------------------------------------------------------------------- public
 

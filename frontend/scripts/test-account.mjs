@@ -123,7 +123,8 @@ function fakeBackend(opts = {}) {
     if ((mm = /^\/me\/reviews\/([^/]+)$/.exec(path))) {
       if (m === 'DELETE') { s.reviews = []; return route.fulfill(ok(null)); }
       Object.assign(s.reviews[0], body, { status: 'PENDING' });
-      const { product: _p, ...rest } = s.reviews[0];
+      const rest = { ...s.reviews[0] };
+      delete rest.product;
       return route.fulfill(ok(rest));
     }
     if (path === '/me/wishlist') return route.fulfill(ok(s.wishlist));
@@ -263,7 +264,7 @@ await test('orders: cancelling a paid order', async (page) => {
   assert.equal(await page.getByRole('button', { name: 'Cancel order' }).count(), 0);
 }, { backend: { orderStatus: 'PAID' } });
 
-await test('orders: empty history and pagination', async (page, be) => {
+await test('orders: empty history and pagination', async (page) => {
   await page.goto(`${BASE}/account/orders`);
   await page.getByText('No orders yet').waitFor();
 }, { backend: { ordersCount: 0 } });

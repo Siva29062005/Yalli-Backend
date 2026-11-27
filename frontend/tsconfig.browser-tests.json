@@ -1,0 +1,13 @@
+{
+  "//": "Used only by `npm run test:browser` (NEXT_DIST_DIR=.next-browser-tests), so that build never touches .next or tsconfig.json.",
+  "extends": "./tsconfig.json",
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next-browser-tests/types/**/*.ts",
+    ".next-browser-tests/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules", ".next"]
+}

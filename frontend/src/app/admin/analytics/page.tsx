@@ -26,9 +26,14 @@ interface Overview {
 }
 interface SalesByDay { days: { date: string; paidOrders: number; grossMinor: number }[] }
 interface TopProducts { products: { productId: string; name: string; units: number; revenueMinor: number }[] }
+interface GstRow { rateBps: number; taxableValueMinor: number; cgstMinor: number; sgstMinor: number; igstMinor: number; totalGstMinor: number }
+type GstTotals = Omit<GstRow, 'rateBps'>;
 interface GstSummary {
-  byRate: { rateBps: number; taxableValueMinor: number; cgstMinor: number; sgstMinor: number; igstMinor: number; totalGstMinor: number }[];
-  totals: { taxableValueMinor: number; cgstMinor: number; sgstMinor: number; igstMinor: number; totalGstMinor: number };
+  byRate: GstRow[];
+  totals: GstTotals;
+  /** Credit notes issued in the period (older API builds do not send these). */
+  creditNotes?: { count: number; byRate: GstRow[]; totals: GstTotals };
+  net?: GstTotals;
   notes: string[];
 }
 
@@ -152,6 +157,26 @@ export default function AdminAnalyticsPage() {
                     ))}
                   </tbody>
                   <tfoot className="border-t border-[#DCE3DE] font-semibold tabular-nums"><tr><td className="py-2">Total</td><td className="py-2 text-right">{formatPaise(data.gst.totals.taxableValueMinor)}</td><td className="py-2 text-right">{formatPaise(data.gst.totals.cgstMinor)}</td><td className="py-2 text-right">{formatPaise(data.gst.totals.sgstMinor)}</td><td className="py-2 text-right">{formatPaise(data.gst.totals.igstMinor)}</td><td className="py-2 text-right">{formatPaise(data.gst.totals.totalGstMinor)}</td></tr></tfoot>
+                </table>
+              </div>
+            )}
+            {data.gst.creditNotes && data.gst.net && (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[560px] text-left text-sm tabular-nums">
+                  <caption className="mb-2 text-left text-sm font-semibold text-[#113322]">After credit notes</caption>
+                  <thead className="text-xs uppercase tracking-wide text-[#4A5550]"><tr><th className="py-2"></th><th className="py-2 text-right">Taxable value</th><th className="py-2 text-right">CGST</th><th className="py-2 text-right">SGST</th><th className="py-2 text-right">IGST</th><th className="py-2 text-right">Total GST</th></tr></thead>
+                  <tbody className="divide-y divide-[#E6EAE7]">
+                    {([['Invoiced', data.gst.totals], [`Credit notes (${data.gst.creditNotes.count})`, data.gst.creditNotes.totals], ['Net for the period', data.gst.net]] as [string, GstTotals][]).map(([label, t], i) => (
+                      <tr key={label} className={i === 2 ? 'font-semibold' : undefined}>
+                        <td className="py-2">{label}</td>
+                        <td className="py-2 text-right">{i === 1 ? '−' : ''}{formatPaise(t.taxableValueMinor)}</td>
+                        <td className="py-2 text-right">{i === 1 ? '−' : ''}{formatPaise(t.cgstMinor)}</td>
+                        <td className="py-2 text-right">{i === 1 ? '−' : ''}{formatPaise(t.sgstMinor)}</td>
+                        <td className="py-2 text-right">{i === 1 ? '−' : ''}{formatPaise(t.igstMinor)}</td>
+                        <td className="py-2 text-right">{i === 1 ? '−' : ''}{formatPaise(t.totalGstMinor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             )}

@@ -88,6 +88,39 @@ it('serves the real app for browser checks', async () => {
         details: 'Lid is cracked',
       })
       .expect(201);
+    // Reviews waiting for moderation: two customers whose orders were delivered.
+    const deliver = async (orderId: string) => {
+      await stepFor(orderId, { status: 'PROCESSING' });
+      await stepFor(orderId, {
+        status: 'SHIPPED',
+        trackingCarrier: 'Delhivery',
+        trackingNumber: `SEED-${orderId.slice(-6)}`,
+      });
+      await stepFor(orderId, { status: 'DELIVERED' });
+    };
+    await http()
+      .post(`/api/v1/catalog/products/${kettle.product.slug}/reviews`)
+      .set(authed(c2))
+      .send({
+        rating: 4,
+        title: 'Sturdy and quick',
+        body: 'Boils fast and the gooseneck pours neatly.',
+      })
+      .expect(201);
+    const c5 = await shop.customer();
+    const e = await shop.order(c5, [{ variantId: bowls.variant.id }]);
+    await shop.paid(c5, e.id);
+    await ctx.drainOutbox();
+    await deliver(e.id);
+    await http()
+      .post(`/api/v1/catalog/products/${bowls.product.slug}/reviews`)
+      .set(authed(c5))
+      .send({
+        rating: 2,
+        title: 'Not what I expected',
+        body: 'The glaze chipped after one wash, rather disappointing.',
+      })
+      .expect(201);
     // C: paid, with a refund REQUEST raised by support that a second person (the admin) must approve.
     const cOrder = await shop.order(c3, [
       { variantId: bowls.variant.id, quantity: 3 },
@@ -108,6 +141,16 @@ it('serves the real app for browser checks', async () => {
     await ctx.drainOutbox();
 
     await ctx.app.listen(PORT, '127.0.0.1');
+    // Production runs the outbox relay in the background; do the same so events (e.g. credit notes) flow.
+    let draining = false;
+    const relay = setInterval(() => {
+      if (draining) return;
+      draining = true;
+      void ctx
+        .drainOutbox()
+        .catch(() => undefined)
+        .finally(() => (draining = false));
+    }, 1_000);
     const step = Math.floor(Date.now() / 30_000);
     writeFileSync(
       INFO,
@@ -135,10 +178,13 @@ it('serves the real app for browser checks', async () => {
           steamer: steamer.product.name,
           kettle: kettle.product.name,
         },
+        kettleSlug: kettle.product.slug,
+        bowlsSlug: bowls.product.slug,
         categoryNames: ['Kitchen and Dining', 'Home Accessories'],
       }),
     );
     while (!existsSync(STOP)) await new Promise((r) => setTimeout(r, 500));
+    clearInterval(relay);
   } finally {
     await ctx.close();
   }

@@ -27,7 +27,7 @@ async function otp() {
   await page.getByRole('button', { name: 'Verify and continue', exact: true }).click();
 }
 try {
-  for (const path of ['analytics', 'products', 'products/new', 'categories', 'inventory', 'orders', 'refunds', 'users', 'coupons', 'shipping']) {
+  for (const path of ['analytics', 'products', 'products/new', 'categories', 'inventory', 'orders', 'refunds', 'reviews', 'users', 'coupons', 'shipping']) {
     await page.goto(`${base}/admin/${path}`);
     await page.getByRole('heading', { name: 'Secure admin sign in' }).waitFor();
     assert.equal(await page.locator('aside').count(), 0, `${path} exposed admin sidebar`);
@@ -64,7 +64,7 @@ try {
   await page.setViewportSize({ width: 375, height: 900 });
   await page.getByRole('button', { name: 'Open menu', exact: true }).click();
   assert.equal(await page.locator('a[href^="/admin"]').count(), 0);
-  console.log('PASS: all 10 admin screens locked, password + MFA required, customers rejected, session expiry and sign-out lock workspace, no public admin links.');
+  console.log('PASS: all 11 admin screens locked, password + MFA required, customers rejected, session expiry and sign-out lock workspace, no public admin links.');
 } finally {
   await browser.close();
 }

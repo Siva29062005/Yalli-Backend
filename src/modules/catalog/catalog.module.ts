@@ -5,6 +5,7 @@ import { CatalogAdminService } from './catalog-admin.service.js';
 import { CatalogController } from './catalog.controller.js';
 import { CatalogQueryService } from './catalog-query.service.js';
 import { MediaController } from './media.controller.js';
+import { ProductRatings } from './product-ratings.js';
 import { CatalogImportService } from './import/catalog-import.service.js';
 import { LocalDiskStorage, ObjectStorage } from './media/object-storage.js';
 
@@ -15,8 +16,9 @@ import { LocalDiskStorage, ObjectStorage } from './media/object-storage.js';
     CatalogQueryService,
     CatalogAdminService,
     CatalogImportService,
+    ProductRatings,
     { provide: ObjectStorage, useClass: LocalDiskStorage },
   ],
-  exports: [CatalogQueryService, CatalogImportService],
+  exports: [CatalogQueryService, CatalogImportService, ProductRatings],
 })
 export class CatalogModule {}

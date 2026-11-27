@@ -14,7 +14,7 @@ const base = process.env.FRONTEND_URL || 'http://localhost:3101';
 const page = await browser.newPage();
 page.on('dialog', (dialog) => void dialog.accept()); // window.confirm
 
-const ALL_PERMISSIONS = ['analytics.read', 'products.read', 'products.create', 'products.update', 'products.delete', 'products.publish', 'inventory.read', 'inventory.adjust', 'orders.read', 'orders.update', 'shipments.manage', 'payments.read', 'refunds.create', 'refunds.approve', 'coupons.manage', 'users.manage', 'customers.suspend'];
+const ALL_PERMISSIONS = ['analytics.read', 'products.read', 'products.create', 'products.update', 'products.delete', 'products.publish', 'inventory.read', 'inventory.adjust', 'orders.read', 'orders.update', 'shipments.manage', 'payments.read', 'refunds.create', 'refunds.approve', 'coupons.manage', 'reviews.moderate', 'users.manage', 'customers.suspend'];
 const SUPPORT_PERMISSIONS = ['products.read', 'orders.read', 'refunds.create', 'customers.read', 'reviews.moderate'];
 let signedInAs = 'admin';
 const meFor = () => signedInAs === 'support'
@@ -30,6 +30,10 @@ const state = {
   stepUpPending: true, // the first inventory read demands a fresh MFA step-up
   token: 'access-1',
   orderStatus: 'PAID',
+  reviews: [
+    { id: 'rv1', product: { slug: 'momo-steamer', name: 'Momo Steamer' }, reviewer: 'Asha K.', rating: 4, title: 'Great steamer', body: 'Soft momos every time <b>not bold</b>.', status: 'PENDING', moderationNote: null, createdAt: '2026-11-18T10:00:00Z' },
+    { id: 'rv2', product: { slug: 'momo-steamer', name: 'Momo Steamer' }, reviewer: 'Ravi S.', rating: 1, title: null, body: 'Buy cheap pills at my site now', status: 'PENDING', moderationNote: null, createdAt: '2026-11-18T11:00:00Z' },
+  ],
   refunds: [
     { id: 'r-other', orderId: 'o1', order: { orderNumber: 'YL26-000001' }, kind: 'ADMIN', amountMinor: 50000, status: 'PENDING_APPROVAL', reason: 'Damaged on arrival', requestedById: 'someone-else', approvedById: null, createdAt: '2026-11-18T10:00:00Z', processedAt: null, failureReason: null },
     { id: 'r-mine', orderId: 'o1', order: { orderNumber: 'YL26-000001' }, kind: 'GOODWILL', amountMinor: 10000, status: 'PENDING_APPROVAL', reason: 'Late delivery gesture', requestedById: 'staff-1', approvedById: null, createdAt: '2026-11-18T11:00:00Z', processedAt: null, failureReason: null },
@@ -66,7 +70,7 @@ function handle(method, path, request) {
   if (path.startsWith('/admin/') && state.stepUpPending && path === '/admin/inventory') return fail(403, 'Recent multi-factor verification is required', 'STEP_UP_REQUIRED');
 
   // products
-  if (m === 'GET /admin/products') return list([{ id: 'p1', slug: 'momo-steamer', name: 'Momo Steamer', status: 'DRAFT', updatedAt: '2026-11-18T09:00:00Z', _count: { variants: 1, images: 0 } }]);
+  if (m === 'GET /admin/products') return list([{ id: 'p1', slug: 'momo-steamer', name: 'Momo Steamer', status: 'DRAFT', updatedAt: '2026-11-18T09:00:00Z', _count: { variants: 1, images: 0 }, categories: ['Kitchen and Dining'], price: { minMinor: 49000, maxMinor: 79900, onSale: true }, stock: { available: 0, lowStock: false } }]);
   if (m === 'GET /admin/brands') return ok([{ id: 'b1', name: 'Yalli' }]);
   if (m === 'GET /admin/categories') return ok([{ id: 'c1', name: 'Kitchen and Dining' }]);
   if (m === 'POST /admin/products') return { status: 201, json: { success: true, data: { id: 'p1' } } };
@@ -104,6 +108,15 @@ function handle(method, path, request) {
   if (m === 'POST /admin/coupons') return { status: 201, json: { success: true, data: { id: 'cp2' } } };
   if (m === 'GET /admin/shipping-methods') return ok([]);
   if (m === 'POST /admin/shipping-methods') return { status: 201, json: { success: true, data: { id: 'sm1' } } };
+
+  // reviews
+  if (m === 'GET /admin/reviews') return list(state.reviews.filter((r) => r.status === (request.url().includes('status=') ? new URL(request.url()).searchParams.get('status') : 'PENDING')));
+  if (m === 'POST /admin/reviews/rv1/decision' || m === 'POST /admin/reviews/rv2/decision') {
+    const r = state.reviews.find((x) => `/admin/reviews/${x.id}/decision` === path);
+    r.status = body.decision;
+    r.moderationNote = body.note ?? null;
+    return ok({ id: r.id, status: r.status });
+  }
 
   // users
   if (m === 'GET /admin/roles') return ok([{ name: 'CUSTOMER', description: 'Shopper', rank: 0, permissions: [] }, { name: 'CUSTOMER_SUPPORT', description: 'Helps customers', rank: 10, permissions: ['orders.read'] }]);
@@ -252,9 +265,30 @@ try {
   await page.getByText(/role given to priya@example.test/).waitFor();
   assert.deepEqual(lastCall('POST', '/admin/users/u2/roles').body, { role: 'CUSTOMER_SUPPORT' });
 
+  // ----------------------------------------------------------------------------------------------- reviews
+  await go('Reviews', 'Reviews');
+  await page.getByText('Soft momos every time <b>not bold</b>.').waitFor(); // shown as plain text, never as markup
+  assert.equal(await page.locator('b').filter({ hasText: 'not bold' }).count(), 0, 'review text is escaped');
+  await page.getByRole('img', { name: '4 out of 5 stars' }).waitFor();
+  await page.locator('li').filter({ hasText: 'Great steamer' }).getByRole('button', { name: 'Approve' }).click();
+  await page.getByText('Review published on the product page.').waitFor();
+  assert.deepEqual(lastCall('POST', '/admin/reviews/rv1/decision').body, { decision: 'APPROVED' });
+  await page.locator('li').filter({ hasText: 'cheap pills' }).getByRole('button', { name: 'Reject…' }).click();
+  await page.getByLabel('Reason (shown to the customer)').fill('Spam');
+  await page.getByRole('button', { name: 'Reject review' }).click();
+  await page.getByText(/Review rejected/).waitFor();
+  assert.deepEqual(lastCall('POST', '/admin/reviews/rv2/decision').body, { decision: 'REJECTED', note: 'Spam' });
+  await page.getByText('Nothing is waiting').waitFor();
+  await page.getByRole('tab', { name: 'Rejected' }).click();
+  await page.getByText('Moderator note: Spam').waitFor();
+
   // ----------------------------------------------------------------------------------------------- products
   await go('Products', 'Products');
   await page.getByRole('link', { name: 'Momo Steamer' }).waitFor();
+  await page.getByRole('cell', { name: /₹490\.00 – ₹799\.00/ }).waitFor();
+  await page.getByText('On sale', { exact: true }).waitFor();
+  await page.getByText('Out of stock', { exact: true }).waitFor();
+  await page.getByText('no images').waitFor();
   await page.getByRole('link', { name: 'Add product' }).click();
   await page.getByRole('heading', { name: 'Add product', level: 1 }).waitFor();
   await page.getByLabel('Product name').fill('Momo Steamer');
@@ -284,8 +318,8 @@ try {
   // lands on the first screen the role can use, not on a screen it cannot
   await page.getByRole('heading', { name: 'Products', exact: true, level: 1 }).waitFor();
   const nav = await page.locator('aside nav a, aside a').allInnerTexts();
-  const links = nav.map((t) => t.trim()).filter((t) => ['Overview', 'Products', 'Categories', 'Inventory', 'Orders', 'Refunds & returns', 'Users & roles', 'Coupons', 'Shipping'].includes(t));
-  assert.deepEqual(links, ['Products', 'Categories', 'Orders', 'Refunds & returns'], `support sees only its screens, got ${links}`);
+  const links = nav.map((t) => t.trim()).filter((t) => ['Overview', 'Products', 'Categories', 'Inventory', 'Orders', 'Refunds & returns', 'Reviews', 'Users & roles', 'Coupons', 'Shipping'].includes(t));
+  assert.deepEqual(links, ['Products', 'Categories', 'Orders', 'Refunds & returns', 'Reviews'], `support sees only its screens, got ${links}`);
   assert.equal(await page.getByRole('link', { name: 'Add product' }).count(), 0, 'no Add product without products.create');
   assert.equal(await page.getByRole('button', { name: 'Delete' }).count(), 0, 'no Delete without products.delete');
   assert.equal(await page.getByRole('button', { name: 'Publish' }).count(), 0, 'no Publish without products.publish');
@@ -319,13 +353,13 @@ try {
 
   // ----------------------------------------------------------------------------------------------- phone layout
   await page.setViewportSize({ width: 375, height: 800 });
-  for (const [name, heading] of [['Overview', 'The everyday, at a glance.'], ['Products', 'Products'], ['Inventory', 'Inventory'], ['Orders', 'Orders & fulfilment'], ['Refunds & returns', 'Refunds & returns'], ['Users & roles', 'Users & roles'], ['Coupons', 'Coupons'], ['Shipping', 'Shipping methods']]) {
+  for (const [name, heading] of [['Overview', 'The everyday, at a glance.'], ['Products', 'Products'], ['Inventory', 'Inventory'], ['Orders', 'Orders & fulfilment'], ['Refunds & returns', 'Refunds & returns'], ['Reviews', 'Reviews'], ['Users & roles', 'Users & roles'], ['Coupons', 'Coupons'], ['Shipping', 'Shipping methods']]) {
     await go(name, heading);
     await page.waitForTimeout(150);
     await overflow(name);
   }
 
-  console.log('PASS: 8 staff screens sign in with MFA, share one step-up prompt and retry, send server-ready payloads (paise, idempotency key, roles), block self-approval, and fit a 375px screen.');
+  console.log('PASS: 9 staff screens sign in with MFA, share one step-up prompt and retry, send server-ready payloads (paise, idempotency key, roles), block self-approval, and fit a 375px screen.');
 } finally {
   await browser.close();
 }

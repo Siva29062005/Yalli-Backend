@@ -1,4 +1,5 @@
 import { ApiError, API_BASE_URL } from './http';
+import type { CategoryNode } from './category-utils';
 
 /** Shapes returned by the public catalogue API (`src/modules/catalog/catalog-query.service.ts`). */
 export interface Money {
@@ -203,6 +204,22 @@ export async function getProduct(slug: string): Promise<ProductDetail | null> {
     if (error instanceof ApiError && error.status === 404) return null;
     throw error;
   }
+}
+
+/** Category tree for the sitemap (the storefront menu loads it in the browser instead). */
+export async function listCategoryTree(): Promise<CategoryNode[]> {
+  return (await get<CategoryNode[]>('/catalog/categories', 300)).data;
+}
+
+/** Every published product slug, a page at a time (bounded so a bad `totalPages` can never loop forever). */
+export async function listAllProductSlugs(maxPages = 200): Promise<string[]> {
+  const slugs: string[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const { items, meta } = await listProducts({ page, pageSize: 60 });
+    slugs.push(...items.map((p) => p.slug));
+    if (page >= meta.totalPages || items.length === 0) break;
+  }
+  return slugs;
 }
 
 export async function listBrands(): Promise<Brand[]> {

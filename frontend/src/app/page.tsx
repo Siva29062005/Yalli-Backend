@@ -7,7 +7,14 @@ import { Footer } from "@/components/Footer";
 import { CategoryTiles } from "@/components/CategoryTiles";
 import { ProductCard } from "@/components/ProductCard";
 import { CartDrawer } from "@/components/CartDrawer";
+import type { Metadata } from "next";
+import { JsonLd } from "@/components/JsonLd";
 import { listProducts } from "@/lib/catalog-api";
+import { BUSINESS } from "@/lib/business";
+import { websiteJsonLd } from "@/lib/seo";
+import { SITE_URL, canonicalFor } from "@/lib/site";
+
+export const metadata: Metadata = { ...canonicalFor("/") };
 
 export default async function HomePage() {
   // Featured row is best-effort: an API outage must not break the home page.
@@ -17,6 +24,7 @@ export default async function HomePage() {
 
   return (
     <>
+      {SITE_URL && <JsonLd data={websiteJsonLd({ name: BUSINESS.tradeName, siteUrl: SITE_URL })} />}
       <AnnouncementBar />
       <Header />
       <CartDrawer />
