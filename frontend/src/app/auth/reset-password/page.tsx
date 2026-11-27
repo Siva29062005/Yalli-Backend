@@ -69,7 +69,7 @@ function RequestLink() {
         {busy ? 'Sending…' : 'Send reset link'}
       </button>
       <div className="text-center pt-2">
-        <Link href="/auth/login" className="text-[13px] text-[#8A958E] hover:text-[#116644]">
+        <Link href="/auth/login" className="text-[13px] text-[#5F6B64] hover:text-[#116644]">
           Remembered your password? Log in
         </Link>
       </div>
@@ -129,7 +129,7 @@ function ChooseNewPassword({ token }: { token: string }) {
             onChange={(e) => setPassword(e.target.value)}
             className={`${inputClass} pr-16`}
           />
-          <button type="button" onClick={() => setShow(!show)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#8A958E] hover:text-[#113322]">
+          <button type="button" onClick={() => setShow(!show)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#5F6B64] hover:text-[#113322]">
             {show ? 'Hide' : 'Show'}
           </button>
         </div>
@@ -142,7 +142,7 @@ function ChooseNewPassword({ token }: { token: string }) {
       <button type="submit" disabled={busy} className={buttonClass}>
         {busy ? 'Saving…' : 'Update password'}
       </button>
-      <p className="text-[12px] text-[#8A958E] text-center">You&apos;ll be signed out of other devices.</p>
+      <p className="text-[12px] text-[#5F6B64] text-center">You&apos;ll be signed out of other devices.</p>
     </form>
   );
 }
@@ -158,7 +158,7 @@ function ResetPassword() {
         <h1 className="font-heading text-[30px] font-bold text-[#113322]">
           {token ? 'Choose a new password' : 'Reset your password'}
         </h1>
-        <p className="text-[14px] text-[#8A958E]">
+        <p className="text-[14px] text-[#5F6B64]">
           {token
             ? 'Pick something long and memorable that you don’t use elsewhere.'
             : 'Enter your email and we’ll send you a link to create a new password.'}

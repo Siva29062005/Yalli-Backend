@@ -1200,3 +1200,34 @@ model WishlistItem {
   @@index([userId, createdAt(sort: Desc)])
   @@map("wishlist_items")
 }
+
+enum ContactTopic {
+  ORDER
+  RETURN
+  PAYMENT
+  ACCOUNT
+  PRODUCT
+  OTHER
+}
+
+enum ContactStatus {
+  NEW
+  HANDLED
+}
+
+/// A message sent from the website's contact form (public, rate-limited, captcha). Plain text only.
+model ContactMessage {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  name        String        @db.VarChar(100)
+  email       String        @db.VarChar(254)
+  orderNumber String?       @map("order_number") @db.VarChar(20)
+  topic       ContactTopic
+  message     String        @db.VarChar(2000)
+  status      ContactStatus @default(NEW)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  handledAt   DateTime?     @map("handled_at") @db.Timestamptz(6)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("contact_messages")
+}
+

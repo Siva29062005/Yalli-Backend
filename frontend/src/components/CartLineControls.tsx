@@ -10,6 +10,8 @@ export function QuantityStepper({ line, compact = false }: { line: CartLine; com
   const busy = pending.has(line.variantId);
   const pad = compact ? 'px-2 py-1' : 'px-3 py-1.5';
   const max = line.issue === 'UNAVAILABLE' ? 0 : line.maxQuantity;
+  // Over stock: step straight down to what can be bought (a 409 forever otherwise); nothing left: remove the line.
+  const lower = max === 0 ? 0 : Math.min(line.quantity - 1, max);
   return (
     <div
       className={`flex items-center overflow-hidden rounded-lg border border-[#E6EAE7] bg-white ${busy ? 'opacity-60' : ''}`}
@@ -17,9 +19,9 @@ export function QuantityStepper({ line, compact = false }: { line: CartLine; com
     >
       <button
         type="button"
-        onClick={() => setQuantity(line.variantId, line.quantity - 1)}
+        onClick={() => setQuantity(line.variantId, lower)}
         disabled={busy}
-        aria-label={line.quantity === 1 ? `Remove ${line.productName}` : `Decrease quantity of ${line.productName}`}
+        aria-label={lower === 0 ? `Remove ${line.productName}` : `Decrease quantity of ${line.productName}`}
         className={`${pad} text-[#113322] hover:bg-[#F5F6F5] disabled:cursor-not-allowed`}
       >
         <Minus className="h-3.5 w-3.5" />

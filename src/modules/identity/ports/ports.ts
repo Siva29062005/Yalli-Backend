@@ -56,6 +56,17 @@ export type NotificationMessage =
       orderNumber: string;
       status: string;
     }
+  | {
+      /** To the shop's support inbox (not to a customer): a message from the contact form. */
+      type: 'CONTACT_MESSAGE';
+      email: string;
+      name: string;
+      fromName: string;
+      fromEmail: string;
+      topic: string;
+      orderNumber: string | null;
+      message: string;
+    }
   | { type: 'PHONE_OTP'; phone: string; code: string };
 
 export interface OutboundEmail {

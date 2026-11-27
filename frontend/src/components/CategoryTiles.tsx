@@ -1,4 +1,5 @@
 'use client';
+import { ALL_CATEGORY } from '@/lib/category-utils';
 
 import React from 'react';
 import Link from 'next/link';
@@ -34,7 +35,7 @@ export function CategoryTiles() {
           <h2 className="font-heading text-[22px] md:text-[26px] font-bold text-[#113322]">
             Find your kind of living
           </h2>
-          <p className="text-[13px] text-[#8A958E]">
+          <p className="text-[13px] text-[#5F6B64]">
             Explore thoughtfully chosen collections for modern homes
           </p>
         </div>
@@ -76,12 +77,12 @@ export function CategoryTiles() {
         {CATEGORIES.map((cat) => (
           <Link
             key={cat.id}
-            href={`/catalog/${cat.slug}`}
+            href={cat.id === ALL_CATEGORY.id ? '/catalog' : `/catalog/${cat.slug}`}
             className="group bg-white rounded-2xl p-4 border border-[#E6EAE7] hover:border-[#116644] hover:shadow-md transition-all duration-200 flex flex-col items-center text-center space-y-2.5"
           >
             <div className="w-14 h-14 rounded-full bg-[#EEFFEE] group-hover:bg-[#116644] flex items-center justify-center transition-colors duration-200">
               <div className="group-hover:text-white transition-colors duration-200">
-                {ICON_MAP[cat.id] || (
+                {ICON_MAP[cat.id === ALL_CATEGORY.id ? 'all' : cat.slug] || (
                   <LayoutGrid className="w-6 h-6 text-[#116644]" />
                 )}
               </div>

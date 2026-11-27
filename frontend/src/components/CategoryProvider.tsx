@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 import { requestApi } from '@/lib/http';
@@ -24,11 +25,25 @@ interface CategoryState {
 
 const CategoryContext = createContext<CategoryState | null>(null);
 
-export function CategoryProvider({ children }: { children: React.ReactNode }) {
-  const [categories, setCategories] = useState<Category[]>([ALL_CATEGORY]);
-  const [loading, setLoading] = useState(true);
+/** Refetch on window focus at most this often (the tree changes rarely; admin edits refresh the tab directly). */
+const FOCUS_REFRESH_MS = 60_000;
+
+export function CategoryProvider({
+  children,
+  initialTree = null,
+}: {
+  children: React.ReactNode;
+  /** The tree as the SERVER rendered it, so names and links are in the HTML (null when the API was unavailable). */
+  initialTree?: CategoryNode[] | null;
+}) {
+  const [categories, setCategories] = useState<Category[]>(() =>
+    initialTree ? [ALL_CATEGORY, ...flattenCategories(initialTree)] : [ALL_CATEGORY],
+  );
+  const [loading, setLoading] = useState(initialTree === null);
+  const lastLoad = useRef(0); // time of the last client load (set in effects/callbacks, never during render)
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
+    lastLoad.current = Date.now();
     try {
       const tree = await requestApi<CategoryNode[]>('/catalog/categories');
       setCategories([ALL_CATEGORY, ...flattenCategories(tree)]);
@@ -43,12 +58,13 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Defer initial loading; subsequent refreshes are driven by external focus events.
+    // Revalidate once after mount (in the background when the server already rendered the tree: no loading state), then
+    // on focus, throttled. The public endpoint is browser-cacheable, so this is usually served from the cache.
     const timer = window.setTimeout(() => {
       void refresh();
     }, 0);
     const revalidate = () => {
-      void refresh();
+      if (Date.now() - lastLoad.current >= FOCUS_REFRESH_MS) void refresh();
     };
     window.addEventListener('focus', revalidate);
     return () => {

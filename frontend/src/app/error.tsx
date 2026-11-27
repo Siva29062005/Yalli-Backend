@@ -27,7 +27,7 @@ export default function RouteError({ error, retry }: { error: unknown; retry: ()
         <Link href="/" className="text-[14px] font-semibold text-[#116644] underline">Go to the home page</Link>
         <Link href="/contact" className="text-[14px] font-semibold text-[#116644] underline">Contact us</Link>
       </div>
-      {reference && <p className="text-[12px] text-[#8A958E]">Reference: {reference}</p>}
+      {reference && <p className="text-[12px] text-[#5F6B64]">Reference: {reference}</p>}
     </main>
   );
 }

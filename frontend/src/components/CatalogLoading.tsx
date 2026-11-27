@@ -1,4 +1,9 @@
-export default function Loading() {
+/**
+ * Skeleton shown while a catalogue page loads. Used as an explicit <Suspense> fallback INSIDE the page (not as a
+ * route `loading.tsx`): a route loading boundary starts streaming before the page can call notFound(), which would turn
+ * an unknown category's 404 into a 200.
+ */
+export function CatalogLoading() {
   return (
     <main aria-busy="true" aria-label="Loading products" className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 md:px-8 lg:px-12">
       <div className="mb-6 h-9 w-64 animate-pulse rounded-lg bg-[#E6EAE7]" />

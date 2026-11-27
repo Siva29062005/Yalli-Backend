@@ -33,6 +33,43 @@ const coupon = (data: Record<string, unknown> = {}) =>
     } as never,
   });
 
+describe('orders that could never be paid', () => {
+  it('a fixed coupon larger than the cart makes the quote unpurchasable and placing it is refused (no stock or coupon held)', async () => {
+    const { variant } = await fx.product({ priceMinor: 40_000, stock: 5 });
+    const c = await coupon({
+      discountType: 'FIXED_AMOUNT',
+      percentBps: null,
+      amountMinor: 50_000,
+    });
+    const u = await shop.customer();
+    await shop.fill(u, [{ variantId: variant.id, quantity: 1 }]);
+    await ctx
+      .http()
+      .post('/api/v1/cart/coupon')
+      .set({ ...authed(u), 'X-Forwarded-For': freshIp() })
+      .send({ code: c.code })
+      .expect(200);
+    const quote = (
+      await ctx
+        .http()
+        .post('/api/v1/checkout/quote')
+        .set(authed(u))
+        .send({ addressId: u.addressId })
+    ).body.data;
+    expect(quote.totals.totalMinor).toBe(0);
+    expect(quote.purchasable).toBe(false);
+    expect(quote.minimumPayableMinor).toBe(100);
+    expect(quote.paymentWindowMinutes).toBe(30);
+    const res = await shop.place(u);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('ORDER_TOTAL_TOO_LOW');
+    expect(await ctx.prisma.order.count({ where: { userId: u.userId } })).toBe(
+      0,
+    );
+    expect((await shop.stock(variant.id)).reserved).toBe(0);
+  });
+});
+
 describe('quote', () => {
   it('prices the cart on the server with GST split CGST+SGST within the seller state and IGST outside it', async () => {
     const { variant } = await fx.product({ priceMinor: 59_000, stock: 9 });

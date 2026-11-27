@@ -5,13 +5,13 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AccountShell, PanelEmpty, PanelError, PanelLoading, Pager } from "@/components/AccountShell";
 import { ProductImage } from "@/components/ProductImage";
-import { accountApi, ACCOUNT_PAGE_SIZE, ORDER_STATUS_LABEL, statusTone } from "@/lib/account-api";
+import { accountApi, ORDER_STATUS_LABEL, statusTone } from "@/lib/account-api";
 import { formatIndianDate, formatPaise } from "@/lib/formatters";
-import { useAsync } from "@/lib/useAsync";
+import { usePaged } from "@/lib/useAsync";
 
 export default function OrdersPage() {
   const [page, setPage] = useState(1);
-  const { data, error, loading, reload } = useAsync(() => accountApi.orders(page), [page]);
+  const { data, hasNext, error, loading, reload } = usePaged(() => accountApi.orders(page), [page]);
 
   return (
     <AccountShell title="My orders" subtitle="Everything you’ve ordered from Yalli." crumbs={[{ label: "My orders" }]}>
@@ -50,19 +50,19 @@ export default function OrdersPage() {
                       {o.items.map((i) => i.productName).join(", ")}
                       {o.itemCount > o.items.length ? "…" : ""}
                     </p>
-                    <p className="text-[12px] text-[#8A958E]">
+                    <p className="text-[12px] text-[#5F6B64]">
                       {formatIndianDate(o.placedAt)} · {o.itemCount} {o.itemCount === 1 ? "item" : "items"}
                     </p>
                   </div>
                   <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0">
                     <span className="font-heading text-[17px] font-bold text-[#113322]">{formatPaise(o.totals.totalMinor)}</span>
-                    <ArrowRight className="h-5 w-5 text-[#8A958E]" aria-hidden />
+                    <ArrowRight className="h-5 w-5 text-[#5F6B64]" aria-hidden />
                   </div>
                 </Link>
               </li>
             ))}
           </ul>
-          <Pager page={page} hasNext={data.length === ACCOUNT_PAGE_SIZE} onPage={setPage} />
+          <Pager page={page} hasNext={hasNext} onPage={setPage} />
         </div>
       )}
     </AccountShell>

@@ -20,7 +20,7 @@ export function ProductImage({
       <div
         role="img"
         aria-label={`${alt} (image coming soon)`}
-        className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-[#F2F4F3] text-[#A3ADA7]"
+        className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-[#F2F4F3] text-[#5F6B64]"
       >
         <ImageOff className="h-7 w-7" aria-hidden />
         <span className="text-[11px] font-medium">Image coming soon</span>

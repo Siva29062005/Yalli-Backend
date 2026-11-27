@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { requestApi } from '@/lib/http';
 import { Star, Heart, ChevronDown, Minus, Plus, GitCompare } from 'lucide-react';
 import { useStore } from '@/lib/store';
 import { WriteReview } from '@/components/WriteReview';
@@ -32,7 +33,7 @@ interface Props {
 
 function Stars({ value, size = 'h-4 w-4' }: { value: number; size?: string }) {
   return (
-    <span className="flex text-[#FF9900]" aria-hidden>
+    <span className="flex text-[#FF9900]" role="img" aria-label={`${Math.round(value * 10) / 10} out of 5 stars`}>
       {[1, 2, 3, 4, 5].map((i) => (
         <Star key={i} className={`${size} ${i <= Math.round(value) ? 'fill-[#FF9900]' : 'fill-transparent'}`} />
       ))}
@@ -45,14 +46,62 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
     <details open={defaultOpen} className="group py-3">
       <summary className="flex cursor-pointer list-none items-center justify-between text-[14px] font-semibold text-[#113322]">
         {title}
-        <ChevronDown className="h-4 w-4 text-[#8A958E] transition group-open:rotate-180" />
+        <ChevronDown className="h-4 w-4 text-[#5F6B64] transition group-open:rotate-180" />
       </summary>
       <div className="pt-2 text-[13px] leading-relaxed text-[#4A5550]">{children}</div>
     </details>
   );
 }
 
+/** Share of reviews per star, as bars (whole percentages; display only). */
+function RatingBars({ summary }: { summary: RatingSummary }) {
+  return (
+    <dl className="max-w-sm space-y-1.5" aria-label="Ratings breakdown">
+      {(['5', '4', '3', '2', '1'] as const).map((star) => {
+        const n = summary.distribution[star] ?? 0;
+        const pct = summary.count ? Math.round((n * 100) / summary.count) : 0;
+        return (
+          <div key={star} className="flex items-center gap-2 text-[12px]">
+            <dt className="w-10 shrink-0 text-[#4A5550]">{star} star</dt>
+            <dd className="flex flex-1 items-center gap-2">
+              <span className="h-2 flex-1 overflow-hidden rounded-full bg-[#EEF1EF]" aria-hidden>
+                <span className="block h-full rounded-full bg-[#FF9900]" style={{ width: `${pct}%` }} />
+              </span>
+              <span className="w-12 shrink-0 text-right text-[#5F6B64]">
+                {n} <span className="sr-only">{n === 1 ? 'review' : 'reviews'}</span>
+              </span>
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+const REVIEW_PAGE_SIZE = 6; // the server renders page 1 with this size (catalog-api.getProductReviews)
+
 export function ProductDetailClient({ product, relatedProducts, reviews }: Props) {
+  // Further review pages are fetched in the browser (page 1 came with the server render).
+  const [moreReviews, setMoreReviews] = useState<Review[]>([]);
+  const [reviewPage, setReviewPage] = useState(1);
+  const [loadingReviews, setLoadingReviews] = useState(false);
+  const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const loadMoreReviews = async () => {
+    setLoadingReviews(true);
+    setReviewsError(null);
+    try {
+      const next = reviewPage + 1;
+      const page = await requestApi<Review[]>(
+        `/catalog/products/${encodeURIComponent(product.slug)}/reviews?page=${next}&pageSize=${REVIEW_PAGE_SIZE}`,
+      );
+      setMoreReviews((list) => [...list, ...page]);
+      setReviewPage(next);
+    } catch {
+      setReviewsError('More reviews could not be loaded. Please try again.');
+    } finally {
+      setLoadingReviews(false);
+    }
+  };
   const router = useRouter();
   const mounted = useMounted();
   const { addItem, pending } = useCart();
@@ -92,7 +141,7 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
 
   return (
     <div className="space-y-12">
-      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-[13px] text-[#8A958E]">
+      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2 text-[13px] text-[#5F6B64]">
         <Link href="/" className="shrink-0 hover:text-[#116644]">Home</Link>
         <span>/</span>
         {category && (
@@ -114,7 +163,7 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
               sizes="(max-width: 1024px) 100vw, 50vw"
             />
             {discounted && (
-              <span className="absolute left-4 top-4 rounded-full bg-[#FF9900] px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white shadow-sm">
+              <span className="absolute left-4 top-4 rounded-full bg-[#FF9900] px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-[#113322] shadow-sm">
                 Save {calculateDiscountPercent(regular, sale)}%
               </span>
             )}
@@ -167,7 +216,7 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
               <a href="#reviews" className="flex items-center gap-2 pt-1 text-[13px]">
                 <Stars value={summary.average} />
                 <span className="font-bold text-[#113322]">{summary.average.toFixed(1)}</span>
-                <span className="text-[#8A958E] underline">
+                <span className="text-[#5F6B64] underline">
                   {summary.count} {summary.count === 1 ? 'review' : 'reviews'}
                 </span>
               </a>
@@ -179,17 +228,17 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
               <span className="font-heading text-[32px] font-bold text-[#113322]">{formatPaise(sale)}</span>
               {discounted && (
                 <>
-                  <span className="text-[18px] text-[#8A958E] line-through">{formatPaise(regular)}</span>
-                  <span className="rounded-full border border-[#FF9900]/30 bg-[#FFF5E6] px-2.5 py-0.5 text-[12px] font-bold text-[#FF9900]">
+                  <span className="text-[18px] text-[#5F6B64] line-through">{formatPaise(regular)}</span>
+                  <span className="rounded-full border border-[#FF9900]/30 bg-[#FFF5E6] px-2.5 py-0.5 text-[12px] font-bold text-[#A65500]">
                     SAVE {calculateDiscountPercent(regular, sale)}%
                   </span>
                 </>
               )}
             </div>
-            <p className="text-[12px] text-[#8A958E]">Inclusive of {product.gstRateBps / 100}% GST</p>
+            <p className="text-[12px] text-[#5F6B64]">Inclusive of {product.gstRateBps / 100}% GST</p>
             <p
               className={`text-[13px] font-semibold ${
-                !variant.inStock ? 'text-red-600' : variant.lowStock ? 'text-[#C27400]' : 'text-[#116644]'
+                !variant.inStock ? 'text-red-600' : variant.lowStock ? 'text-[#A65500]' : 'text-[#116644]'
               }`}
             >
               {!variant.inStock ? 'Out of stock' : variant.lowStock ? 'Only a few left' : 'In stock'}
@@ -212,10 +261,11 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
                     className={`rounded-xl px-4 py-2 text-[13px] font-medium transition ${
                       variantIndex === i
                         ? 'bg-[#116644] text-white'
-                        : 'border border-[#E6EAE7] bg-white text-[#113322] hover:border-[#116644]'
-                    } ${v.inStock ? '' : 'line-through opacity-60'}`}
+                        : `border border-[#E6EAE7] bg-white hover:border-[#116644] ${v.inStock ? 'text-[#113322]' : 'text-[#5F6B64]'}`
+                    } ${v.inStock ? '' : 'line-through'}`}
                   >
                     {variantLabel(v)}
+                    {!v.inStock && <span className="sr-only"> (out of stock)</span>}
                   </button>
                 ))}
               </div>
@@ -272,7 +322,7 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
                 type="button"
                 onClick={() => addToCompare(product.slug)}
                 disabled={compareSlugs.length >= 4}
-                className="inline-flex items-center gap-1.5 font-semibold text-[#116644] hover:underline disabled:cursor-not-allowed disabled:text-[#8A958E] disabled:no-underline"
+                className="inline-flex items-center gap-1.5 font-semibold text-[#116644] hover:underline disabled:cursor-not-allowed disabled:text-[#5F6B64] disabled:no-underline"
               >
                 <GitCompare className="h-4 w-4" aria-hidden />
                 {compareSlugs.length >= 4 ? 'Compare list is full (4)' : 'Add to compare'}
@@ -292,12 +342,12 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
                 <dl className="space-y-1">
                   {product.attributes.map((a) => (
                     <div key={a.name} className="flex justify-between gap-4 border-b border-[#F5F6F5] py-1">
-                      <dt className="text-[#8A958E]">{a.name}</dt>
+                      <dt className="text-[#5F6B64]">{a.name}</dt>
                       <dd className="text-right font-medium text-[#113322]">{a.value}</dd>
                     </div>
                   ))}
                   <div className="flex justify-between gap-4 py-1">
-                    <dt className="text-[#8A958E]">SKU</dt>
+                    <dt className="text-[#5F6B64]">SKU</dt>
                     <dd className="font-medium text-[#113322]">{variant.sku}</dd>
                   </div>
                 </dl>
@@ -329,24 +379,25 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
         <h2 className="font-heading text-[22px] font-bold text-[#113322]">Customer reviews</h2>
         <WriteReview slug={product.slug} />
         {!reviews ? (
-          <p className="text-[13px] text-[#8A958E]">Reviews are unavailable right now.</p>
+          <p className="text-[13px] text-[#5F6B64]">Reviews are unavailable right now.</p>
         ) : reviews.summary.count === 0 ? (
-          <p className="text-[13px] text-[#8A958E]">No reviews yet. Customers who buy this product can review it after delivery.</p>
+          <p className="text-[13px] text-[#5F6B64]">No reviews yet. Customers who buy this product can review it after delivery.</p>
         ) : (
           <>
             <div className="flex items-center gap-3">
               <Stars value={reviews.summary.average ?? 0} size="h-5 w-5" />
               <span className="text-[15px] font-bold text-[#113322]">{reviews.summary.average?.toFixed(1)} / 5</span>
-              <span className="text-[13px] text-[#8A958E]">
+              <span className="text-[13px] text-[#5F6B64]">
                 {reviews.summary.count} verified {reviews.summary.count === 1 ? 'review' : 'reviews'}
               </span>
             </div>
+            <RatingBars summary={reviews.summary} />
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {reviews.reviews.map((r) => (
+              {[...reviews.reviews, ...moreReviews].map((r) => (
                 <article key={r.id} className="min-w-0 space-y-2 rounded-xl border border-[#E6EAE7] bg-[#FAFAFA] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[14px] font-semibold text-[#113322]">{r.reviewer}</span>
-                    <span className="text-[12px] text-[#8A958E]">{formatIndianDate(r.createdAt)}</span>
+                    <span className="text-[12px] text-[#5F6B64]">{formatIndianDate(r.createdAt)}</span>
                   </div>
                   <Stars value={r.rating} size="h-3.5 w-3.5" />
                   {r.title && <p className="text-[13px] font-semibold text-[#113322]">{r.title}</p>}
@@ -354,6 +405,19 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
                 </article>
               ))}
             </div>
+            {reviews.reviews.length + moreReviews.length < reviews.summary.count && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => void loadMoreReviews()}
+                  disabled={loadingReviews}
+                  className="rounded-lg border border-[#116644] px-4 py-2 text-[13px] font-semibold text-[#116644] hover:bg-[#116644]/5 disabled:opacity-50"
+                >
+                  {loadingReviews ? 'Loading…' : 'Show more reviews'}
+                </button>
+                {reviewsError && <p role="alert" className="text-[13px] text-red-600">{reviewsError}</p>}
+              </div>
+            )}
           </>
         )}
       </section>

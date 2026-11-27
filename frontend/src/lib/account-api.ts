@@ -1,3 +1,4 @@
+import type { Paged } from './useAsync';
 import { customerSession, type CustomerProfile } from './customer-session';
 import type { AddressInput, CustomerOrder, OrderStatus, SavedAddress } from './checkout-api';
 import type { ProductSummary } from './catalog-api';
@@ -85,6 +86,10 @@ export interface ReturnRequest {
   status: string;
   decisionNote: string | null;
   createdAt: string;
+  /** In the customer's list (GET /returns); absent on the response of a new request. */
+  orderNumber?: string;
+  productName?: string;
+  variantName?: string | null;
 }
 
 export interface MyReview {
@@ -121,6 +126,14 @@ const send = (method: string, body?: unknown): RequestInit => ({
 const id = encodeURIComponent;
 const page = (p: number, size = ACCOUNT_PAGE_SIZE) => `?page=${p}&pageSize=${size}`;
 
+/** A list page with the server's paging facts (a short page does not mean the last page: hidden items are dropped). */
+async function paged<T>(endpoint: string): Promise<Paged<T>> {
+  const env = await customerSession.requestPage<T[]>(endpoint);
+  const m = (env.meta ?? {}) as { page?: number; totalPages?: number; total?: number };
+  const items = Array.isArray(env.data) ? env.data : [];
+  return { items, total: m.total ?? items.length, hasNext: (m.page ?? 1) < (m.totalPages ?? 1) };
+}
+
 export const accountApi = {
   updateProfile: (body: { firstName?: string; lastName?: string; newsletterSubscribed?: boolean }) =>
     customerSession.request<Pick<CustomerProfile, 'firstName' | 'lastName' | 'newsletterSubscribed'>>('/me', send('PATCH', body)),
@@ -133,7 +146,7 @@ export const accountApi = {
     customerSession.request<SavedAddress>(`/me/addresses/${id(addressId)}/default`, send('PUT')),
   removeAddress: (addressId: string) => customerSession.request<null>(`/me/addresses/${id(addressId)}`, send('DELETE')),
 
-  orders: (p: number) => customerSession.request<OrderListItem[]>(`/orders${page(p)}`),
+  orders: (p: number) => paged<OrderListItem>(`/orders${page(p)}`),
   order: (orderId: string) => customerSession.request<CustomerOrder>(`/orders/${id(orderId)}`),
   tracking: (orderId: string) => customerSession.request<{ shipment: Shipment | null }>(`/orders/${id(orderId)}/tracking`),
   invoice: (orderId: string) => customerSession.request<Invoice>(`/orders/${id(orderId)}/invoice`),
@@ -141,20 +154,34 @@ export const accountApi = {
   cancelOrder: (orderId: string, reason: string) =>
     customerSession.request<CustomerOrder>(`/orders/${id(orderId)}/cancel`, send('POST', { reason })),
 
-  returns: (p: number) => customerSession.request<ReturnRequest[]>(`/returns${page(p)}`),
+  returns: (p: number) => paged<ReturnRequest>(`/returns${page(p)}`),
   requestReturn: (
     orderId: string,
     body: { orderItemId: string; quantity: number; reason: ReturnReason; opened: boolean; details?: string },
   ) => customerSession.request<ReturnRequest>(`/orders/${id(orderId)}/returns`, send('POST', body)),
 
-  reviews: (p: number) => customerSession.request<MyReview[]>(`/me/reviews${page(p)}`),
+  reviews: (p: number) => paged<MyReview>(`/me/reviews${page(p)}`),
   updateReview: (reviewId: string, body: { rating?: number; title?: string | null; body?: string }) =>
     customerSession.request<MyReview>(`/me/reviews/${id(reviewId)}`, send('PATCH', body)),
   removeReview: (reviewId: string) => customerSession.request<null>(`/me/reviews/${id(reviewId)}`, send('DELETE')),
 
-  wishlist: (p: number, size = ACCOUNT_PAGE_SIZE) => customerSession.request<WishlistItem[]>(`/me/wishlist${page(p, size)}`),
+  wishlist: (p: number, size = ACCOUNT_PAGE_SIZE) => paged<WishlistItem>(`/me/wishlist${page(p, size)}`),
   saveToWishlist: (slug: string) => customerSession.request<{ saved: true }>(`/me/wishlist/${id(slug)}`, send('PUT')),
   removeFromWishlist: (slug: string) => customerSession.request<null>(`/me/wishlist/${id(slug)}`, send('DELETE')),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    customerSession.request<null>('/auth/change-password', send('POST', { currentPassword, newPassword })),
+  /** Signs out EVERY device, this one included (the refresh cookie is cleared). */
+  logoutAll: () => customerSession.request<{ sessionsRevoked: number }>('/auth/logout-all', send('POST')),
+  sendPhoneOtp: () => customerSession.request<null>('/auth/phone/send-otp', send('POST')),
+  verifyPhone: (code: string) => customerSession.request<null>('/auth/phone/verify', send('POST', { code })),
+
+  /** A copy of everything stored about the customer (JSON). Needs the password, and a 2FA code when 2FA is on. */
+  exportData: (password: string, code?: string) =>
+    customerSession.request<Record<string, unknown>>('/me/export', send('POST', { password, ...(code ? { code } : {}) })),
+  /** Erases the account (orders are kept, anonymised, for tax law). Needs the password, and a 2FA code when 2FA is on. */
+  deleteAccount: (password: string, code?: string) =>
+    customerSession.request<null>('/me', send('DELETE', { password, ...(code ? { code } : {}) })),
 
   sessions: () => customerSession.request<DeviceSession[]>('/auth/sessions'),
   revokeSession: (sessionId: string) => customerSession.request<null>(`/auth/sessions/${id(sessionId)}`, send('DELETE')),

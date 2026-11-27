@@ -67,7 +67,13 @@ export class OrderService {
   async getOwn(principal: AuthPrincipal, orderId: string) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, userId: principal.userId },
-      include: { items: true, history: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        items: true,
+        history: { orderBy: { createdAt: 'asc' } },
+        returns: {
+          select: { orderItemId: true, quantity: true, status: true },
+        },
+      },
     });
     if (!order) throw new NotFoundException('Order not found');
     return this.views.customer(order);

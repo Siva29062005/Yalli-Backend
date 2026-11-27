@@ -89,9 +89,11 @@ export function AddressForm({
     } catch (err) {
       if (err instanceof ApiError && Array.isArray(err.details)) {
         const fe: FieldErrors = {};
-        for (const d of err.details as { path?: (string | number)[]; message?: string }[]) {
-          const k = d.path?.[0] as keyof AddressInput | undefined;
-          if (k) fe[k] = d.message;
+        // The API sends `path` as a dotted string ("postalCode"); accept an array too.
+        for (const d of err.details as { path?: string | (string | number)[]; message?: string }[]) {
+          const first = typeof d.path === 'string' ? d.path.split('.')[0] : d.path?.[0];
+          const k = first as keyof AddressInput | undefined;
+          if (k && !fe[k]) fe[k] = d.message;
         }
         setErrors(fe);
       }

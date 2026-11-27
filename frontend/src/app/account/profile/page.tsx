@@ -6,6 +6,7 @@ import { Check, ShieldCheck, ShieldAlert } from "lucide-react";
 import { AccountShell, inputClass, primaryButton } from "@/components/AccountShell";
 import { useAuth } from "@/components/AuthProvider";
 import { accountApi } from "@/lib/account-api";
+import { errorMessage, resendVerification } from "@/lib/auth-api";
 import { displayName } from "@/lib/customer-session";
 import { formatPhone } from "@/lib/checkout-api";
 import { formatIndianDate } from "@/lib/formatters";
@@ -61,7 +62,7 @@ export default function ProfilePage() {
             </div>
             <div className="min-w-0">
               <span className="font-heading text-[18px] font-bold text-[#113322] block truncate">{displayName(user)}</span>
-              <span className="text-[13px] text-[#8A958E]">Member since {formatIndianDate(user.createdAt)}</span>
+              <span className="text-[13px] text-[#5F6B64]">Member since {formatIndianDate(user.createdAt)}</span>
             </div>
           </div>
 
@@ -77,14 +78,20 @@ export default function ProfilePage() {
             <label className="space-y-1.5 block sm:col-span-2">
               <span className="text-[13px] font-medium text-[#4A5550]">Email</span>
               <input className={inputClass} value={user.email} disabled readOnly />
-              <span className="text-[12px] text-[#8A958E] flex items-center gap-1">
+              <span className="text-[12px] text-[#5F6B64] flex items-center gap-1">
                 {user.emailVerified ? <><Check className="h-3.5 w-3.5 text-[#116644]" /> Verified</> : "Not verified yet"}
               </span>
+              {!user.emailVerified && <ResendVerification email={user.email} />}
             </label>
             {user.phone && (
               <label className="space-y-1.5 block sm:col-span-2">
                 <span className="text-[13px] font-medium text-[#4A5550]">Phone</span>
                 <input className={inputClass} value={formatPhone(user.phone)} disabled readOnly />
+                {user.phoneVerified ? (
+                  <span className="text-[12px] text-[#5F6B64] flex items-center gap-1"><Check className="h-3.5 w-3.5 text-[#116644]" /> Verified</span>
+                ) : (
+                  <PhoneVerification onVerified={() => void refreshProfile()} />
+                )}
               </label>
             )}
           </div>
@@ -105,7 +112,7 @@ export default function ProfilePage() {
               </span>
             )}
           </div>
-          <p className="text-[12px] text-[#8A958E]">To change your email or phone number, contact support.</p>
+          <p className="text-[12px] text-[#5F6B64]">To change your email or phone number, contact support.</p>
         </form>
 
         <div className="xl:col-span-4 space-y-6">
@@ -135,3 +142,82 @@ export default function ProfilePage() {
     </AccountShell>
   );
 }
+
+/** Sends a new verification link (rate-limited by the server). Inside the profile form, so the buttons are type="button". */
+function ResendVerification({ email }: { email: string }) {
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-[12px]">
+      {state === "sent" ? (
+        <span role="status" className="text-[#116644]">A new link is on its way to {email}.</span>
+      ) : (
+        <button
+          type="button"
+          className="font-semibold text-[#116644] hover:underline disabled:opacity-50"
+          disabled={state === "sending"}
+          onClick={async () => {
+            setState("sending");
+            try {
+              await resendVerification(email);
+              setState("sent");
+            } catch {
+              setState("error");
+            }
+          }}
+        >
+          {state === "sending" ? "Sending…" : "Send a new verification link"}
+        </button>
+      )}
+      {state === "error" && <span role="alert" className="text-red-600">Could not send it now. Please try again later.</span>}
+    </span>
+  );
+}
+
+/** Phone check by SMS code: send, then enter the 6 digits. */
+function PhoneVerification({ onVerified }: { onVerified: () => void }) {
+  const [step, setStep] = useState<"idle" | "sent">("idle");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(errorMessage(e, "That did not work. Please try again."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="block space-y-2 text-[12px]">
+      <span className="text-[#5F6B64]">Not verified yet.</span>{" "}
+      {step === "idle" ? (
+        <button type="button" disabled={busy} className="font-semibold text-[#116644] hover:underline disabled:opacity-50" onClick={() => run(async () => { await accountApi.sendPhoneOtp(); setStep("sent"); })}>
+          {busy ? "Sending…" : "Send a code by SMS"}
+        </button>
+      ) : (
+        <span className="flex flex-wrap items-center gap-2">
+          <input
+            aria-label="SMS code"
+            className={`${inputClass} max-w-[150px] font-mono tracking-[0.3em]`}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+          />
+          <button type="button" disabled={busy || code.length !== 6} className="font-semibold text-[#116644] hover:underline disabled:opacity-50" onClick={() => run(async () => { await accountApi.verifyPhone(code); onVerified(); })}>
+            {busy ? "Checking…" : "Verify"}
+          </button>
+          <button type="button" disabled={busy} className="text-[#5F6B64] hover:underline" onClick={() => run(async () => { await accountApi.sendPhoneOtp(); setCode(""); })}>
+            Send again
+          </button>
+        </span>
+      )}
+      {error && <span role="alert" className="block text-red-600">{error}</span>}
+    </span>
+  );
+}
+

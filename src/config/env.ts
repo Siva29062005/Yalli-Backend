@@ -99,6 +99,8 @@ export const envSchema = z
     /** `console` prints links/codes to stdout for local development ONLY. */
     /** Base URL of the storefront; used to build verification / reset links. */
     FRONTEND_BASE_URL: z.url().default('http://localhost:3001'),
+    /** Where contact-form messages are emailed (they are stored either way). Unset: stored only. */
+    SUPPORT_INBOX_EMAIL: z.email().optional(),
     NOTIFICATIONS_DRIVER: z.enum(['console', 'ses_msg91']).default('console'),
     /** `ses_msg91`: email through Amazon SES (IAM role / default AWS credential chain), OTP SMS through MSG91. */
     AWS_REGION: z.string().min(5).max(30).default('ap-south-1'),

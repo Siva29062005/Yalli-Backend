@@ -27,7 +27,7 @@ export function AccountShell({
       <AnnouncementBar />
       <Header />
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 md:px-8 lg:px-12 py-6 space-y-6 min-w-0">
-        <nav aria-label="Breadcrumb" className="text-[13px] text-[#8A958E] flex flex-wrap items-center gap-2">
+        <nav aria-label="Breadcrumb" className="text-[13px] text-[#5F6B64] flex flex-wrap items-center gap-2">
           {trail.map((c, i) => (
             <span key={c.label + i} className="flex items-center gap-2 min-w-0">
               {i > 0 && <span aria-hidden>/</span>}
@@ -47,7 +47,7 @@ export function AccountShell({
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div className="min-w-0">
                 <h1 className="font-heading text-[28px] md:text-[32px] font-bold text-[#113322] break-words">{title}</h1>
-                {subtitle && <p className="text-[14px] text-[#8A958E]">{subtitle}</p>}
+                {subtitle && <p className="text-[14px] text-[#5F6B64]">{subtitle}</p>}
               </div>
               {actions}
             </div>
@@ -62,7 +62,7 @@ export function AccountShell({
 
 export function PanelLoading({ label = 'Loading…' }: { label?: string }) {
   return (
-    <div role="status" className="flex items-center justify-center gap-2 rounded-3xl border border-[#E6EAE7] bg-white py-16 text-[14px] text-[#8A958E]">
+    <div role="status" className="flex items-center justify-center gap-2 rounded-3xl border border-[#E6EAE7] bg-white py-16 text-[14px] text-[#5F6B64]">
       <Loader2 className="h-5 w-5 animate-spin text-[#116644]" aria-hidden />
       {label}
     </div>
@@ -87,7 +87,7 @@ export function PanelEmpty({ title, body, cta }: { title: string; body: string; 
   return (
     <div className="rounded-3xl border border-dashed border-[#D5DED8] bg-white px-6 py-14 text-center space-y-2">
       <p className="font-heading text-[18px] font-bold text-[#113322]">{title}</p>
-      <p className="text-[14px] text-[#8A958E]">{body}</p>
+      <p className="text-[14px] text-[#5F6B64]">{body}</p>
       {cta && (
         <Link href={cta.href} className="inline-block pt-2 text-[14px] font-semibold text-[#116644] hover:underline">
           {cta.label} →
@@ -105,7 +105,7 @@ export function Pager({ page, hasNext, onPage }: { page: number; hasNext: boolea
       <button type="button" className={btn} disabled={page <= 1} onClick={() => onPage(page - 1)}>
         ← Previous
       </button>
-      <span className="text-[13px] text-[#8A958E]">Page {page}</span>
+      <span className="text-[13px] text-[#5F6B64]">Page {page}</span>
       <button type="button" className={btn} disabled={!hasNext} onClick={() => onPage(page + 1)}>
         Next →
       </button>

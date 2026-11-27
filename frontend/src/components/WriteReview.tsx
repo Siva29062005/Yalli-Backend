@@ -119,7 +119,7 @@ export function WriteReview({ slug }: { slug: string }) {
         />
         <div className="mt-1 flex justify-between text-[12px]">
           <span className="text-[#B42318]">{errors.body}</span>
-          <span className="text-[#8A958E]">{body.length}/2000</span>
+          <span className="text-[#5F6B64]">{body.length}/2000</span>
         </div>
       </div>
       {formError && <p role="alert" className="text-[13px] text-[#B42318]">{formError}</p>}
@@ -127,7 +127,7 @@ export function WriteReview({ slug }: { slug: string }) {
         <button type="submit" disabled={sending} className="inline-flex items-center gap-2 rounded-xl bg-[#116644] px-5 py-2.5 text-[14px] font-semibold text-white hover:bg-[#0e5237] disabled:opacity-60">
           {sending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />} Submit review
         </button>
-        <button type="button" onClick={() => setOpen(false)} className="rounded-xl px-4 py-2 text-[13px] font-semibold text-[#8A958E] hover:text-[#113322]">
+        <button type="button" onClick={() => setOpen(false)} className="rounded-xl px-4 py-2 text-[13px] font-semibold text-[#5F6B64] hover:text-[#113322]">
           Cancel
         </button>
       </div>

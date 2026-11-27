@@ -1,7 +1,7 @@
 import type { ProductDetail, RatingSummary } from './catalog-api';
 
 /** Pages anyone (and search engines) may see, in the order they appear in the sitemap. */
-export const PUBLIC_PATHS = ['/', '/catalog', '/help', '/shipping', '/returns', '/privacy', '/terms', '/contact'] as const;
+export const PUBLIC_PATHS = ['/', '/catalog', '/specials', '/brands', '/help', '/shipping', '/returns', '/privacy', '/terms', '/contact'] as const;
 
 /** Areas that must never be indexed: account data, carts, checkout, sign-in, order pages, staff tools. */
 export const PRIVATE_PATHS = ['/admin', '/account', '/cart', '/checkout', '/auth', '/orders', '/compare'] as const;
@@ -102,7 +102,12 @@ export interface SitemapEntry {
 /** The sitemap protocol allows at most 50,000 URLs per file. */
 export const MAX_SITEMAP_URLS = 50_000;
 
-export function sitemapEntries(input: { siteUrl: string; categorySlugs: readonly string[]; productSlugs: readonly string[] }): SitemapEntry[] {
+export function sitemapEntries(input: {
+  siteUrl: string;
+  categorySlugs: readonly string[];
+  productSlugs: readonly string[];
+  brandSlugs?: readonly string[];
+}): SitemapEntry[] {
   const { siteUrl } = input;
   const seen = new Set<string>();
   const out: SitemapEntry[] = [];
@@ -114,6 +119,7 @@ export function sitemapEntries(input: { siteUrl: string; categorySlugs: readonly
   };
   for (const path of PUBLIC_PATHS) add(path, path === '/' || path === '/catalog' ? 'daily' : 'monthly', path === '/' ? 1 : path === '/catalog' ? 0.9 : 0.3);
   for (const slug of input.categorySlugs) add(`/catalog/${slug}`, 'daily', 0.8);
+  for (const slug of input.brandSlugs ?? []) add(`/brands/${slug}`, 'weekly', 0.6);
   for (const slug of input.productSlugs) add(`/products/${slug}`, 'weekly', 0.7);
   return out;
 }

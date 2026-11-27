@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { AnnouncementBar } from '@/components/AnnouncementBar';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
-import { CartDrawer } from '@/components/CartDrawer';
 
 export interface PolicySection {
   id: string;
@@ -56,7 +55,6 @@ export function PolicyPage({
         <div className="mt-8 space-y-10">{children}</div>
       </main>
       <Footer />
-      <CartDrawer />
     </>
   );
 }

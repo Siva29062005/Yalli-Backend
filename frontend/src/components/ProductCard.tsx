@@ -37,7 +37,7 @@ export function ProductCard({
 
         <div className="pointer-events-none absolute left-3 top-3 flex flex-col gap-1.5">
           {discounted && (
-            <span className="rounded-full bg-[#FF9900] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
+            <span className="rounded-full bg-[#FF9900] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#113322] shadow-sm">
               {calculateDiscountPercent(regular, sale)}% off
             </span>
           )}
@@ -62,7 +62,7 @@ export function ProductCard({
       <div className="flex flex-1 flex-col justify-between p-4">
         <div className="mb-3 min-w-0 space-y-1">
           {product.brand?.name && (
-            <span className="block truncate text-[11px] font-semibold uppercase tracking-wider text-[#8A958E]">
+            <span className="block truncate text-[11px] font-semibold uppercase tracking-wider text-[#5F6B64]">
               {product.brand.name}
             </span>
           )}
@@ -79,16 +79,19 @@ export function ProductCard({
             >
               <Star className="h-3.5 w-3.5 fill-[#FF9900] text-[#FF9900]" aria-hidden />
               <span className="font-semibold text-[#113322]">{product.rating.average.toFixed(1)}</span>
-              <span className="text-[#8A958E]">({product.rating.count})</span>
+              <span className="text-[#5F6B64]">({product.rating.count})</span>
             </span>
           )}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#F0F2F1] pt-2">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="text-[17px] font-bold text-[#FF9900]">{formatPaise(sale)}</span>
+            <span className="text-[17px] font-bold text-[#A65500]">
+              {product.price.fromPrice && <span className="mr-1 text-[12px] font-semibold text-[#5F6B64]">From</span>}
+              {formatPaise(sale)}
+            </span>
             {discounted && (
-              <span className="text-[13px] text-[#8A958E] line-through">{formatPaise(regular)}</span>
+              <span className="text-[13px] text-[#5F6B64] line-through">{formatPaise(regular)}</span>
             )}
           </div>
           <Link

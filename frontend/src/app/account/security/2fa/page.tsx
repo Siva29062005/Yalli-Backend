@@ -19,6 +19,9 @@ export default function TwoFactorPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"disable" | "regen" | null>(null);
+  // Lost the phone: 2FA can be turned off with one of the recovery codes instead of an app code.
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
 
   if (!user) return null;
 
@@ -56,9 +59,11 @@ export default function TwoFactorPage() {
   const disable = (e: React.FormEvent) => {
     e.preventDefault();
     void wrap(async () => {
-      await accountApi.mfaDisable({ password, code });
+      await accountApi.mfaDisable(useRecovery ? { password, recoveryCode: recoveryCode.trim() } : { password, code });
       setPassword("");
       setCode("");
+      setRecoveryCode("");
+      setUseRecovery(false);
       setMode(null);
       await refreshProfile();
     }, "Could not turn off 2FA.");
@@ -170,10 +175,40 @@ export default function TwoFactorPage() {
           {mode === "disable" && (
             <form onSubmit={disable} className="space-y-4 border-t border-[#F0F2F1] pt-5">
               {passwordInput}
-              {codeInput}
+              {useRecovery ? (
+                <label className="block space-y-1.5">
+                  <span className="text-[13px] font-medium text-[#4A5550]">One of your recovery codes</span>
+                  <input
+                    className={`${inputClass} font-mono max-w-[260px]`}
+                    autoComplete="off"
+                    maxLength={32}
+                    value={recoveryCode}
+                    onChange={(e) => setRecoveryCode(e.target.value)}
+                    required
+                  />
+                </label>
+              ) : (
+                codeInput
+              )}
+              <button
+                type="button"
+                className="text-[13px] font-semibold text-[#116644] hover:underline"
+                onClick={() => {
+                  setUseRecovery((v) => !v);
+                  setError(null);
+                }}
+              >
+                {useRecovery ? "Use a code from my app instead" : "Lost your phone? Use a recovery code"}
+              </button>
               {errorBox}
               <div className="flex gap-2">
-                <button type="submit" className={`${primaryButton} !bg-red-600 hover:!bg-red-700`} disabled={busy || !password || code.length !== 6}>{busy ? "Working…" : "Turn off 2FA"}</button>
+                <button
+                  type="submit"
+                  className={`${primaryButton} !bg-red-600 hover:!bg-red-700`}
+                  disabled={busy || !password || (useRecovery ? recoveryCode.trim().length < 8 : code.length !== 6)}
+                >
+                  {busy ? "Working…" : "Turn off 2FA"}
+                </button>
                 <button type="button" className={secondaryButton} onClick={() => setMode(null)}>Cancel</button>
               </div>
             </form>

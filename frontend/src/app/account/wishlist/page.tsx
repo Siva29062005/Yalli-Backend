@@ -6,14 +6,14 @@ import { Trash2 } from "lucide-react";
 import { AccountShell, PanelEmpty, PanelError, PanelLoading, Pager, secondaryButton } from "@/components/AccountShell";
 import { ProductImage } from "@/components/ProductImage";
 import { useWishlist } from "@/components/WishlistProvider";
-import { accountApi, ACCOUNT_PAGE_SIZE, type WishlistItem } from "@/lib/account-api";
+import { accountApi, type WishlistItem } from "@/lib/account-api";
 import { priceOf } from "@/lib/catalog-api";
 import { formatPaise } from "@/lib/formatters";
-import { useAsync } from "@/lib/useAsync";
+import { usePaged } from "@/lib/useAsync";
 
 export default function WishlistPage() {
   const [page, setPage] = useState(1);
-  const { data, setData, error, loading, reload } = useAsync(() => accountApi.wishlist(page), [page]);
+  const { data, hasNext, setData, error, loading, reload } = usePaged(() => accountApi.wishlist(page), [page]);
   const { forget } = useWishlist();
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -62,7 +62,7 @@ export default function WishlistPage() {
                       </Link>
                       <div className="flex flex-wrap items-baseline gap-2">
                         <span className="text-[15px] font-bold text-[#113322]">{formatPaise(sale)}</span>
-                        {discounted && <span className="text-[12px] text-[#8A958E] line-through">{formatPaise(regular)}</span>}
+                        {discounted && <span className="text-[12px] text-[#5F6B64] line-through">{formatPaise(regular)}</span>}
                       </div>
                       <span className={`text-[12px] font-medium ${p.inStock ? "text-[#116644]" : "text-red-600"}`}>{p.inStock ? "In stock" : "Out of stock"}</span>
                     </div>
@@ -79,7 +79,7 @@ export default function WishlistPage() {
               );
             })}
           </ul>
-          <Pager page={page} hasNext={data.length === ACCOUNT_PAGE_SIZE} onPage={setPage} />
+          <Pager page={page} hasNext={hasNext} onPage={setPage} />
         </div>
       )}
     </AccountShell>

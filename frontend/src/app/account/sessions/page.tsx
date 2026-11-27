@@ -65,11 +65,11 @@ export default function SessionsPage() {
                     <span className="text-[14px] font-semibold text-[#113322] break-words">{describeDevice(s.userAgent)}</span>
                     {s.current && <span className="rounded-full bg-[#E0EFE5] px-2.5 py-0.5 text-[11px] font-semibold text-[#116644]">This device</span>}
                   </div>
-                  <p className="text-[12px] text-[#8A958E] break-words">
+                  <p className="text-[12px] text-[#5F6B64] break-words">
                     {s.deviceLabel ? `${s.deviceLabel} · ` : ""}
                     {s.ip ?? "Unknown location"} · last active {when(s.lastSeenAt)}
                   </p>
-                  <p className="text-[12px] text-[#8A958E]">Signed in {when(s.createdAt)}</p>
+                  <p className="text-[12px] text-[#5F6B64]">Signed in {when(s.createdAt)}</p>
                 </div>
                 {!s.current && (
                   <button type="button" className={secondaryButton} disabled={busy === s.id} onClick={() => revoke(s)}>

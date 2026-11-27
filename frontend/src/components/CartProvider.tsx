@@ -35,6 +35,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<Set<string>>(new Set());
   // Ignore responses from a previous identity (e.g. a guest request finishing after sign-in).
   const generation = useRef(0);
+  // Edits to different lines run in parallel and each answers with the WHOLE cart: never let an older answer that
+  // arrives late overwrite a newer one.
+  const issued = useRef(0);
+  const applied = useRef(0);
 
   const load = useCallback(async () => {
     const gen = ++generation.current;
@@ -46,6 +50,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       else if (guestToken.get()) view = await cartRequest(false, '/cart');
       else view = EMPTY_CART;
       if (gen !== generation.current) return;
+      applied.current = issued.current; // a full reload supersedes every earlier edit's answer
       setCart(view && Array.isArray(view.items) ? view : EMPTY_CART);
       setStatus('ready');
       setError(null);
@@ -71,10 +76,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const mutate = useCallback(
     async (key: string, endpoint: string, init: RequestInit) => {
       const gen = generation.current;
+      const seq = ++issued.current;
       setPending((p) => new Set(p).add(key));
       try {
         const view = await cartRequest(signedIn, endpoint, init);
-        if (gen === generation.current && view && Array.isArray(view.items)) {
+        if (gen === generation.current && seq > applied.current && view && Array.isArray(view.items)) {
+          applied.current = seq;
           setCart(view);
           setError(null);
         }
@@ -173,6 +180,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   );
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }
+
+/** Units in the cart, counting every line (also those that need attention), so header, drawer and cart page agree. */
+export const cartUnits = (cart: CartView): number => cart.items.reduce((n, i) => n + i.quantity, 0);
 
 export function useCart() {
   const ctx = useContext(CartContext);

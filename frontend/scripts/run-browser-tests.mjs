@@ -14,7 +14,7 @@ import { join } from 'node:path';
 const FRONTEND = join(import.meta.dirname, '..');
 const SCRIPTS = [
   'account', 'admin-access', 'admin-screens', 'auth', 'cart', 'catalog', 'categories', 'checkout', 'compare-reviews',
-  'seo', 'static-pages',
+  'seo', 'static-pages', 'a11y',
 ];
 const SITE_URL = 'https://shop.example.test';
 const DIST = '.next-browser-tests';
@@ -91,7 +91,10 @@ async function waitFor(url, child, timeoutMs = 60_000) {
   fail(`${child.label} did not answer at ${url} within ${timeoutMs / 1000}s:\n${child.tail()}`);
 }
 
-const [mockPort, webPort, deadWebPort, deadApiPort] = await Promise.all([freePort(), freePort(), freePort(), freePort()]);
+const [freshMockPort, webPort, deadWebPort, deadApiPort] = await Promise.all([freePort(), freePort(), freePort(), freePort()]);
+// The build bakes the mock API address into Next's /api/v1 rewrite, so --skip-build must reuse the port it was built with.
+const PORT_FILE = join(FRONTEND, DIST, 'browser-test-mock-port');
+const mockPort = skipBuild && existsSync(PORT_FILE) ? Number(readFileSync(PORT_FILE, 'utf8')) : freshMockPort;
 const mockApi = `http://127.0.0.1:${mockPort}/api/v1`;
 // Cloudflare's public always-pass TEST site key: the captcha widget renders, and test-auth.mjs replaces Cloudflare's
 // script with a local stub (no network call).
@@ -113,6 +116,7 @@ if (!skipBuild) {
   const code = await run('npx', ['next', 'build', '--webpack'], buildEnv);
   if (savedNextEnv !== null) writeFileSync(nextEnv, savedNextEnv);
   if (code !== 0) fail('next build failed');
+  writeFileSync(PORT_FILE, String(mockPort));
 }
 
 const web = start('frontend', 'npx', ['next', 'start', '-p', String(webPort)], buildEnv);

@@ -84,10 +84,13 @@ export function OrderConfirmation({ id }: { id: string }) {
     const payment = params.get("payment");
     const stored = sessionStorage.getItem(`yalli_pay_err_${id}`);
     sessionStorage.removeItem(`yalli_pay_err_${id}`);
+    // The ?payment= hint is for THIS visit only: a refresh (or a later visit once paid) must not show it again.
+    if (payment) window.history.replaceState(null, "", window.location.pathname);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time notice from the checkout redirect
     if (payment === "failed") setNotice(stored || "The payment didn’t go through. You can try again below.");
     else if (payment === "dismissed") setNotice("Payment was not completed. Your order is saved — pay below before the timer runs out.");
     void load().then((o) => {
+      if (o && !AWAITING_PAYMENT.includes(o.status)) setNotice(null); // paid (or closed) meanwhile: no stale failure
       if (payment === "pending" && o && AWAITING_PAYMENT.includes(o.status)) setPolling(true);
     });
   }, [authStatus, id, load, router]);
@@ -98,9 +101,18 @@ export function OrderConfirmation({ id }: { id: string }) {
     const t = setInterval(async () => {
       polls.current += 1;
       const o = await load();
-      if (!o || !AWAITING_PAYMENT.includes(o.status) || polls.current >= POLL_LIMIT) {
+      // A failed poll (network blip) is not an answer: keep asking until the limit, then say so.
+      if (!o) {
+        if (polls.current >= POLL_LIMIT) {
+          setPolling(false);
+          setPollTimedOut(true);
+        }
+        return;
+      }
+      if (!AWAITING_PAYMENT.includes(o.status) || polls.current >= POLL_LIMIT) {
         setPolling(false);
-        setPollTimedOut(!!o && AWAITING_PAYMENT.includes(o.status));
+        setPollTimedOut(AWAITING_PAYMENT.includes(o.status));
+        if (!AWAITING_PAYMENT.includes(o.status)) setNotice(null);
       }
     }, POLL_MS);
     return () => clearInterval(t);
@@ -119,7 +131,7 @@ export function OrderConfirmation({ id }: { id: string }) {
       } else if (r.kind === "failed") setNotice(r.message);
       else setNotice("Payment was not completed. You can try again before the timer runs out.");
     } catch (e) {
-      setNotice(checkoutErrorMessage(e));
+      setNotice(checkoutErrorMessage(e, { afterOrder: true }));
       void load(); // the order may have changed meanwhile (cancelled, expired, paid in another tab): show its real state
     } finally {
       setBusy(null);
@@ -241,7 +253,7 @@ export function OrderConfirmation({ id }: { id: string }) {
                 </div>
                 <div className="min-w-0 flex-1 text-[13px]">
                   <p className="font-semibold text-[#113322] line-clamp-2">{i.productName}</p>
-                  <p className="text-[#8A958E]">{[i.variantName, `Qty ${i.quantity}`].filter(Boolean).join(" · ")}</p>
+                  <p className="text-[#5F6B64]">{[i.variantName, `Qty ${i.quantity}`].filter(Boolean).join(" · ")}</p>
                 </div>
                 <span className="shrink-0 text-[13px] font-semibold text-[#113322]">{formatPaise(i.lineTotalMinor)}</span>
               </li>
@@ -254,7 +266,7 @@ export function OrderConfirmation({ id }: { id: string }) {
             )}
             <div className="flex justify-between"><dt>Shipping{order.shippingMethod ? ` · ${order.shippingMethod.name}` : ""}</dt><dd className="text-[#113322]">{order.totals.shippingMinor ? formatPaise(order.totals.shippingMinor) : "Free"}</dd></div>
             <div className="flex justify-between border-t border-[#E1E8E4] pt-3 text-[16px] font-bold text-[#113322]"><dt>Total</dt><dd>{formatPaise(order.totals.totalMinor)}</dd></div>
-            <p className="text-[12px] text-[#8A958E]">Includes GST {formatPaise(order.totals.gstIncludedMinor)}</p>
+            <p className="text-[12px] text-[#5F6B64]">Includes GST {formatPaise(order.totals.gstIncludedMinor)}</p>
           </dl>
         </section>
 

@@ -10,6 +10,16 @@ const opts = { frontendBaseUrl: 'https://yalli.in/' };
 const base = { email: 'a@example.com', name: 'Asha' };
 
 const ALL: EmailMessage[] = [
+  {
+    type: 'CONTACT_MESSAGE',
+    email: 'support@yalli.in',
+    name: 'Support',
+    fromName: 'Asha <b>K</b>',
+    fromEmail: 'asha@example.test',
+    topic: 'An order',
+    orderNumber: 'YL26-1001',
+    message: 'Parcel <script>alert(1)</script> missing',
+  },
   { type: 'EMAIL_VERIFICATION', ...base, token: 'tok' },
   { type: 'ACCOUNT_ALREADY_EXISTS', ...base },
   { type: 'PASSWORD_RESET', ...base, token: 'tok' },
@@ -85,8 +95,17 @@ describe('renderEmail', () => {
       'ORDER_CANCELLED',
       'REFUND_PROCESSED',
       'RETURN_UPDATE',
+      'CONTACT_MESSAGE',
     ];
     for (const t of need) expect(types.has(t)).toBe(true);
+  });
+
+  it('escapes everything a customer typed into the contact form', () => {
+    const r = renderEmail(ALL[0]!, opts);
+    expect(r.html).not.toContain('<script>');
+    expect(r.html).toContain('&lt;script&gt;');
+    expect(r.html).not.toContain('<b>K</b>');
+    expect(r.subject).toBe('Contact form: An order (order YL26-1001)');
   });
 
   it('builds token links from the frontend URL and URL-encodes the token', () => {

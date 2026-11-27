@@ -152,7 +152,8 @@ export default function HelpPage() {
           <Faq q="How do I stop offer emails, or delete my account?">
             <p>
               Switch offers off any time in <Link href="/account/profile" className={textLink}>My profile</Link>. To delete your
-              account, <Link href="/contact" className={textLink}>contact us</Link>. See our{' '}
+              account (or download a copy of your data), go to <Link href="/account/data" className={textLink}>Your data</Link>{' '}
+              in your account and confirm with your password. See our{' '}
               <Link href="/privacy" className={textLink}>privacy policy</Link> for what is kept and removed.
             </p>
           </Faq>

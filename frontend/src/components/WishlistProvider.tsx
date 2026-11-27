@@ -45,9 +45,9 @@ export function WishlistProvider({ children }: { children: React.ReactNode }) {
       const found = new Set<string>();
       try {
         for (let p = 1; p <= MAX_PAGES; p++) {
-          const items = await accountApi.wishlist(p, 60);
+          const { items, hasNext } = await accountApi.wishlist(p, 60);
           items.forEach((i) => found.add(i.slug));
-          if (items.length < 60) break;
+          if (!hasNext) break; // from the server's meta: a short page can still be followed by more
         }
       } catch {
         /* the hearts just show as unsaved; the wishlist page reports errors itself */

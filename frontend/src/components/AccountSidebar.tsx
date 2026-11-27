@@ -15,7 +15,9 @@ const NAV_ITEMS: NavItem[] = [
   { name: "My orders", href: "/account/orders" },
   { name: "Profile", href: "/account/profile" },
   { name: "Addresses", href: "/account/addresses" },
+  { name: "Sign-in & security", href: "/account/security" },
   { name: "Sessions", href: "/account/sessions" },
+  { name: "Your data", href: "/account/data" },
   { name: "Wishlist", href: "/account/wishlist" },
   { name: "My Reviews", href: "/account/reviews" },
   { name: "My returns", href: "/account/returns" },
@@ -60,7 +62,7 @@ export function AccountSidebar() {
           <button
             type="button"
             onClick={() => logout('/')}
-            className="whitespace-nowrap rounded-full border border-[#E0EFE5] bg-white px-4 py-2 text-[13px] font-medium text-[#8A958E] hover:text-red-600"
+            className="whitespace-nowrap rounded-full border border-[#E0EFE5] bg-white px-4 py-2 text-[13px] font-medium text-[#5F6B64] hover:text-red-600"
           >
             Log out
           </button>
@@ -80,7 +82,7 @@ export function AccountSidebar() {
           <span className="font-heading text-[15px] font-bold text-[#113322] block leading-tight truncate">
             {name}
           </span>
-          <span className="text-[12px] text-[#8A958E] block truncate">{user?.email}</span>
+          <span className="text-[12px] text-[#5F6B64] block truncate">{user?.email}</span>
         </div>
       </div>
 
@@ -109,7 +111,7 @@ export function AccountSidebar() {
         <button
           onClick={() => logout("/")}
           type="button"
-          className="text-[13px] font-medium text-[#8A958E] hover:text-red-600 transition flex items-center gap-1"
+          className="text-[13px] font-medium text-[#5F6B64] hover:text-red-600 transition flex items-center gap-1"
         >
           <span>Log out</span>
           <span>↗</span>

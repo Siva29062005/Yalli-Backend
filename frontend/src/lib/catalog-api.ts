@@ -7,6 +7,8 @@ export interface Money {
   compareAtMinor: number | null;
   onSale: boolean;
   currency: string;
+  /** Listing cards only: the product's variants cost different amounts, so the amount is "from". */
+  fromPrice?: boolean;
 }
 
 export interface ProductSummary {
@@ -234,8 +236,9 @@ export async function listAllProductSlugs(maxPages = 200): Promise<string[]> {
   return slugs;
 }
 
-export async function listBrands(): Promise<Brand[]> {
-  return (await get<Brand[]>('/catalog/brands', 60)).data;
+/** All brands, or (with `category`) only those that have products in that category and its subcategories. */
+export async function listBrands(category?: string): Promise<Brand[]> {
+  return (await get<Brand[]>(`/catalog/brands${category ? `?category=${encodeURIComponent(category)}` : ''}`, 60)).data;
 }
 
 export async function getReviews(slug: string) {

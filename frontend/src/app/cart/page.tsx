@@ -7,9 +7,8 @@ import { ShieldCheck, FileText, ArrowRight } from "lucide-react";
 import { AnnouncementBar } from "@/components/AnnouncementBar";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { CartDrawer } from "@/components/CartDrawer";
 import { ProductImage } from "@/components/ProductImage";
-import { useCart } from "@/components/CartProvider";
+import { cartUnits, useCart } from "@/components/CartProvider";
 import { CartErrorBanner, LineIssue, QuantityStepper } from "@/components/CartLineControls";
 import { formatPaise } from "@/lib/formatters";
 
@@ -21,7 +20,7 @@ export default function CartPage() {
   const blocked = cart.items.some((i) => !i.purchasable);
   const { totals } = cart;
   // Count every line (including ones needing attention) so the heading matches what's listed.
-  const lineCount = cart.items.reduce((n, i) => n + i.quantity, 0);
+  const lineCount = cartUnits(cart);
 
   const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,17 +39,16 @@ export default function CartPage() {
     <>
       <AnnouncementBar />
       <Header />
-      <CartDrawer />
 
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 md:px-8 lg:px-12 py-6 space-y-6">
-        <nav aria-label="Breadcrumb" className="text-[13px] text-[#8A958E] flex items-center gap-2">
+        <nav aria-label="Breadcrumb" className="text-[13px] text-[#5F6B64] flex items-center gap-2">
           <Link href="/" className="hover:text-[#116644]">Home</Link>
           <span>/</span>
           <span className="text-[#113322] font-medium">Your cart</span>
         </nav>
 
         {status === "loading" ? (
-          <div className="py-24 text-center text-[#8A958E]" aria-busy="true">Loading your cart…</div>
+          <div className="py-24 text-center text-[#5F6B64]" aria-busy="true">Loading your cart…</div>
         ) : status === "error" ? (
           <div className="py-24 text-center space-y-3">
             <p className="text-[#4A5550]">We couldn&apos;t load your cart.</p>
@@ -82,7 +80,7 @@ export default function CartPage() {
               <h2 className="font-heading text-[22px] font-bold text-[#113322]">
                 Your cart is taking a breather.
               </h2>
-              <p className="text-[14px] text-[#8A958E]">
+              <p className="text-[14px] text-[#5F6B64]">
                 Fill it with everyday favourites for a happier home.
               </p>
             </div>
@@ -110,7 +108,7 @@ export default function CartPage() {
               <h1 className="font-heading text-[32px] md:text-[36px] font-bold text-[#113322]">
                 Your cart, full of good things.
               </h1>
-              <p className="text-[14px] text-[#8A958E]">
+              <p className="text-[14px] text-[#5F6B64]">
                 {lineCount} {lineCount === 1 ? "item" : "items"} you&apos;ll love having at home.
               </p>
             </div>
@@ -137,15 +135,15 @@ export default function CartPage() {
                             >
                               {item.productName}
                             </Link>
-                            <p className="text-[13px] text-[#8A958E] mt-0.5">{item.variantName || item.sku}</p>
+                            <p className="text-[13px] text-[#5F6B64] mt-0.5">{item.variantName || item.sku}</p>
                             <LineIssue line={item} />
                           </div>
                           <div className="text-right">
-                            <span className="font-heading text-[18px] font-bold text-[#FF9900] block">
+                            <span className="font-heading text-[18px] font-bold text-[#A65500] block">
                               {formatPaise(item.purchasable ? item.lineSubtotalMinor : item.unitPriceMinor * item.quantity)}
                             </span>
                             {item.compareAtMinor !== null && item.compareAtMinor > item.unitPriceMinor && (
-                              <span className="text-[13px] text-[#8A958E] line-through">
+                              <span className="text-[13px] text-[#5F6B64] line-through">
                                 {formatPaise(item.compareAtMinor * item.quantity)}
                               </span>
                             )}
@@ -157,7 +155,7 @@ export default function CartPage() {
                           <button
                             onClick={() => removeItem(item.variantId)}
                             disabled={pending.has(item.variantId)}
-                            className="text-[13px] text-[#8A958E] hover:text-red-500 font-medium disabled:opacity-40"
+                            className="text-[13px] text-[#5F6B64] hover:text-red-500 font-medium disabled:opacity-40"
                             type="button"
                           >
                             Remove ✕
@@ -219,7 +217,7 @@ export default function CartPage() {
                       <span className="font-heading text-[18px] font-bold text-[#113322]">Total</span>
                       <span className="font-heading text-[24px] font-bold text-[#113322]">{formatPaise(totals.totalMinor)}</span>
                     </div>
-                    <p className="text-[12px] text-[#8A958E]">Includes {formatPaise(totals.gstIncludedMinor)} GST</p>
+                    <p className="text-[12px] text-[#5F6B64]">Includes {formatPaise(totals.gstIncludedMinor)} GST</p>
                   </div>
 
                   <div className="pt-2">
@@ -275,7 +273,7 @@ export default function CartPage() {
                   </div>
 
                   {blocked ? (
-                    <p role="alert" className="w-full rounded-xl bg-[#F5F6F5] py-3.5 px-4 text-center text-[13px] font-semibold text-[#8A958E]">
+                    <p role="alert" className="w-full rounded-xl bg-[#F5F6F5] py-3.5 px-4 text-center text-[13px] font-semibold text-[#5F6B64]">
                       Remove or update unavailable items to checkout
                     </p>
                   ) : (

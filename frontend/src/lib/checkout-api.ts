@@ -65,6 +65,10 @@ export interface Quote {
   };
   tax: { supply: 'INTRA_STATE' | 'INTER_STATE'; cgstMinor?: number; sgstMinor?: number; igstMinor?: number };
   coupon: { code: string; discountMinor: number } | null;
+  /** Razorpay's smallest payment (₹1): a total below it cannot be placed. */
+  minimumPayableMinor: number;
+  /** Minutes stock is held for an unpaid order. */
+  paymentWindowMinutes: number;
 }
 
 export type OrderStatus =
@@ -239,9 +243,15 @@ export async function payForOrder(orderId: string, key: string): Promise<Payment
   });
 }
 
-export function checkoutErrorMessage(e: unknown): string {
+/**
+ * A message for the customer. `afterOrder`: the order already exists (paying it), so a 503 means the PAYMENT provider is
+ * unavailable and the order is kept; before that, a 503 says nothing about an order.
+ */
+export function checkoutErrorMessage(e: unknown, { afterOrder = false }: { afterOrder?: boolean } = {}): string {
   if (e instanceof ApiError) {
-    if (e.code === 'NOT_CONFIGURED' || e.status === 503) return 'Online payment is temporarily unavailable. Your order is saved; please try again shortly.';
+    if (e.code === 'PAYMENT_PROVIDER_UNAVAILABLE' || (afterOrder && e.status === 503))
+      return 'Online payment is temporarily unavailable. Your order is saved; please try again shortly.';
+    if (e.status === 503) return 'The shop is busy right now. Please try again in a moment.';
     return e.message;
   }
   if (e instanceof Error && e.message) return e.message;

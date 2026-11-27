@@ -5,6 +5,7 @@ import { Public } from '../../common/decorators/access.decorators.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import { CatalogQueryService } from './catalog-query.service.js';
 import {
+  brandsQuerySchema,
   listProductsSchema,
   slugParam,
   type ListProductsQuery,
@@ -62,7 +63,10 @@ export class CatalogController {
 
   @Get('brands')
   @Header('Cache-Control', 'public, max-age=60')
-  brands() {
-    return this.catalog.brands();
+  brands(
+    @Query({ schema: brandsQuerySchema })
+    q: z.infer<typeof brandsQuerySchema>,
+  ) {
+    return this.catalog.brands(q.category);
   }
 }

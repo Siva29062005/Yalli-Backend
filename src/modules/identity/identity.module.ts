@@ -101,6 +101,7 @@ import { SessionsController } from './sessions.controller.js';
     PasswordService,
     MfaService,
     NotificationPort,
+    CaptchaVerifier,
   ],
 })
 export class IdentityModule {}

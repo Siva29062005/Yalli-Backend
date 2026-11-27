@@ -16,6 +16,11 @@ export const PRODUCT_SORTS = [
   'price_desc',
 ] as const;
 
+/** GET /catalog/brands: optionally only the brands that have products in a category (and its subcategories). */
+export const brandsQuerySchema = z
+  .object({ category: z.string().regex(SLUG_PATTERN).max(120).optional() })
+  .strict();
+
 export const listProductsSchema = paginationSchema
   .extend({
     q: z.string().trim().min(1).max(100).optional(),

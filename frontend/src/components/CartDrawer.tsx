@@ -2,10 +2,11 @@
 
 import { useEffect } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { X, Trash2, ArrowRight, ShoppingBag } from 'lucide-react';
 import { useStore } from '@/lib/store';
 import { formatPaise } from '@/lib/formatters';
-import { useCart } from '@/components/CartProvider';
+import { cartUnits, useCart } from '@/components/CartProvider';
 import { ProductImage } from '@/components/ProductImage';
 import { CartErrorBanner, LineIssue, QuantityStepper } from '@/components/CartLineControls';
 
@@ -14,6 +15,11 @@ export function CartDrawer() {
   const setOpen = useStore((s) => s.setCartDrawerOpen);
   const { cart, status, pending, removeItem, reload } = useCart();
   const blocked = cart.items.some((i) => !i.purchasable);
+  const pathname = usePathname();
+  // Following a link (checkout, a product) closes the drawer; it must not reappear on the next page.
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname, setOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -33,13 +39,13 @@ export function CartDrawer() {
           <div className="flex items-center justify-between border-b border-[#E6EAE7] p-5">
             <div className="flex items-center gap-2">
               <ShoppingBag className="h-5 w-5 text-[#116644]" />
-              <h2 className="font-heading text-lg font-bold text-[#113322]">Your Cart ({cart.itemCount})</h2>
+              <h2 className="font-heading text-lg font-bold text-[#113322]">Your Cart ({cartUnits(cart)})</h2>
             </div>
             <button
               onClick={close}
               type="button"
               aria-label="Close cart"
-              className="rounded-full p-1 text-[#8A958E] hover:bg-[#F5F6F5] hover:text-[#113322]"
+              className="rounded-full p-1 text-[#5F6B64] hover:bg-[#F5F6F5] hover:text-[#113322]"
             >
               <X className="h-5 w-5" />
             </button>
@@ -48,17 +54,17 @@ export function CartDrawer() {
           <div className="flex-1 space-y-4 overflow-y-auto p-5">
             <CartErrorBanner />
             {status === 'loading' ? (
-              <p className="py-12 text-center text-[14px] text-[#8A958E]">Loading your cart…</p>
+              <p className="py-12 text-center text-[14px] text-[#5F6B64]">Loading your cart…</p>
             ) : status === 'error' ? (
               <div className="space-y-3 py-12 text-center">
-                <p className="text-[14px] text-[#8A958E]">We couldn&apos;t load your cart.</p>
+                <p className="text-[14px] text-[#5F6B64]">We couldn&apos;t load your cart.</p>
                 <button type="button" onClick={() => reload()} className="font-semibold text-[#116644] hover:underline">
                   Try again
                 </button>
               </div>
             ) : cart.items.length === 0 ? (
               <div className="space-y-3 py-12 text-center">
-                <p className="text-[14px] text-[#8A958E]">Your cart is taking a breather.</p>
+                <p className="text-[14px] text-[#5F6B64]">Your cart is taking a breather.</p>
                 <Link
                   href="/catalog"
                   onClick={close}
@@ -81,12 +87,12 @@ export function CartDrawer() {
                     >
                       {item.productName}
                     </Link>
-                    <p className="truncate text-[12px] text-[#8A958E]">{item.variantName || item.sku}</p>
+                    <p className="truncate text-[12px] text-[#5F6B64]">{item.variantName || item.sku}</p>
                     <LineIssue line={item} />
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                       <QuantityStepper line={item} compact />
                       <div className="flex items-center gap-3">
-                        <span className="text-[14px] font-bold text-[#FF9900]">
+                        <span className="text-[14px] font-bold text-[#A65500]">
                           {formatPaise(item.purchasable ? item.lineTotalMinor : item.unitPriceMinor * item.quantity)}
                         </span>
                         <button
@@ -94,7 +100,7 @@ export function CartDrawer() {
                           disabled={pending.has(item.variantId)}
                           type="button"
                           aria-label={`Remove ${item.productName}`}
-                          className="text-[#8A958E] hover:text-red-500 disabled:opacity-40"
+                          className="text-[#5F6B64] hover:text-red-500 disabled:opacity-40"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -116,7 +122,7 @@ export function CartDrawer() {
               )}
               <div className="flex justify-between text-base font-bold text-[#113322]">
                 <span>Total (incl. GST)</span>
-                <span className="text-lg text-[#FF9900]">{formatPaise(cart.totals.totalMinor)}</span>
+                <span className="text-lg text-[#A65500]">{formatPaise(cart.totals.totalMinor)}</span>
               </div>
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <Link
@@ -127,7 +133,7 @@ export function CartDrawer() {
                   View full cart
                 </Link>
                 {blocked ? (
-                  <span className="flex items-center justify-center rounded-lg bg-[#E6EAE7] py-2.5 text-[13px] font-semibold text-[#8A958E]">
+                  <span className="flex items-center justify-center rounded-lg bg-[#E6EAE7] py-2.5 text-[13px] font-semibold text-[#5F6B64]">
                     Fix cart to checkout
                   </span>
                 ) : (
@@ -141,7 +147,7 @@ export function CartDrawer() {
                   </Link>
                 )}
               </div>
-              <p className="text-center text-[11px] text-[#8A958E]">Delivery fee is shown at checkout · Returns within 7 days of delivery</p>
+              <p className="text-center text-[11px] text-[#5F6B64]">Delivery fee is shown at checkout · Returns within 7 days of delivery</p>
             </div>
           )}
         </div>

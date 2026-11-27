@@ -8,11 +8,20 @@ import { AccountShell, PanelError, PanelLoading, inputClass, primaryButton, seco
 import { ProductImage } from "@/components/ProductImage";
 import { type CreditNote, accountApi, ORDER_STATUS_LABEL, RETURN_REASONS, statusTone, type ReturnReason, type Shipment } from "@/lib/account-api";
 import { AWAITING_PAYMENT, formatPhone, type CustomerOrder } from "@/lib/checkout-api";
-import { formatIndianDate, formatPaise } from "@/lib/formatters";
+import { formatDateTime, formatIndianDate, formatPaise } from "@/lib/formatters";
 import { ApiError } from "@/lib/http";
 import { useAsync } from "@/lib/useAsync";
 
-type Order = CustomerOrder & { shippedAt?: string | null; deliveredAt?: string | null; cancelledAt?: string | null };
+type Order = Omit<CustomerOrder, 'items'> & {
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
+  cancelledAt?: string | null;
+  /** End of the return window while the order can be returned (server rule: DELIVERED + RETURN_WINDOW_DAYS). */
+  returnableUntil?: string | null;
+  /** Status history from the server (customer-safe reasons only). */
+  timeline?: { status: string; at: string; reason: string | null }[];
+  items: (CustomerOrder['items'][number] & { returnableQuantity?: number })[];
+};
 
 const NOT_FOUND = "__order_not_found__";
 
@@ -47,6 +56,8 @@ export default function OrderDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [returnFor, setReturnFor] = useState<string | null>(null);
   const [returned, setReturned] = useState<Set<string>>(new Set());
+  const returnable = (i: Order['items'][number]) =>
+    !!order?.returnableUntil && (i.returnableQuantity ?? 0) > 0 && !returned.has(i.id);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
 
   const notFound = error === NOT_FOUND;
@@ -69,11 +80,12 @@ export default function OrderDetailPage() {
     () => (order?.paidAt ? accountApi.creditNotes(order.id) : Promise.resolve([])),
     [order?.id, order?.paidAt, order?.status],
   );
+  // Open the window FIRST, inside the click: a window opened after an await is treated as a pop-up and blocked.
   const openCreditNote = async (cn: CreditNote) => {
     setActionError(null);
-    const { creditNoteHtml } = await import("@/lib/invoice");
     const w = window.open("", "_blank");
     if (!w) return setActionError("Allow pop-ups for this site to view the credit note.");
+    const { creditNoteHtml } = await import("@/lib/invoice");
     w.document.write(creditNoteHtml(cn));
     w.document.close();
   };
@@ -82,14 +94,17 @@ export default function OrderDetailPage() {
     if (!order) return;
     setInvoiceBusy(true);
     setActionError(null);
+    const w = window.open("", "_blank"); // inside the click, before any await (pop-up blockers)
     try {
+      if (!w) throw new Error("Allow pop-ups for this site to view the invoice.");
+      w.document.write("<p style=\"font-family:sans-serif\">Preparing your invoice…</p>");
       const inv = await accountApi.invoice(order.id);
       const { invoiceHtml } = await import("@/lib/invoice");
-      const w = window.open("", "_blank");
-      if (!w) throw new Error("Allow pop-ups for this site to view the invoice.");
+      w.document.open();
       w.document.write(invoiceHtml(inv));
       w.document.close();
     } catch (e) {
+      w?.close();
       setActionError(e instanceof Error ? e.message : "The invoice is not available yet.");
     } finally {
       setInvoiceBusy(false);
@@ -139,6 +154,17 @@ export default function OrderDetailPage() {
                 </div>
               </div>
               {actionError && <p role="alert" className="text-[13px] text-red-600">{actionError}</p>}
+              {AWAITING_PAYMENT.includes(order.status) && order.paymentExpiresAt && (
+                <p className="text-[13px] text-[#4A5550]">
+                  Pay by <strong>{formatDateTime(order.paymentExpiresAt)}</strong> to keep this order. After that it is
+                  cancelled and the items are released.
+                </p>
+              )}
+              {order.returnableUntil && (
+                <p className="text-[13px] text-[#4A5550]">
+                  You can ask for a return until <strong>{formatIndianDate(order.returnableUntil)}</strong>.
+                </p>
+              )}
               {order.status !== "CANCELLED" && !AWAITING_PAYMENT.includes(order.status) && (
                 <ol className="grid grid-cols-4 gap-1" aria-label="Order progress">
                   {STEPS.map((s, i) => {
@@ -146,7 +172,7 @@ export default function OrderDetailPage() {
                     return (
                       <li key={s.key} className="space-y-2 min-w-0">
                         <div className={`h-1.5 rounded-full ${done ? "bg-[#116644]" : "bg-[#E6EAE7]"}`} />
-                        <span className={`block text-[11px] sm:text-[12px] truncate ${done ? "font-semibold text-[#113322]" : "text-[#8A958E]"}`}>{s.label}</span>
+                        <span className={`block text-[11px] sm:text-[12px] truncate ${done ? "font-semibold text-[#113322]" : "text-[#5F6B64]"}`}>{s.label}</span>
                       </li>
                     );
                   })}
@@ -173,12 +199,12 @@ export default function OrderDetailPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-[14px] font-semibold text-[#113322] break-words">{i.productName}</p>
-                        {i.variantName && <p className="text-[12px] text-[#8A958E]">{i.variantName}</p>}
-                        <p className="text-[12px] text-[#8A958E]">Qty {i.quantity} · {formatPaise(i.unitPriceMinor)} each</p>
+                        {i.variantName && <p className="text-[12px] text-[#5F6B64]">{i.variantName}</p>}
+                        <p className="text-[12px] text-[#5F6B64]">Qty {i.quantity} · {formatPaise(i.unitPriceMinor)} each</p>
                       </div>
                       <span className="text-[14px] font-semibold text-[#113322] shrink-0">{formatPaise(i.lineTotalMinor)}</span>
                     </div>
-                    {order.status === "DELIVERED" && !returned.has(i.id) && returnFor !== i.id && (
+                    {returnable(i) && returnFor !== i.id && (
                       <button type="button" className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1" onClick={() => setReturnFor(i.id)}>
                         <Undo2 className="h-3.5 w-3.5" /> Return this item
                       </button>
@@ -192,6 +218,7 @@ export default function OrderDetailPage() {
                         onDone={() => {
                           setReturned((s) => new Set(s).add(i.id));
                           setReturnFor(null);
+                          void reload(); // the order is now RETURN_REQUESTED: other items' buttons must disappear
                         }}
                       />
                     )}
@@ -207,7 +234,7 @@ export default function OrderDetailPage() {
                   <Truck className="h-5 w-5 text-[#116644]" /> Tracking
                 </h2>
                 {tracking.loading ? (
-                  <p className="text-[13px] text-[#8A958E]">Loading tracking…</p>
+                  <p className="text-[13px] text-[#5F6B64]">Loading tracking…</p>
                 ) : tracking.error ? (
                   <p className="text-[13px] text-red-600">Tracking is unavailable right now.</p>
                 ) : !tracking.data ? (
@@ -223,7 +250,7 @@ export default function OrderDetailPage() {
                         <li key={idx} className="text-[13px]">
                           <span className="font-semibold text-[#113322]">{e.status.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase())}</span>
                           {e.location && <span className="text-[#4A5550]"> · {e.location}</span>}
-                          <span className="block text-[12px] text-[#8A958E]">{new Date(e.occurredAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</span>
+                          <span className="block text-[12px] text-[#5F6B64]">{new Date(e.occurredAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</span>
                           {e.note && <span className="block text-[12px] text-[#4A5550]">{e.note}</span>}
                         </li>
                       ))}
@@ -245,9 +272,22 @@ export default function OrderDetailPage() {
                   <dt>Total</dt>
                   <dd>{formatPaise(order.totals.totalMinor)}</dd>
                 </div>
-                <p className="text-[12px] text-[#8A958E]">Includes {formatPaise(order.totals.gstIncludedMinor)} GST</p>
+                <p className="text-[12px] text-[#5F6B64]">Includes {formatPaise(order.totals.gstIncludedMinor)} GST</p>
               </dl>
             </section>
+            {order.timeline && order.timeline.length > 0 && (
+              <section className="rounded-3xl border border-[#E6EAE7] bg-white p-5 md:p-6 space-y-3" aria-labelledby="timeline-h">
+                <h2 id="timeline-h" className="font-heading text-[16px] font-bold text-[#113322]">History</h2>
+                <ol className="space-y-2 text-[13px]">
+                  {[...order.timeline].reverse().map((t, n) => (
+                    <li key={`${t.status}-${t.at}-${n}`} className="flex justify-between gap-3">
+                      <span className="text-[#113322]">{ORDER_STATUS_LABEL[t.status as keyof typeof ORDER_STATUS_LABEL] ?? t.status}</span>
+                      <time dateTime={t.at} className="shrink-0 text-[#5F6B64]">{formatDateTime(t.at)}</time>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
             <section className="rounded-3xl border border-[#E6EAE7] bg-white p-5 md:p-6 space-y-2">
               <h2 className="font-heading text-[16px] font-bold text-[#113322]">Delivering to</h2>
               <p className="text-[14px] text-[#4A5550] break-words">
@@ -257,7 +297,7 @@ export default function OrderDetailPage() {
                 <br />
                 {order.shippingAddress.city}, {order.shippingAddress.state} {order.shippingAddress.postalCode}
               </p>
-              <p className="text-[13px] text-[#8A958E]">{formatPhone(order.shippingAddress.phone)}</p>
+              <p className="text-[13px] text-[#5F6B64]">{formatPhone(order.shippingAddress.phone)}</p>
             </section>
           </aside>
         </div>
@@ -282,7 +322,7 @@ function ReturnForm({
   onDone,
 }: {
   orderId: string;
-  item: CustomerOrder["items"][number];
+  item: Order["items"][number];
   onCancel: () => void;
   onDone: () => void;
 }) {
@@ -326,11 +366,11 @@ function ReturnForm({
             {Object.entries(RETURN_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </label>
-        {item.quantity > 1 && (
+        {(item.returnableQuantity ?? item.quantity) > 1 && (
           <label className="block space-y-1">
             <span className="text-[13px] font-medium text-[#113322]">Quantity</span>
             <select className={inputClass} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))}>
-              {Array.from({ length: item.quantity }, (_, n) => <option key={n + 1} value={n + 1}>{n + 1}</option>)}
+              {Array.from({ length: item.returnableQuantity ?? item.quantity }, (_, n) => <option key={n + 1} value={n + 1}>{n + 1}</option>)}
             </select>
           </label>
         )}

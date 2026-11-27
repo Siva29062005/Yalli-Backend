@@ -71,7 +71,7 @@ Follow-ups found while wiring (P1 unless noted):
       13 May 2027; check Gazette G.S.R. 843(E)).
 - [ ] `next.config.ts` allows images from `images.unsplash.com` and plain-HTTP `localhost`. Replace both with the
       production image host (S3/CDN) before launch.
-- [ ] No self-service "delete my account" screen (the pages tell customers to contact you).
+- [x] (2026-11-27, Phase 10) Self-service data export and account deletion: `/account/data` (password, and the 2FA code when on; typed DELETE). Help and privacy pages updated.
 
 ### Frontend review 2026-11-19: launch blockers (each verified in the code)
 - [x] (2026-11-27, Phase 9) **No captcha widget.** Register and forgot-password never send `captchaToken` (`lib/auth-api.ts`,
@@ -97,9 +97,9 @@ Follow-ups found while wiring (P1 unless noted):
       (`products.read`), which that role lacks. Make the category list optional or grant it to `coupons.manage`.
 
 ### Found while planning (2026-11-27)
-- [ ] Contact form: in the old site and the Phase 6 scope, never built. Needs a rate-limited, captcha-guarded
+- [x] (2026-11-27, Phase 10: `POST /contact` + form on /contact; emailed to `SUPPORT_INBOX_EMAIL` when set) Contact form: in the old site and the Phase 6 scope, never built. Needs a rate-limited, captcha-guarded
       `POST /contact` (stored + emailed to support) and the form on `/contact`.
-- [ ] Brand pages (`/brands`, `/brands/[slug]`) and a specials page (`/specials`), both on the old site's menu.
+- [x] (2026-11-27, Phase 10) Brand pages (`/brands`, `/brands/[slug]`, 404 for unknown) and a specials page (`/specials`), in the header, footer and sitemap.
 - [ ] 301 redirects from the OpenCart URLs (`index.php?route=product/product&product_id=…`, category and information
       routes) to the new slugs, generated from the import mapping; without them search rankings are lost at cut-over.
 - [ ] The frontend has no production container (`output: 'standalone'` is not set) and no hosting plan in
@@ -199,39 +199,39 @@ Checkout and cart
       auto-refunded) and the FAILED→PENDING reset is skipped. Use a fresh key per click; reload the order on error.
 - [x] (2026-11-27, Phase 9) A failed `/cart/merge` still clears the guest token (`cart-api.ts` `finally`): a network blip or 5xx on login loses
       the guest cart. Clear only on success or 400/404.
-- [ ] The cart "−" button sends `quantity - 1` even when the line is over stock, so it 409s forever; clamp to the
+- [x] (2026-11-27, Phase 10) The cart "−" button sends `quantity - 1` even when the line is over stock, so it 409s forever; clamp to the
       available quantity (`CartLineControls.tsx`).
-- [ ] Checkout shows "Your cart is empty" when the cart failed to load (`cartStatus === 'error'`), with no retry.
-- [ ] Confirmation page: one failed poll silently stops polling and re-shows Pay; a stale `?payment=failed` keeps showing
+- [x] (2026-11-27, Phase 10) Checkout shows "Your cart is empty" when the cart failed to load (`cartStatus === 'error'`), with no retry.
+- [x] (2026-11-27, Phase 10) Confirmation page: one failed poll silently stops polling and re-shows Pay; a stale `?payment=failed` keeps showing
       the error on a paid order after refresh.
-- [ ] Checkout: `CART_HAS_UNAVAILABLE_ITEMS` / shipping errors do not reload the quote; an unserved PIN code shows "Some
+- [x] (2026-11-27, Phase 10) Checkout: `CART_HAS_UNAVAILABLE_ITEMS` / shipping errors do not reload the quote; an unserved PIN code shows "Some
       items are unavailable"; any 503 says "Your order is saved" even before an order exists; no coupon remove button.
-- [ ] `<CartDrawer/>` is mounted per page, so the header cart icon does nothing on checkout/account/auth/orders and the
+- [x] (2026-11-27, Phase 10) `<CartDrawer/>` is mounted per page, so the header cart icon does nothing on checkout/account/auth/orders and the
       drawer pops open later. Mount it once in the layout. Item counts differ between drawer (purchasable lines) and
       cart page (all lines).
 
 Auth and account
 - [x] (2026-11-27, Phase 9) A wrong 2FA code at login returns the user to the password step (`LoginForm.tsx` matches `/expired/` against "The
       code is incorrect or expired"). Distinguish wrong code from expired challenge by error code.
-- [ ] Order page: "Return this item" ignores `RETURN_WINDOW_DAYS` and units already returned, and the order is not reloaded
+- [x] (2026-11-27, Phase 10) Order page: "Return this item" ignores `RETURN_WINDOW_DAYS` and units already returned, and the order is not reloaded
       after a return request (other buttons then fail with `ORDER_NOT_RETURNABLE`). Expose a return deadline from the API.
-- [ ] `AddressForm.tsx` reads `details[].path[0]`, but `path` is a dot-joined string: server field errors never reach the
+- [x] (2026-11-27, Phase 10) `AddressForm.tsx` reads `details[].path[0]`, but `path` is a dot-joined string: server field errors never reach the
       fields.
-- [ ] Account lists (wishlist, orders, returns, reviews) guess "Next" from `data.length === 20`; use `meta`. The wishlist
+- [x] (2026-11-27, Phase 10) Account lists (wishlist, orders, returns, reviews) guess "Next" from `data.length === 20`; use `meta`. The wishlist
       provider stops early the same way (unpublished products are dropped after paging).
-- [ ] Invoice and credit-note windows open after an `await` (popup blockers). Open the window first.
-- [ ] `AuthProvider` signs the user out on any `/me` failure, including 5xx/network; logout is not seen by other tabs.
+- [x] (2026-11-27, Phase 10) Invoice and credit-note windows open after an `await` (popup blockers). Open the window first.
+- [x] (2026-11-27, Phase 10) `AuthProvider` signs the user out on any `/me` failure, including 5xx/network; logout is not seen by other tabs.
       `RegisterForm` drops `next`. (Reset/verify tokens are now removed from the URL and `/auth/*` sends no referrer:
       done 2026-11-27, Phase 9.)
 
 Storefront
-- [ ] `/catalog/all-products` (first home tile and footer link) is an empty page: the "All" placeholder category is sent
+- [x] (2026-11-27, Phase 10) `/catalog/all-products` (first home tile and footer link) is an empty page: the "All" placeholder category is sent
       to the API as a slug. Unknown category slugs return 200 instead of 404.
-- [ ] Categories load only on the client (`CategoryProvider`): server HTML has heading "Category", no nav links. Category
+- [x] (2026-11-27, Phase 10) Categories load only on the client (`CategoryProvider`): server HTML has heading "Category", no nav links. Category
       tile icons are keyed by old ids, so none show.
-- [ ] `formatIndianDate` has no `timeZone: 'Asia/Kolkata'`: hydration mismatch on review dates; analytics day labels shift
+- [x] (2026-11-27, Phase 10) `formatIndianDate` has no `timeZone: 'Asia/Kolkata'`: hydration mismatch on review dates; analytics day labels shift
       for staff outside IST.
-- [ ] Price filter boxes do not follow back/forward navigation. Header search inputs and review star ratings lack
+- [x] (2026-11-27, Phase 10) Price filter boxes do not follow back/forward navigation. Header search inputs and review star ratings lack
       accessible labels; mobile filter dialog has no Escape/focus trap. Categories refetch on every window focus.
 
 Admin
@@ -244,7 +244,7 @@ Admin
 
 ### Security and bug review 2026-11-27: fix soon
 Money and orders
-- [ ] Orders totalling 0 (or under ₹1) can be placed (a FIXED coupon larger than the cart, free shipping) but
+- [x] (2026-11-27, Phase 10: quote unpurchasable, place refused with ORDER_TOTAL_TOO_LOW) Orders totalling 0 (or under ₹1) can be placed (a FIXED coupon larger than the cart, free shipping) but
       `payments_amount_chk` (> 0) makes `POST /payments` a 500 while stock and the coupon stay held. Refuse at checkout
       (minimum payable ₹1) or cap fixed coupons.
 - [ ] Releasing refund capacity locks REFUND/PAYMENT before ORDER (`refund.service.ts` reject/finishFailed → `recompute`):
@@ -308,10 +308,14 @@ Catalogue and content
       receipts do not check the `--as` user's permissions; category counts include products with no active variant.
 
 ### Frontend review 2026-11-19: features with a backend but no UI
-- [ ] Customers: change password, phone verification, data export, logout-all, 2FA disable with a recovery code, resend
-      verification email, order timeline and payment deadline, product names in the returns list.
-- [ ] Storefront: more than 6 reviews and the star distribution, "from" price for multi-variant products, brand filter
-      scoped to the category, nested category filter, "can I review?" check before writing.
+- [x] (2026-11-27, Phase 10) Customers: change password and sign out everywhere (`/account/security`), phone
+      verification and resend verification email (profile), data export (`/account/data`), 2FA disable with a recovery
+      code, order history, payment deadline and return deadline, product names and order numbers in the returns list.
+- [x] (2026-11-27, Phase 10) Storefront: all reviews (paged) with the star breakdown, a "From" price for products whose
+      variants cost different amounts, the brand filter scoped to the category (`GET /catalog/brands?category=`).
+- [ ] Storefront: nested category filter (parent/child), and a "can I review?" check before writing a review.
+- [ ] Admin screen for contact-form messages (`contact_messages`, status NEW/HANDLED); until then read them in the
+      support inbox (`SUPPORT_INBOX_EMAIL`) or the database.
 - [ ] Admin: brand create/delete, credit-note list by date (for GST filing), restore archived products, edit slug,
       image reorder/per-variant images, returns status filter, invoice view on admin order detail, take down an approved
       review. Backend has no endpoints yet for audit log, customer lookup, refund retry, low-stock thresholds, catalogue
@@ -325,8 +329,11 @@ Catalogue and content
 - [x] (2026-11-27) `npm run test:browser` runs all 11 fake-backend scripts (mock API, test build in
       `frontend/.next-browser-tests`, free ports, summary). Still needs `PLAYWRIGHT_MODULE` because Playwright is not a
       dependency of this repo; add it to `frontend/` devDependencies if you want the command to work with no setup.
-- [ ] Accessibility audit (contrast, keyboard, screen reader), cross-browser mobile tests, and performance and
-      dependency audits.
+- [x] (2026-11-27, Phase 10) Automated accessibility check: `scripts/test-a11y.mjs` (axe-core, WCAG 2.1 AA) on 12 public
+      pages at 1280 and 375 px, no serious or critical violation; the muted text (#5F6B64) and orange text (#A65500)
+      colours were darkened to meet 4.5:1.
+- [ ] Manual accessibility pass (keyboard-only, screen reader), the account and admin pages under axe, cross-browser
+      mobile tests, and performance and dependency audits.
 
 ### Security
 - [ ] Captcha after repeated login failures.

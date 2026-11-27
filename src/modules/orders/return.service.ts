@@ -150,11 +150,23 @@ export class ReturnService {
           status: true,
           decisionNote: true,
           createdAt: true,
+          // What the customer recognises: the order number and the item as it was bought (immutable snapshots).
+          order: { select: { orderNumber: true } },
+          item: { select: { productName: true, variantName: true } },
         },
       }),
       this.prisma.returnRequest.count({ where }),
     ]);
-    return paginated(items, total, q);
+    return paginated(
+      items.map(({ order, item, ...r }) => ({
+        ...r,
+        orderNumber: order.orderNumber,
+        productName: item.productName,
+        variantName: item.variantName,
+      })),
+      total,
+      q,
+    );
   }
 
   async adminList(q: PaginationInput) {

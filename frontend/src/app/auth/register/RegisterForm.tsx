@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { safeNext } from '@/lib/safe-redirect';
 import Link from 'next/link';
 import { FieldError, FormAlert, inputClass, primaryButtonClass } from '@/components/AuthShell';
 import { Captcha, captchaRequired } from '@/components/Captcha';
@@ -9,6 +11,9 @@ import { errorMessage, fieldErrors, passwordProblems, registerAccount, resendVer
 type Field = 'firstName' | 'lastName' | 'email' | 'phone' | 'password' | 'acceptPrivacyPolicy';
 
 export function RegisterForm() {
+  // Keep where the shopper was going (e.g. checkout) through sign-up, back to the sign-in link.
+  const next = safeNext(useSearchParams().get('next'), '');
+  const loginHref = next ? `/auth/login?next=${encodeURIComponent(next)}` : '/auth/login';
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', phone: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [newsletter, setNewsletter] = useState(false);
@@ -85,7 +90,7 @@ export function RegisterForm() {
           We sent a verification link to <strong className="break-all">{form.email.trim()}</strong>. Open it to
           activate your account, then log in.
         </p>
-        <p className="text-[13px] text-[#8A958E]">Didn&apos;t get it? Check your spam folder or request a new link.</p>
+        <p className="text-[13px] text-[#5F6B64]">Didn&apos;t get it? Check your spam folder or request a new link.</p>
         {resent ? (
           <FormAlert tone="success">If the account needs verification, a new email is on its way.</FormAlert>
         ) : (
@@ -101,7 +106,7 @@ export function RegisterForm() {
           </button>
         )}
         <div>
-          <Link href="/auth/login" className="text-[13px] text-[#116644] font-semibold hover:underline">
+          <Link href={loginHref} className="text-[13px] text-[#116644] font-semibold hover:underline">
             Go to log in →
           </Link>
         </div>
@@ -120,7 +125,7 @@ export function RegisterForm() {
       <div className="space-y-1">
         <span className="text-[11px] font-bold text-[#116644] tracking-wider uppercase">Make yourself at home</span>
         <h1 className="font-heading text-[28px] sm:text-[32px] font-bold text-[#113322]">A good place to start.</h1>
-        <p className="text-[14px] text-[#8A958E]">Create your Yalli account. It only takes a moment.</p>
+        <p className="text-[14px] text-[#5F6B64]">Create your Yalli account. It only takes a moment.</p>
       </div>
 
       <form onSubmit={submit} className="space-y-4" noValidate>
@@ -164,7 +169,7 @@ export function RegisterForm() {
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#8A958E] hover:text-[#113322]"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#5F6B64] hover:text-[#113322]"
             >
               {showPassword ? 'Hide' : 'Show'}
             </button>
@@ -172,7 +177,7 @@ export function RegisterForm() {
           {errors.password ? (
             <FieldError id="password-error" message={errors.password} />
           ) : (
-            <p className="text-[12px] text-[#8A958E]">A long phrase is easy to remember and hard to guess.</p>
+            <p className="text-[12px] text-[#5F6B64]">A long phrase is easy to remember and hard to guess.</p>
           )}
         </div>
         <label className="flex items-start gap-2 text-[13px] cursor-pointer">
@@ -206,7 +211,7 @@ export function RegisterForm() {
       </form>
 
       <div className="text-center pt-2">
-        <Link href="/auth/login" className="text-[13px] text-[#116644] font-semibold hover:underline">
+        <Link href={loginHref} className="text-[13px] text-[#116644] font-semibold hover:underline">
           Already at home here? Log in →
         </Link>
       </div>

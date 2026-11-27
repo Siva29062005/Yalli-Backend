@@ -80,6 +80,33 @@ for (const q of ['?q=steamer', '?sort=price_asc', '?page=2', '?brand=yalli']) {
 }
 ok('catalogue: plain listing indexable; search, filters and paging noindex with a canonical');
 
+// categories (Phase 10): server-rendered names and links, a real 404 for unknown ones, "all products" goes to /catalog
+const cat = await text('/catalog/collection-3');
+assert.equal(cat.status, 200);
+assert.match(cat.body, /<h1[^>]*>[^<]*Collection 3/, 'the category name is in the server HTML heading');
+assert.match(cat.body, /href="\/catalog\/collection-0"/, 'category links are in the server HTML (nav/footer)');
+assert.doesNotMatch(cat.body, /href="\/catalog\/all-products"/, 'no link to the placeholder "all products" category');
+assert.equal((await text('/catalog/no-such-category')).status, 404, 'unknown category is a 404');
+const all = await text('/catalog/all-products');
+assert.ok([307, 308].includes(all.status) && /\/catalog$/.test(all.headers.get('location') ?? ''), 'all-products redirects to /catalog');
+ok('categories: names and links in the server HTML, unknown category 404, all-products redirects');
+
+// brands and specials (Phase 10)
+const brands = await text('/brands');
+assert.equal(brands.status, 200);
+assert.match(brands.body, /href="\/brands\/yalli"/);
+const brandPage = await text('/brands/yalli');
+assert.equal(brandPage.status, 200);
+assert.match(brandPage.body, /<h1[^>]*>[^<]*Yalli/);
+assert.match(brandPage.body, new RegExp(`<link rel="canonical" href="${SITE}/brands/yalli"`));
+assert.equal((await text('/brands/no-such-brand')).status, 404, 'unknown brand is a 404');
+const specials = await text('/specials');
+assert.equal(specials.status, 200);
+assert.match(specials.body, /<h1[^>]*>On sale/);
+const map = (await text('/sitemap.xml')).body;
+for (const loc of ['/specials', '/brands', '/brands/yalli']) assert.ok(map.includes(`<loc>${SITE}${loc}</loc>`), `sitemap lists ${loc}`);
+ok('brands and specials pages: listed, canonical, unknown brand 404, in the sitemap');
+
 // policy pages
 for (const p of ['help', 'shipping', 'returns', 'privacy', 'terms', 'contact'])
   assert.match((await text(`/${p}`)).body, new RegExp(`<link rel="canonical" href="${SITE}/${p}"`), `${p} canonical`);

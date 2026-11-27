@@ -1029,6 +1029,36 @@ describe('returns', () => {
     ).expect(200);
   };
 
+  it('the order view says what can still be returned, and until when', async () => {
+    const { u, order, om, itemId } = await delivered();
+    const view = async () =>
+      (await ctx.http().get(`/api/v1/orders/${order.id}`).set(authed(u))).body
+        .data;
+    let v = await view();
+    expect(new Date(v.returnableUntil).getTime()).toBeGreaterThan(
+      Date.now() + 6 * 86_400_000,
+    );
+    expect(v.items[0].returnableQuantity).toBe(2);
+    await returnAndRefund(u, order.id, itemId, om);
+    v = await view();
+    expect(v.items[0].returnableQuantity).toBe(1);
+    // the customer's returns list names what was returned and from which order
+    const list = (await ctx.http().get('/api/v1/returns').set(authed(u))).body
+      .data;
+    expect(list[0]).toMatchObject({
+      orderNumber: v.orderNumber,
+      productName: v.items[0].productName,
+    });
+    // past the window: nothing can be returned
+    await ctx.prisma.order.update({
+      where: { id: order.id },
+      data: { deliveredAt: new Date(Date.now() - 8 * 86_400_000) },
+    });
+    v = await view();
+    expect(v.returnableUntil).toBeNull();
+    expect(v.items[0].returnableQuantity).toBe(0);
+  });
+
   it('after one unit is returned and refunded, the remaining unit can still be returned; returning it all completes the refund', async () => {
     const { u, order, payment, om, itemId } = await delivered();
     await returnAndRefund(u, order.id, itemId, om);

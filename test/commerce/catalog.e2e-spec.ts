@@ -896,6 +896,63 @@ describe('a corrupted category tree cannot take the storefront down', () => {
   });
 });
 
+describe('storefront listing details (Phase 10)', () => {
+  it('a product whose variants cost different amounts is marked "from" its lowest price; one price is not', async () => {
+    const t = randomBytes(3).toString('hex');
+    const multi = await fx.product({ name: `Multi ${t}`, priceMinor: 40_000 });
+    await ctx.prisma.productVariant.create({
+      data: {
+        productId: multi.product.id,
+        sku: `MULTI-B-${t}`.toUpperCase(),
+        priceMinor: 70_000,
+        position: 1,
+      },
+    });
+    const single = await fx.product({
+      name: `Single ${t}`,
+      priceMinor: 40_000,
+    });
+    const cards = (await list({ q: t, pageSize: 60 })).body.data as {
+      slug: string;
+      price: { amountMinor: number; fromPrice: boolean };
+    }[];
+    const card = (slug: string) => cards.find((c) => c.slug === slug)!;
+    expect(card(multi.product.slug).price).toMatchObject({
+      amountMinor: 40_000,
+      fromPrice: true,
+    });
+    expect(card(single.product.slug).price).toMatchObject({ fromPrice: false });
+  });
+
+  it('brands can be limited to a category (with subcategories): only brands that have products there', async () => {
+    const parent = await fx.category('Brand scope');
+    const child = await fx.category('Brand scope child', parent.id);
+    const inside = await fx.brand();
+    const outside = await fx.brand();
+    await fx.product({ brandId: inside.id, categoryIds: [child.id] });
+    await fx.product({ brandId: outside.id });
+    const scoped = (
+      await ctx.http().get(`/api/v1/catalog/brands?category=${parent.slug}`)
+    ).body.data as {
+      slug: string;
+      productCount: number;
+    }[];
+    expect(scoped.map((b) => b.slug)).toContain(inside.slug);
+    expect(scoped.map((b) => b.slug)).not.toContain(outside.slug);
+    expect(scoped.find((b) => b.slug === inside.slug)!.productCount).toBe(1);
+    const all = (await ctx.http().get('/api/v1/catalog/brands')).body.data as {
+      slug: string;
+    }[];
+    expect(all.map((b) => b.slug)).toEqual(
+      expect.arrayContaining([inside.slug, outside.slug]),
+    );
+    expect(
+      (await ctx.http().get('/api/v1/catalog/brands?category=BAD%20SLUG'))
+        .status,
+    ).toBe(400);
+  });
+});
+
 describe('data repair migration 20261127000000_plain_text_entities', () => {
   it('decodes text stored HTML-encoded by the old stripTags, leaves slugs alone, and skips colliding unique names', async () => {
     const t = randomBytes(3).toString('hex');

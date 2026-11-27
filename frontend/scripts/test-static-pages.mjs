@@ -14,8 +14,16 @@ const page = await browser.newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
+const contactPosts = [];
+await page.route('https://challenges.cloudflare.com/**', (route) =>
+  route.fulfill({ contentType: 'application/javascript', body: "window.turnstile={render(el,o){setTimeout(()=>o.callback('captcha-1'),0);return 'w1'},remove(){}};" }),
+);
 await page.route('**/api/v1/**', (route) => {
   const path = new URL(route.request().url()).pathname.replace('/api/v1', '');
+  if (path === '/contact') {
+    contactPosts.push(route.request().postDataJSON());
+    return route.fulfill({ status: 202, json: { success: true, data: null } });
+  }
   const data = path === '/catalog/categories' ? [{ id: 'c1', name: 'Kitchen and Dining', slug: 'kitchen-and-dining', children: [] }] : null;
   return route.fulfill({ json: { success: true, data } });
 });
@@ -126,6 +134,28 @@ try {
     await assertNoOverflow(`404 @${width}`);
   }
   console.log('PASS no horizontal overflow at 320 / 375 / 768 / 1440');
+
+  // contact form: local check, then a plain-text message with the order number (and the captcha when configured)
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await open('/contact');
+  const form = page.locator('form', { has: page.getByRole('heading', { name: 'Send us a message' }) });
+  await form.getByLabel('Your name').fill('Asha Kumar');
+  await form.getByLabel('Email (we reply here)').fill('asha@example.test');
+  await form.getByLabel('Order number (optional)').fill('yl26-1001');
+  await form.getByLabel('Message').fill('short');
+  await form.getByRole('button', { name: 'Send message' }).click();
+  await form.getByText('Please tell us a little more').waitFor();
+  assert.equal(contactPosts.length, 0, 'too-short message is not sent');
+  await form.getByLabel('Message').fill('My parcel says delivered but it has not arrived.');
+  await form.getByRole('button', { name: 'Send message' }).click();
+  await page.getByText('Thanks, we have your message.').waitFor();
+  assert.equal(contactPosts.length, 1);
+  const sent = contactPosts[0];
+  assert.equal(sent.orderNumber, 'YL26-1001');
+  assert.equal(sent.topic, 'ORDER');
+  assert.equal('website' in sent, false, 'the honeypot is not sent when empty');
+  if (process.env.EXPECT_CAPTCHA === '1') assert.equal(sent.captchaToken, 'captcha-1');
+  console.log('PASS contact form sends a checked, plain message');
 
   assert.deepEqual(pageErrors, [], `uncaught page errors: ${pageErrors.join(' | ')}`);
   console.log('PASS: help, shipping, returns, privacy, terms, contact and 404 pages');

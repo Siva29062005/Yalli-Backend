@@ -3,9 +3,9 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { AccountShell, PanelEmpty, PanelError, PanelLoading, Pager } from "@/components/AccountShell";
-import { accountApi, ACCOUNT_PAGE_SIZE, RETURN_REASONS } from "@/lib/account-api";
+import { accountApi, RETURN_REASONS } from "@/lib/account-api";
 import { formatIndianDate } from "@/lib/formatters";
-import { useAsync } from "@/lib/useAsync";
+import { usePaged } from "@/lib/useAsync";
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   REQUESTED: { label: "Under review", tone: "bg-amber-50 text-amber-800" },
@@ -17,7 +17,7 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 
 export default function ReturnsPage() {
   const [page, setPage] = useState(1);
-  const { data, error, loading, reload } = useAsync(() => accountApi.returns(page), [page]);
+  const { data, hasNext, error, loading, reload } = usePaged(() => accountApi.returns(page), [page]);
 
   return (
     <AccountShell title="My returns" subtitle="Track items you’ve sent back." crumbs={[{ label: "My returns" }]}>
@@ -39,9 +39,16 @@ export default function ReturnsPage() {
               return (
                 <li key={r.id} className="rounded-3xl border border-[#E6EAE7] bg-white p-5 space-y-2 min-w-0">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[14px] font-semibold text-[#113322]">{RETURN_REASONS[r.reason] ?? r.reason}</span>
+                    <span className="min-w-0 break-words text-[14px] font-semibold text-[#113322]">
+                      {r.productName ?? "Item"}
+                      {r.variantName ? <span className="font-normal text-[#5F6B64]"> · {r.variantName}</span> : null}
+                    </span>
                     <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${s.tone}`}>{s.label}</span>
                   </div>
+                  <p className="text-[13px] text-[#4A5550]">
+                    {RETURN_REASONS[r.reason] ?? r.reason}
+                    {r.orderNumber ? ` · order ${r.orderNumber}` : ""}
+                  </p>
                   <p className="text-[13px] text-[#4A5550]">
                     Qty {r.quantity} · requested {formatIndianDate(r.createdAt)}
                     {r.opened ? " · opened" : ""}
@@ -54,7 +61,7 @@ export default function ReturnsPage() {
               );
             })}
           </ul>
-          <Pager page={page} hasNext={data.length === ACCOUNT_PAGE_SIZE} onPage={setPage} />
+          <Pager page={page} hasNext={hasNext} onPage={setPage} />
         </div>
       )}
     </AccountShell>

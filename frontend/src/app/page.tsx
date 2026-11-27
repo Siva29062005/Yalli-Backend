@@ -6,7 +6,6 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { CategoryTiles } from "@/components/CategoryTiles";
 import { ProductCard } from "@/components/ProductCard";
-import { CartDrawer } from "@/components/CartDrawer";
 import type { Metadata } from "next";
 import { JsonLd } from "@/components/JsonLd";
 import { listProducts } from "@/lib/catalog-api";
@@ -31,7 +30,6 @@ export default async function HomePage() {
       {SITE_URL && <JsonLd data={websiteJsonLd({ name: BUSINESS.tradeName, siteUrl: SITE_URL })} />}
       <AnnouncementBar />
       <Header />
-      <CartDrawer />
 
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 md:px-8 lg:px-12 py-6 space-y-12">
         {/* 1. Hero Section matching Figma Screen 01 */}
@@ -88,7 +86,7 @@ export default async function HomePage() {
         <section className="space-y-6">
           <div className="flex items-end justify-between">
             <div>
-              <span className="text-[11px] font-bold text-[#8A958E] uppercase tracking-wider block">
+              <span className="text-[11px] font-bold text-[#5F6B64] uppercase tracking-wider block">
                 New Arrivals
               </span>
               <h2 className="font-heading text-[24px] md:text-[28px] font-bold text-[#113322]">
@@ -111,7 +109,7 @@ export default async function HomePage() {
               ))}
             </div>
           ) : (
-            <p className="rounded-2xl border border-[#E6EAE7] bg-white p-8 text-center text-[14px] text-[#8A958E]">
+            <p className="rounded-2xl border border-[#E6EAE7] bg-white p-8 text-center text-[14px] text-[#5F6B64]">
               New arrivals are on their way. <Link href="/catalog" className="font-semibold text-[#116644] hover:underline">Browse the shop</Link>
             </p>
           )}
@@ -127,7 +125,7 @@ export default async function HomePage() {
             {onSale > 0 && (
               <div className="bg-white rounded-xl p-5 border border-[#E6EAE7] flex flex-col justify-between space-y-3">
                 <div>
-                  <span className="text-[11px] font-bold text-[#FF9900] uppercase tracking-wider">On sale now</span>
+                  <span className="text-[11px] font-bold text-[#A65500] uppercase tracking-wider">On sale now</span>
                   <h3 className="font-heading text-[17px] font-bold text-[#113322]">
                     {onSale === 1 ? "1 product at a special price" : `${onSale} products at special prices`}
                   </h3>
@@ -170,19 +168,19 @@ export default async function HomePage() {
               <ShieldCheck className="w-4 h-4 text-[#116644]" />
               <span>Secure payments with Razorpay</span>
             </div>
-            <span className="text-[#8A958E]">·</span>
+            <span className="text-[#5F6B64]">·</span>
             <div className="flex items-center gap-1.5">
               <FileText className="w-4 h-4 text-[#116644]" />
               <span>GST invoice with every order</span>
             </div>
-            <span className="text-[#8A958E]">·</span>
+            <span className="text-[#5F6B64]">·</span>
             <div className="flex items-center gap-1.5">
               <Truck className="w-4 h-4 text-[#116644]" />
               <span>Delivery fee shown before you pay</span>
             </div>
             {(BUSINESS.supportEmail || BUSINESS.supportPhone) && (
               <>
-                <span className="text-[#8A958E]">·</span>
+                <span className="text-[#5F6B64]">·</span>
                 <Link href="/contact" className="flex items-center gap-1.5 hover:text-[#116644]">
                   <MessageCircle className="w-4 h-4 text-[#116644]" />
                   <span>Contact support</span>

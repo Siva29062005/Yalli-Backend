@@ -15,7 +15,7 @@ import { BRAND } from '@/lib/constants';
 import { useCategories } from '@/components/CategoryProvider';
 import { useWishlist } from "@/components/WishlistProvider";
 import { useStore } from '@/lib/store';
-import { useCart } from '@/components/CartProvider';
+import { cartUnits, useCart } from '@/components/CartProvider';
 import { useMounted } from '@/lib/useMounted';
 import { useAuth } from '@/components/AuthProvider';
 import { displayName } from '@/lib/customer-session';
@@ -28,7 +28,7 @@ export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const { cart } = useCart();
-  const cartCount = cart.itemCount;
+  const cartCount = cartUnits(cart);
   const wishlistCount = useWishlist().slugs.size;
   const { user } = useAuth();
   const setCartDrawerOpen = useStore((state) => state.setCartDrawerOpen);
@@ -49,7 +49,7 @@ export function Header() {
             <span className="font-heading text-[32px] md:text-[34px] font-bold text-[#116644] tracking-tight group-hover:opacity-95 transition">
               {BRAND.name}
             </span>
-            <span className="hidden sm:inline text-[13px] text-[#8A958E] font-medium tracking-normal">
+            <span className="hidden sm:inline text-[13px] text-[#5F6B64] font-medium tracking-normal">
               {BRAND.tagline}
             </span>
           </Link>
@@ -62,9 +62,10 @@ export function Header() {
             onSubmit={handleSearch}
             className="relative hidden md:block w-[240px] lg:w-[280px]"
           >
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8A958E]" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5F6B64]" />
             <input
-              type="text"
+              type="search"
+              aria-label="Search products"
               placeholder="Search your next favourite"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -80,7 +81,7 @@ export function Header() {
           >
             <Heart className="w-5 h-5 stroke-[1.75]" />
             {mounted && wishlistCount > 0 && (
-              <span className="absolute top-1 right-1 w-4 h-4 bg-[#FF9900] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              <span className="absolute top-1 right-1 w-4 h-4 bg-[#FF9900] text-[#113322] text-[10px] font-bold rounded-full flex items-center justify-center">
                 {wishlistCount}
               </span>
             )}
@@ -106,7 +107,7 @@ export function Header() {
           >
             <ShoppingBag className="w-5 h-5 stroke-[1.75]" />
             {mounted && cartCount > 0 && (
-              <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-[#FF9900] text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-[#FF9900] text-[#113322] text-[10px] font-bold rounded-full flex items-center justify-center">
                 {cartCount}
               </span>
             )}
@@ -139,6 +140,12 @@ export function Header() {
           className="text-[14px] font-medium text-[#113322] hover:text-[#116644] transition whitespace-nowrap"
         >
           Shop all
+        </Link>
+        <Link href="/specials" className="text-[14px] font-medium text-[#113322] hover:text-[#116644] transition whitespace-nowrap">
+          On sale
+        </Link>
+        <Link href="/brands" className="text-[14px] font-medium text-[#113322] hover:text-[#116644] transition whitespace-nowrap">
+          Brands
         </Link>
         {CATEGORIES.filter((c) => c.id !== 'all')
           .slice(0, 4)
@@ -176,7 +183,7 @@ export function Header() {
         )}
         <Link
           href="/compare"
-          className="text-[14px] font-medium text-[#8A958E] hover:text-[#116644] transition whitespace-nowrap"
+          className="text-[14px] font-medium text-[#5F6B64] hover:text-[#116644] transition whitespace-nowrap"
         >
           Compare
         </Link>
@@ -186,9 +193,10 @@ export function Header() {
       {mobileMenuOpen && (
         <div className="xl:hidden max-h-[calc(100dvh-76px)] overflow-y-auto bg-white border-t border-[#E6EAE7] px-6 py-4 space-y-3">
           <form onSubmit={handleSearch} className="relative mb-3">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8A958E]" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5F6B64]" />
             <input
-              type="text"
+              type="search"
+              aria-label="Search products"
               placeholder="Search your next favourite"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -214,7 +222,7 @@ export function Header() {
               </Link>
             ))}
           </div>
-          <div className="border-t border-[#E6EAE7] pt-3 flex justify-between text-[13px] text-[#8A958E]">
+          <div className="border-t border-[#E6EAE7] pt-3 flex justify-between text-[13px] text-[#5F6B64]">
             <Link href="/compare">Compare Products</Link>
           </div>
         </div>

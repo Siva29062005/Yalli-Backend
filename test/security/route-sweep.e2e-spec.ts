@@ -70,6 +70,8 @@ const PUBLIC_ROUTES = new Set([
   'DELETE /api/v1/cart/items/{variantId}',
   'POST /api/v1/cart/coupon',
   'DELETE /api/v1/cart/coupon',
+  // contact form (rate-limited, captcha)
+  'POST /api/v1/contact',
 ]);
 const key = (r: { method: string; path: string }) =>
   `${r.method.toUpperCase()} ${r.path}`;

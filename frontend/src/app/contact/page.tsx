@@ -2,6 +2,7 @@ import { canonicalFor } from '@/lib/site';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { GrievanceOfficer, SellerDetails, SupportDetails } from '@/components/BusinessInfo';
+import { ContactForm } from '@/components/ContactForm';
 import { PolicyPage, Section, textLink } from '@/components/PolicyPage';
 
 export const metadata: Metadata = {
@@ -25,6 +26,7 @@ export default function ContactPage() {
           Many questions are answered in the <Link href="/help" className={textLink}>help centre</Link>. Never send us your card
           number, PIN, password or one-time codes. We will never ask for them.
         </p>
+        <ContactForm />
       </Section>
 
       <Section id="seller" title="Seller details">

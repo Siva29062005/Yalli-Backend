@@ -152,6 +152,30 @@ await test('quantity limits and stock errors come from the server', async (conte
   await page.getByText('Remove or update unavailable items to checkout').waitFor();
   assert.equal(await page.getByRole('link', { name: /Proceed to Checkout/ }).count(), 0);
   await page.screenshot({ path: `${SHOTS}/cart-stock-issue.png`, fullPage: true });
+
+  // "−" on a line over stock steps straight down to what is available (2 -> 1), not to an impossible 1 below the old value
+  await page.getByRole('button', { name: 'Decrease quantity of Product 1' }).click();
+  await page.getByText(/Only 1 left/).waitFor({ state: 'detached' });
+});
+
+await test('one cart drawer for every page: the header cart button works on the account pages too', async (context) => {
+  const be = fakeBackend({ stock: 5 });
+  await context.route('**/api/v1/**', be.handle);
+  const page = await context.newPage();
+  await page.goto(`${BASE}/products/product-1`);
+  await page.getByRole('button', { name: 'Add to Cart' }).click();
+  await page.getByRole('dialog', { name: 'Your cart' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.goto(`${BASE}/help`);
+  await page.locator('header').getByRole('button', { name: /cart/i }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Your cart' });
+  await dialog.waitFor();
+  assert.equal(await page.getByRole('dialog', { name: 'Your cart' }).count(), 1, 'exactly one drawer');
+  // header badge, drawer title and cart page count the same units
+  assert.match(await dialog.getByRole('heading').first().innerText(), /\(1\)/);
+  await dialog.getByRole('link', { name: 'View full cart' }).click();
+  await page.waitForURL(/\/cart/);
+  assert.equal(await page.getByRole('dialog', { name: 'Your cart' }).count(), 0, 'navigating closes the drawer');
 });
 
 await test('add beyond stock shows the server error on the product page', async (context) => {

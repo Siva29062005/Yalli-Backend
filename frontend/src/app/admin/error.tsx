@@ -25,7 +25,7 @@ export default function AdminError({ error, retry }: { error: unknown; retry: ()
         </button>
         <Link href="/admin" className="text-[14px] font-semibold text-[#116644] underline">Back to the staff workspace</Link>
       </div>
-      {reference && <p className="text-[12px] text-[#8A958E]">Reference for the developers: {reference}</p>}
+      {reference && <p className="text-[12px] text-[#5F6B64]">Reference for the developers: {reference}</p>}
     </main>
   );
 }

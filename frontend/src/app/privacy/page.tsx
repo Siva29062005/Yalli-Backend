@@ -159,15 +159,17 @@ export default function PrivacyPage() {
           <li>
             <strong>See and correct.</strong> Your name, phone number and saved addresses can be changed in{' '}
             <Link href="/account/profile" className={textLink}>My profile</Link> and{' '}
-            <Link href="/account/addresses" className={textLink}>Addresses</Link>. Ask us if you want a copy of what we hold.
+            <Link href="/account/addresses" className={textLink}>Addresses</Link>. You can download a copy of what we hold in{' '}
+            <Link href="/account/data" className={textLink}>Your data</Link>.
           </li>
           <li>
             <strong>Offers by email.</strong> Switch them on or off any time in{' '}
             <Link href="/account/profile" className={textLink}>My profile</Link>.
           </li>
           <li>
-            <strong>Delete your account.</strong> Ask us using the contact details below and we will close it after checking
-            that it is really you.
+            <strong>Delete your account.</strong> Do it yourself in <Link href="/account/data" className={textLink}>Your data</Link>{' '}
+            (you confirm with your password, and your authenticator code if two-step verification is on), or ask us using the
+            contact details below.
           </li>
           <li>
             <strong>Sign-ins.</strong> You can see and end your signed-in devices under{' '}

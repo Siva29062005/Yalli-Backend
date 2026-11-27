@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
+import { CatalogLoading } from '@/components/CatalogLoading';
 import { CatalogPage } from '@/components/CatalogPage';
 import { parseProductQuery } from '@/lib/catalog-api';
 import { canonicalFor, isFilteredListing } from '@/lib/site';
@@ -20,5 +22,10 @@ export default async function Page({
 }: {
   searchParams: Search;
 }) {
-  return <CatalogPage query={parseProductQuery(await searchParams)} />;
+  const query = parseProductQuery(await searchParams);
+  return (
+    <Suspense fallback={<CatalogLoading />}>
+      <CatalogPage query={query} />
+    </Suspense>
+  );
 }

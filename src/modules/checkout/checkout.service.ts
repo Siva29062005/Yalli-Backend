@@ -56,6 +56,8 @@ function shippingTax(shareMinor: number, gstMinor: number, sameState: boolean) {
   };
 }
 
+/** Razorpay's smallest payment: ₹1. An order below it could be placed but never paid. */
+export const MIN_PAYABLE_MINOR = 100;
 @Injectable()
 export class CheckoutService {
   private readonly sellerState: string;
@@ -260,6 +262,7 @@ export class CheckoutService {
     return {
       purchasable:
         problems.length === 0 &&
+        priced.totalMinor >= MIN_PAYABLE_MINOR &&
         shipping.kind !== 'UNAVAILABLE' &&
         shipping.kind !== 'INVALID_CODE',
       shipping: shippingView(shipping),
@@ -284,6 +287,10 @@ export class CheckoutService {
         ...splitGst(priced.gstIncludedMinor, same),
       },
       coupon: priced.coupon,
+      /** Below this the order cannot be paid online (Razorpay's minimum): the page explains it. */
+      minimumPayableMinor: MIN_PAYABLE_MINOR,
+      /** How long stock is held for an unpaid order (PAYMENT_WINDOW_MINUTES). */
+      paymentWindowMinutes: Math.round(this.paymentWindowSeconds / 60),
     };
   }
 
@@ -378,6 +385,13 @@ export class CheckoutService {
               : shipping.kind === 'CHOICE_REQUIRED'
                 ? 'SHIPPING_METHOD_REQUIRED'
                 : 'SHIPPING_METHOD_INVALID',
+        });
+      // An order that cannot be paid (e.g. a fixed coupon larger than the cart) must not hold stock and a coupon.
+      if (priced.totalMinor < MIN_PAYABLE_MINOR)
+        throw new ConflictException({
+          message:
+            'The order total must be at least ₹1 to pay online. Add an item or remove the coupon.',
+          code: 'ORDER_TOTAL_TOO_LOW',
         });
       if (
         input.expectedTotalMinor !== undefined &&

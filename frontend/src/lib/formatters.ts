@@ -29,6 +29,9 @@ export function formatIndianDate(dateStringOrDate: string | Date): string {
     day: "numeric",
     month: "short",
     year: "numeric",
+    // Always India time: the server (UTC) and the browser must render the same day (no hydration mismatch), and staff
+    // outside India must see the shop's calendar day.
+    timeZone: "Asia/Kolkata",
   });
 }
 

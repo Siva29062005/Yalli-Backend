@@ -4,9 +4,9 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { Star, Pencil, Trash2 } from "lucide-react";
 import { AccountShell, PanelEmpty, PanelError, PanelLoading, Pager, inputClass, primaryButton, secondaryButton } from "@/components/AccountShell";
-import { accountApi, ACCOUNT_PAGE_SIZE, type MyReview } from "@/lib/account-api";
+import { accountApi, type MyReview } from "@/lib/account-api";
 import { formatIndianDate } from "@/lib/formatters";
-import { useAsync } from "@/lib/useAsync";
+import { usePaged } from "@/lib/useAsync";
 
 const STATUS = {
   PENDING: { label: "Awaiting moderation", tone: "bg-amber-50 text-amber-800" },
@@ -32,7 +32,7 @@ function Stars({ value, onChange }: { value: number; onChange?: (n: number) => v
 
 export default function MyReviewsPage() {
   const [page, setPage] = useState(1);
-  const { data, setData, error, loading, reload } = useAsync(() => accountApi.reviews(page), [page]);
+  const { data, hasNext, setData, error, loading, reload } = usePaged(() => accountApi.reviews(page), [page]);
   const [editing, setEditing] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -82,7 +82,7 @@ export default function MyReviewsPage() {
                     <p className="text-[14px] text-[#4A5550] whitespace-pre-line break-words">{r.body}</p>
                     {r.moderationNote && <p className="text-[13px] text-red-700">Reason: {r.moderationNote}</p>}
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-[12px] text-[#8A958E]">{formatIndianDate(r.updatedAt)}</span>
+                      <span className="text-[12px] text-[#5F6B64]">{formatIndianDate(r.updatedAt)}</span>
                       <div className="flex gap-2">
                         <button type="button" className={secondaryButton} onClick={() => setEditing(r.id)}><Pencil className="h-3.5 w-3.5" /> Edit</button>
                         <button type="button" className={secondaryButton} onClick={() => remove(r)} aria-label={`Delete review of ${r.product.name}`}><Trash2 className="h-3.5 w-3.5" /> Delete</button>
@@ -93,7 +93,7 @@ export default function MyReviewsPage() {
               </li>
             ))}
           </ul>
-          <Pager page={page} hasNext={data.length === ACCOUNT_PAGE_SIZE} onPage={setPage} />
+          <Pager page={page} hasNext={hasNext} onPage={setPage} />
         </div>
       )}
     </AccountShell>
@@ -126,7 +126,7 @@ function ReviewEditor({ review, onCancel, onSaved }: { review: MyReview; onCance
       <Stars value={rating} onChange={setRating} />
       <input className={inputClass} placeholder="Title (optional)" maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Title" />
       <textarea className={inputClass} rows={4} maxLength={2000} value={body} onChange={(e) => setBody(e.target.value)} aria-label="Review" />
-      <p className="text-[12px] text-[#8A958E]">Edited reviews are checked again before they show on the product page.</p>
+      <p className="text-[12px] text-[#5F6B64]">Edited reviews are checked again before they show on the product page.</p>
       {error && <p role="alert" className="text-[13px] text-red-600">{error}</p>}
       <div className="flex gap-2">
         <button type="submit" className={primaryButton} disabled={busy}>{busy ? "Saving…" : "Save review"}</button>

@@ -26,7 +26,8 @@ function fakeBackend(opts = {}) {
   const s = {
     calls: [], addresses: opts.addresses ?? [ADDRESS], cartItems: 1, priceChangedOnce: !!opts.priceChanged,
     shipping: opts.shipping ?? 'FREE', orderStatus: 'INVENTORY_RESERVED', confirmPaid: opts.confirmPaid ?? true,
-    signedIn: opts.signedIn ?? true,
+    signedIn: opts.signedIn ?? true, cartFails: opts.cartFailsOnce ? 1 : 0, coupon: opts.coupon ? { code: 'WELCOME10', discountMinor: 9800 } : null,
+    pollFails: opts.pollFailsOnce ? 1 : 0,
   };
   const totals = (ship = 0) => ({ subtotalMinor: 98000, discountMinor: 0, shippingMinor: ship, gstIncludedMinor: 14949, totalMinor: 98000 + ship, currency: 'INR' });
   const cart = () => ({
@@ -35,7 +36,7 @@ function fakeBackend(opts = {}) {
       imageUrl: null, quantity: 2, unitPriceMinor: 49000, compareAtMinor: null, lineSubtotalMinor: 98000, lineDiscountMinor: 0,
       lineTotalMinor: 98000, purchasable: true, issue: null, maxQuantity: 5,
     }] : [],
-    itemCount: s.cartItems ? 2 : 0, coupon: null, couponError: null, totals: s.cartItems ? totals() : { ...totals(), subtotalMinor: 0, totalMinor: 0, gstIncludedMinor: 0 },
+    itemCount: s.cartItems ? 2 : 0, coupon: s.coupon, couponError: null, totals: s.cartItems ? totals() : { ...totals(), subtotalMinor: 0, totalMinor: 0, gstIncludedMinor: 0 },
   });
   const order = () => ({
     id: ORDER_ID, orderNumber: 'YL-260001', status: s.orderStatus, placedAt: '2026-11-19T10:00:00Z', paidAt: null,
@@ -53,7 +54,15 @@ function fakeBackend(opts = {}) {
     if (path === '/catalog/categories') return route.fulfill(ok([]));
     if (path === '/auth/refresh') return route.fulfill(s.signedIn ? ok({ accessToken: 'at', csrfToken: 'csrf' }) : fail(401, 'No session', 'UNAUTHORIZED'));
     if (path === '/me') return route.fulfill(ok({ id: 'u1', email: 'priya@example.com', firstName: 'Priya', lastName: 'R', roles: ['CUSTOMER'] }));
+    if (path === '/cart' && s.cartFails > 0) {
+      s.cartFails -= 1;
+      return route.fulfill(fail(503, 'Service unavailable', 'SERVICE_UNAVAILABLE'));
+    }
     if (path === '/cart') return route.fulfill(ok(cart()));
+    if (path === '/cart/coupon' && req.method() === 'DELETE') {
+      s.coupon = null;
+      return route.fulfill(ok(cart()));
+    }
     if (path === '/me/addresses' && req.method() === 'GET') return route.fulfill(ok(s.addresses));
     if (path === '/me/addresses' && req.method() === 'POST') {
       if (body.postalCode === '000000') return route.fulfill(fail(400, 'Validation failed', 'VALIDATION_ERROR', [{ path: ['postalCode'], message: 'Enter a valid 6-digit PIN code' }]));
@@ -69,9 +78,11 @@ function fakeBackend(opts = {}) {
       ] : [];
       const code = body.shippingMethodCode ?? (multi ? 'STANDARD' : null);
       const fee = code === 'EXPRESS' ? 9900 : 0;
+      const unserved = s.shipping === 'UNAVAILABLE';
       return route.fulfill(ok({
-        purchasable: true, problems: [], coupon: null, totals: totals(fee),
-        shipping: multi ? { status: 'SELECTED', selected: code, options } : { status: 'FREE', selected: null, options: [] },
+        purchasable: !unserved, problems: [], coupon: s.coupon, totals: totals(fee),
+        minimumPayableMinor: 100, paymentWindowMinutes: opts.window ?? 30,
+        shipping: unserved ? { status: 'UNAVAILABLE', selected: null, options: [] } : multi ? { status: 'SELECTED', selected: code, options } : { status: 'FREE', selected: null, options: [] },
         tax: { supply: 'INTRA_STATE', cgstMinor: 7474, sgstMinor: 7475, igstMinor: 0 },
       }));
     }
@@ -84,7 +95,7 @@ function fakeBackend(opts = {}) {
       return route.fulfill({ ...ok(order()), status: 201 });
     }
     if (path === `/orders/${ORDER_ID}/payments`) {
-      if (opts.paymentsDown) return route.fulfill(fail(503, 'Payments are not configured', 'NOT_CONFIGURED'));
+      if (opts.paymentsDown) return route.fulfill(fail(503, 'Online payment is temporarily unavailable', 'PAYMENT_PROVIDER_UNAVAILABLE'));
       return route.fulfill(ok({ keyId: 'rzp_test_abc', providerOrderId: 'order_ABC123', amountMinor: 98000, currency: 'INR', orderNumber: 'YL-260001', prefill: { email: 'priya@example.com' } }));
     }
     if (path === `/orders/${ORDER_ID}/payments/confirm`) {
@@ -94,6 +105,10 @@ function fakeBackend(opts = {}) {
     if (path === `/orders/${ORDER_ID}/cancel`) {
       s.orderStatus = 'CANCELLED';
       return route.fulfill(ok({ ...order(), cancellable: false, paymentExpiresAt: null }));
+    }
+    if (path === `/orders/${ORDER_ID}` && s.orderStatus === 'INVENTORY_RESERVED' && s.pollFails > 0 && s.calls.filter((c) => c.path === path).length > 1) {
+      s.pollFails -= 1;
+      return route.abort('failed'); // a network blip while polling
     }
     if (path === `/orders/${ORDER_ID}`) return route.fulfill(ok(order()));
     return route.fulfill(fail(404, 'Not found', 'NOT_FOUND'));
@@ -210,8 +225,10 @@ await test('price change on submit asks the customer to review, then succeeds', 
 await test('declined payment keeps the order; retry pay and cancel are offered', async (page, be) => {
   await page.goto(`${BASE}/checkout`);
   await placeBtn(page).click();
-  await page.waitForURL(/confirmation\?payment=failed/);
+  await page.waitForURL(new RegExp(`/orders/${ORDER_ID}/confirmation`));
   await page.getByText('Card declined by bank').waitFor();
+  await page.waitForFunction(() => !location.search.includes('payment='));
+  assert.ok(!page.url().includes('payment='), 'the one-time ?payment= hint is removed from the address');
   await page.getByRole('heading', { name: 'Complete your payment' }).waitFor();
   await page.getByText(/left\)/).waitFor();
   await page.screenshot({ path: `${SHOTS}/confirmation-unpaid.png`, fullPage: true });
@@ -226,6 +243,39 @@ await test('declined payment keeps the order; retry pay and cancel are offered',
   await page.getByRole('heading', { name: 'Order cancelled' }).waitFor();
   assert.ok(be.s.calls.some((c) => c.path.endsWith('/cancel')));
 }, { rzp: 'fail' });
+
+await test('a cart that fails to load offers a retry instead of “Your cart is empty”', async (page) => {
+  await page.goto(`${BASE}/checkout`);
+  await page.getByRole('heading', { name: 'We couldn’t load your cart' }).waitFor();
+  assert.equal(await page.getByText('Your cart is empty').count(), 0);
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await placeBtn(page).waitFor();
+}, { backend: { cartFailsOnce: true } });
+
+await test('an address we do not deliver to says so (not “items unavailable”)', async (page) => {
+  await page.goto(`${BASE}/checkout`);
+  await page.getByText('We don’t deliver to this address yet').waitFor();
+  assert.equal(await page.getByText('Some items are unavailable').count(), 0);
+  assert.equal(await placeBtn(page).isDisabled(), true);
+}, { backend: { shipping: 'UNAVAILABLE' } });
+
+await test('the coupon can be removed at checkout, and the stock-hold note uses the server window', async (page, be) => {
+  await page.goto(`${BASE}/checkout`);
+  await page.getByText('held for 45 minutes').waitFor();
+  await page.getByRole('button', { name: 'Remove coupon WELCOME10' }).click();
+  await page.waitForFunction(() => !document.body.innerText.includes('Remove coupon WELCOME10'));
+  assert.ok(be.s.calls.some((c) => c.path === '/cart/coupon' && c.method === 'DELETE'));
+}, { backend: { coupon: true, window: 45 } });
+
+await test('a network blip while confirming does not stop the check', async (page, be) => {
+  await page.goto(`${BASE}/checkout`);
+  await placeBtn(page).click();
+  await page.getByRole('heading', { name: 'Confirming your payment…' }).waitFor();
+  await page.waitForTimeout(4000); // one poll fails (aborted request)
+  await page.getByRole('heading', { name: 'Confirming your payment…' }).waitFor();
+  be.s.orderStatus = 'PAID'; // the webhook arrives
+  await page.getByRole('heading', { name: 'Thank you! Your order is confirmed' }).waitFor({ timeout: 10_000 });
+}, { backend: { confirmPaid: false, pollFailsOnce: true } });
 
 await test('unverified success shows “confirming” and polls until the webhook marks it paid', async (page, be) => {
   await page.goto(`${BASE}/checkout`);

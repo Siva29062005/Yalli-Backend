@@ -37,3 +37,35 @@ export function useAsync<T>(load: () => Promise<T>, deps: unknown[]) {
   const loading = state.key !== key;
   return { data: state.data, setData, error: loading ? null : state.error, loading, reload };
 }
+
+/** One page of a list plus whether another page exists, from the API's `meta` (never guessed from the page size). */
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  hasNext: boolean;
+}
+
+/** `useAsync` for a paged list: `data` is the page's items, `hasNext` comes from the server. */
+export function usePaged<T>(load: () => Promise<Paged<T>>, deps: unknown[]) {
+  const r = useAsync(load, deps);
+  const { setData: setPage } = r;
+  const setData = useCallback(
+    (v: SetStateAction<T[] | null>) =>
+      setPage((p) => {
+        if (!p) return p;
+        const items = typeof v === 'function' ? (v as (prev: T[] | null) => T[] | null)(p.items) : v;
+        return { ...p, items: items ?? [] };
+      }),
+    [setPage],
+  );
+  return {
+    data: r.data?.items ?? null,
+    hasNext: r.data?.hasNext ?? false,
+    total: r.data?.total ?? 0,
+    setData,
+    error: r.error,
+    loading: r.loading,
+    reload: r.reload,
+  };
+}
+

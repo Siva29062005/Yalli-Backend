@@ -8,8 +8,9 @@ does** — no fake buttons, no dead-end screens.
 
 > Brand: "Yalli" — a modern Indian home & lifestyle e-commerce store.
 > Colors: primary green #116644 (headers, CTAs), deep ink green #113322 (text, admin sidebar),
-> accent saffron #FF9900 (sale prices, highlight CTA), light mint #EEFFEE and off-white #FFFFFE
-> (surfaces), neutral #8A958E for muted text.
+> accent saffron #FF9900 (highlight buttons and badges, with dark #113322 text on it), light mint #EEFFEE and
+> off-white #FFFFFE (surfaces), muted text #5F6B64. Orange TEXT (sale prices) uses the darker #A65500. These two text
+> colours meet WCAG AA contrast (4.5:1) on every light surface; #FF9900 and #8A958E as text on white do not.
 > Fonts: Poppins for headings/display, Inter for body/UI text.
 > Shape language: rounded corners (16–20px), soft card shadows, pill-shaped chips/buttons.
 > Tone: clean, trustworthy, premium-but-warm. Prices always in ₹ (Indian Rupees, GST inclusive).
@@ -43,7 +44,7 @@ does** — no fake buttons, no dead-end screens.
 > three equal cards: "Combo offers — save up to 30%", "Flat ₹100 off first order", "7-day easy
 > replacement". Each card: white rounded rectangle, small icon, Poppins subheading in #113322,
 > green "Shop now →" link. Below the strip, a trust row with 4 small items: secure Razorpay
-> payments, GST invoice included, pan-India shipping, WhatsApp support — muted gray #8A958E
+> payments, GST invoice included, pan-India shipping — muted gray #5F6B64
 > icons and labels, single row, centered.
 
 ### 3. Category / catalog listing page

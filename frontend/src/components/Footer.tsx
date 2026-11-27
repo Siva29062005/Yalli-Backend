@@ -1,4 +1,5 @@
 'use client';
+import { ALL_CATEGORY } from '@/lib/category-utils';
 
 import Link from 'next/link';
 import { BUSINESS, sellerName } from '@/lib/business';
@@ -29,12 +30,14 @@ export function Footer() {
             {CATEGORIES.map((cat) => (
               <Link
                 key={cat.id}
-                href={`/catalog/${cat.slug}`}
+                href={cat.id === ALL_CATEGORY.id ? '/catalog' : `/catalog/${cat.slug}`}
                 className="text-[13px] text-white/80 hover:text-white transition"
               >
                 {cat.name}
               </Link>
             ))}
+            <Link href="/specials" className="text-[13px] text-white/80 hover:text-white transition">On sale</Link>
+            <Link href="/brands" className="text-[13px] text-white/80 hover:text-white transition">Brands</Link>
           </div>
         </div>
       </div>

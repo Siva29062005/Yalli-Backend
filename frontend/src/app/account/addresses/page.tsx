@@ -115,7 +115,7 @@ export default function AddressesPage() {
                       <br />
                       {a.city}, {a.state} {a.postalCode}
                     </p>
-                    <p className="text-[13px] text-[#8A958E]">{formatPhone(a.phoneE164)}</p>
+                    <p className="text-[13px] text-[#5F6B64]">{formatPhone(a.phoneE164)}</p>
                     <div className="flex flex-wrap gap-2 pt-1">
                       <button type="button" className={secondaryButton} disabled={busy === a.id} onClick={() => { setEditing(a.id); setAdding(false); }}>
                         <Pencil className="h-3.5 w-3.5" /> Edit

@@ -2,10 +2,12 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { CategoryProvider } from '@/components/CategoryProvider';
 import { AuthProvider } from '@/components/AuthProvider';
+import { CartDrawer } from '@/components/CartDrawer';
 import { CartProvider } from '@/components/CartProvider';
 import { WishlistProvider } from '@/components/WishlistProvider';
 import { BUSINESS } from '@/lib/business';
 import { SITE_URL } from '@/lib/site';
+import { listCategoryTree } from '@/lib/catalog-api';
 
 const description =
   'Quality home, electronics, kitchen & lifestyle products, delivered across India. Thoughtfully chosen. Honestly priced.';
@@ -20,11 +22,13 @@ export const metadata: Metadata = {
   twitter: { card: 'summary_large_image' },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // Categories are rendered on the server (nav, footer, tiles); an API outage degrades to a client-side load.
+  const categoryTree = await listCategoryTree().catch(() => null);
   return (
     <html lang="en">
       <head>
@@ -46,7 +50,11 @@ export default function RootLayout({
         <AuthProvider>
           <CartProvider>
           <WishlistProvider>
-            <CategoryProvider>{children}</CategoryProvider>
+            <CategoryProvider initialTree={categoryTree}>
+              {children}
+              {/* One drawer for every page, so the header's cart button works everywhere (checkout, account, auth…). */}
+              <CartDrawer />
+            </CategoryProvider>
           </WishlistProvider>
           </CartProvider>
         </AuthProvider>

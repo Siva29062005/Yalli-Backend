@@ -234,6 +234,22 @@ export function renderEmail(
         ],
         cta: { label: 'View order', url: `${base}/account/orders` },
       });
+    case 'CONTACT_MESSAGE':
+      // Every value is customer-typed: layout() escapes paragraphs and the subject is one line.
+      return layout(
+        `Contact form: ${oneLine(m.topic)}${m.orderNumber ? ` (order ${oneLine(m.orderNumber)})` : ''}`,
+        {
+          heading: 'New message from the website',
+          paragraphs: [
+            `From: ${oneLine(m.fromName)} <${oneLine(m.fromEmail)}>`,
+            `Topic: ${oneLine(m.topic)}`,
+            ...(m.orderNumber ? [`Order: ${oneLine(m.orderNumber)}`] : []),
+            m.message,
+          ],
+          footnote:
+            'Reply to the customer from your own mailbox. Never ask for card numbers, passwords or one-time codes.',
+        },
+      );
     default: {
       const unreachable: never = m;
       throw new Error(`No template for ${JSON.stringify(unreachable)}`);

@@ -90,7 +90,7 @@ export function LoginForm() {
         <div className="space-y-1">
           <span className="text-[11px] font-bold text-[#116644] tracking-wider uppercase">Two-step verification</span>
           <h1 className="font-heading text-[28px] sm:text-[32px] font-bold text-[#113322]">One more step.</h1>
-          <p className="text-[14px] text-[#8A958E]">
+          <p className="text-[14px] text-[#5F6B64]">
             {useRecovery
               ? 'Enter one of the recovery codes you saved when you set up two-step verification.'
               : 'Enter the 6-digit code from your authenticator app.'}
@@ -141,7 +141,7 @@ export function LoginForm() {
               setCode('');
               setError(null);
             }}
-            className="text-[#8A958E] hover:text-[#113322]"
+            className="text-[#5F6B64] hover:text-[#113322]"
           >
             ← Start over
           </button>
@@ -155,7 +155,7 @@ export function LoginForm() {
       <div className="space-y-1">
         <span className="text-[11px] font-bold text-[#116644] tracking-wider uppercase">Welcome back</span>
         <h1 className="font-heading text-[28px] sm:text-[32px] font-bold text-[#113322]">Home is a login away.</h1>
-        <p className="text-[14px] text-[#8A958E]">Sign in for your favourites, orders and everyday joys.</p>
+        <p className="text-[14px] text-[#5F6B64]">Sign in for your favourites, orders and everyday joys.</p>
       </div>
 
       {params.get('reset') === '1' && !error && (
@@ -216,7 +216,7 @@ export function LoginForm() {
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#8A958E] hover:text-[#113322]"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#5F6B64] hover:text-[#113322]"
             >
               {showPassword ? 'Hide' : 'Show'}
             </button>

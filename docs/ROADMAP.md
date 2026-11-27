@@ -156,6 +156,11 @@ Goal: every journey a customer of the old site had, plus the account features th
 Exit: the Playwright storefront, cart, checkout and account scripts cover each item; an automated accessibility check
 (axe) runs on the main pages with no serious issues; the P1 storefront and account items are ticked.
 
+**Status (2026-11-27): done.** Every bug and feature above is built and covered by the browser scripts, the backend
+additions by e2e tests (contact form, scoped brands, "from" prices, return facts on the order view, returns list names,
+minimum payable total). `test-a11y.mjs` runs axe on 12 public pages with no serious issue. Left open: the nested category
+filter, the "can I review?" check, an admin screen for contact messages (Phase 11), and a manual accessibility pass.
+
 ## Phase 11: admin console complete
 
 Goal: staff can run the shop without SQL, a terminal or a developer.

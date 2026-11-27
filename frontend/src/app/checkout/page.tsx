@@ -40,7 +40,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 export default function CheckoutPage() {
   const router = useRouter();
   const { status: authStatus } = useAuth();
-  const { cart, status: cartStatus, reload: reloadCart } = useCart();
+  const { cart, status: cartStatus, reload: reloadCart, error: cartError, removeCoupon, pending: cartPending } = useCart();
 
   const [addresses, setAddresses] = useState<SavedAddress[] | null>(null);
   const [addressError, setAddressError] = useState<string | null>(null);
@@ -113,8 +113,15 @@ export default function CheckoutPage() {
       orderId = order.id;
     } catch (e) {
       setPlacing(false);
-      if (e instanceof ApiError && e.code === "PRICE_CHANGED") {
-        setPlaceError("Prices changed since you opened checkout. Please review the updated total and try again.");
+      // Anything the server says changed (price, stock, delivery, the total): show the fresh cart and quote so the
+      // customer sees why, instead of retrying into the same refusal.
+      const stale = ["PRICE_CHANGED", "CART_HAS_UNAVAILABLE_ITEMS", "SHIPPING_UNAVAILABLE", "SHIPPING_METHOD_INVALID", "SHIPPING_METHOD_REQUIRED", "ORDER_TOTAL_TOO_LOW"];
+      if (e instanceof ApiError && stale.includes(e.code ?? "")) {
+        setPlaceError(
+          e.code === "PRICE_CHANGED"
+            ? "Prices changed since you opened checkout. Please review the updated total and try again."
+            : checkoutErrorMessage(e),
+        );
         void reloadCart();
         checkoutApi.quote(addressId, shippingCode).then(setQuote).catch(() => setQuote(null));
       } else {
@@ -131,7 +138,7 @@ export default function CheckoutPage() {
       if (r.kind === "failed") sessionStorage.setItem(`yalli_pay_err_${orderId}`, r.message);
     } catch (e) {
       outcome = "failed";
-      sessionStorage.setItem(`yalli_pay_err_${orderId}`, checkoutErrorMessage(e));
+      sessionStorage.setItem(`yalli_pay_err_${orderId}`, checkoutErrorMessage(e, { afterOrder: true }));
     }
     router.replace(`/orders/${orderId}/confirmation${outcome === "paid" ? "" : `?payment=${outcome}`}`);
   };
@@ -142,6 +149,20 @@ export default function CheckoutPage() {
         <div className="py-24 flex justify-center" role="status">
           <Loader2 className="w-8 h-8 text-[#116644] animate-spin" aria-hidden />
           <span className="sr-only">Preparing secure checkout…</span>
+        </div>
+      </Shell>
+    );
+  }
+
+  if (cartStatus === "error" && cart.items.length === 0) {
+    return (
+      <Shell>
+        <div className="py-16 text-center space-y-4" role="alert">
+          <h1 className="font-heading text-2xl font-bold text-[#113322]">We couldn’t load your cart</h1>
+          <p className="text-[#5C6B62]">{cartError ?? "Please check your connection and try again."}</p>
+          <button type="button" onClick={() => void reloadCart()} className="inline-block bg-[#116644] text-white font-semibold text-[14px] px-6 py-2.5 rounded-xl">
+            Try again
+          </button>
         </div>
       </Shell>
     );
@@ -161,13 +182,16 @@ export default function CheckoutPage() {
     );
   }
 
-  const blocked = cart.items.some((i) => !i.purchasable) || (quote !== null && !quote.purchasable);
+  const itemsBlocked = cart.items.some((i) => !i.purchasable) || (quote?.problems.length ?? 0) > 0;
+  const deliveryBlocked = quote?.shipping.status === "UNAVAILABLE" || quote?.shipping.status === "INVALID_METHOD";
+  const totalTooLow = quote !== null && quote.totals.totalMinor < quote.minimumPayableMinor;
+  const blocked = itemsBlocked || (quote !== null && !quote.purchasable);
   const shipping = quote?.shipping;
   const canPlace = !!quote && !blocked && !quoting && !placing && !!addressId;
 
   return (
     <Shell>
-      <nav className="text-[13px] text-[#8A958E] flex items-center gap-2" aria-label="Breadcrumb">
+      <nav className="text-[13px] text-[#5F6B64] flex items-center gap-2" aria-label="Breadcrumb">
         <Link href="/" className="hover:text-[#116644]">Home</Link>
         <span>/</span>
         <Link href="/cart" className="hover:text-[#116644]">Cart</Link>
@@ -197,7 +221,7 @@ export default function CheckoutPage() {
                 <button type="button" onClick={loadAddresses} className="font-semibold underline">Try again</button>
               </div>
             ) : addresses === null ? (
-              <p className="text-[14px] text-[#8A958E]">Loading your addresses…</p>
+              <p className="text-[14px] text-[#5F6B64]">Loading your addresses…</p>
             ) : (
               <div className="space-y-3">
                 {addresses.length > 0 && (
@@ -223,7 +247,7 @@ export default function CheckoutPage() {
                         <span className="flex items-center gap-2 font-semibold text-[#113322]">
                           <span className="truncate">{a.fullName}</span>
                           {a.label && <span className="shrink-0 rounded bg-[#E6F2EC] px-1.5 py-0.5 text-[11px] text-[#116644]">{a.label}</span>}
-                          {a.isDefault && <span className="shrink-0 text-[11px] text-[#8A958E]">Default</span>}
+                          {a.isDefault && <span className="shrink-0 text-[11px] text-[#5F6B64]">Default</span>}
                         </span>
                         <span className="mt-1 block text-[#5C6B62] break-words">
                           {[a.line1, a.line2, a.landmark].filter(Boolean).join(", ")}, {a.city}, {a.state} {a.postalCode}
@@ -273,7 +297,7 @@ export default function CheckoutPage() {
                         <input type="radio" name="shipping" checked={o.code === shippingCode} onChange={() => setShippingCode(o.code)} className="accent-[#116644]" />
                         <span className="min-w-0">
                           <span className="block font-semibold text-[#113322]">{o.name}</span>
-                          <span className="block text-[#8A958E] text-[13px]">
+                          <span className="block text-[#5F6B64] text-[13px]">
                             {o.etaMinDays === o.etaMaxDays ? `${o.etaMinDays}` : `${o.etaMinDays}–${o.etaMaxDays}`} business days
                           </span>
                         </span>
@@ -306,7 +330,7 @@ export default function CheckoutPage() {
                 </div>
                 <div className="min-w-0 flex-1 text-[13px]">
                   <p className="font-semibold text-[#113322] line-clamp-2">{i.productName}</p>
-                  <p className="text-[#8A958E]">{[i.variantName, `Qty ${i.quantity}`].filter(Boolean).join(" · ")}</p>
+                  <p className="text-[#5F6B64]">{[i.variantName, `Qty ${i.quantity}`].filter(Boolean).join(" · ")}</p>
                   {!i.purchasable && <p className="text-[#B42318]">Not available in this quantity</p>}
                 </div>
                 <span className="shrink-0 text-[13px] font-semibold text-[#113322]">{formatPaise(i.lineTotalMinor)}</span>
@@ -323,12 +347,24 @@ export default function CheckoutPage() {
                   {t.discountMinor > 0 && (
                     <Row label={`Discount${quote?.coupon ? ` (${quote.coupon.code})` : ""}`} value={`− ${formatPaise(t.discountMinor)}`} accent />
                   )}
+                  {cart.coupon && (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void removeCoupon()}
+                        disabled={cartPending.has("coupon")}
+                        className="text-[12px] font-semibold text-[#116644] hover:underline disabled:opacity-50"
+                      >
+                        Remove coupon {cart.coupon.code}
+                      </button>
+                    </div>
+                  )}
                   <Row label="Shipping" value={quote ? (t.shippingMinor === 0 ? "Free" : formatPaise(t.shippingMinor)) : "Select address"} />
                   <div className="flex justify-between border-t border-[#E1E8E4] pt-3 text-[16px] font-bold text-[#113322]">
                     <dt>Total</dt>
                     <dd>{formatPaise(t.totalMinor)}</dd>
                   </div>
-                  <p className="text-[12px] text-[#8A958E]">
+                  <p className="text-[12px] text-[#5F6B64]">
                     Includes GST {formatPaise(t.gstIncludedMinor)}
                     {quote && (quote.tax.supply === "INTRA_STATE" ? " (CGST + SGST)" : " (IGST)")}
                   </p>
@@ -341,9 +377,17 @@ export default function CheckoutPage() {
           {blocked && (
             <p role="alert" className="flex gap-2 text-[13px] text-[#B42318]">
               <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden />
-              <span>
-                Some items are unavailable. <Link href="/cart" className="font-semibold underline">Update your cart</Link> to continue.
-              </span>
+              {itemsBlocked ? (
+                <span>
+                  Some items are unavailable. <Link href="/cart" className="font-semibold underline">Update your cart</Link> to continue.
+                </span>
+              ) : deliveryBlocked ? (
+                <span>We don’t deliver to this address yet. Choose or add another address to continue.</span>
+              ) : totalTooLow ? (
+                <span>The total must be at least {formatPaise(quote!.minimumPayableMinor)} to pay online. Add an item or remove the coupon.</span>
+              ) : (
+                <span>This order can’t be placed yet. Please review the details above.</span>
+              )}
             </p>
           )}
           {placeError && <p role="alert" className="text-[13px] text-[#B42318]">{placeError}</p>}
@@ -357,8 +401,8 @@ export default function CheckoutPage() {
             {placing ? <Loader2 className="w-5 h-5 animate-spin" aria-hidden /> : <Lock className="w-4 h-4" aria-hidden />}
             {placing ? "Processing…" : quote ? `Place order & pay ${formatPaise(quote.totals.totalMinor)}` : "Place order & pay"}
           </button>
-          <p className="text-center text-[12px] text-[#8A958E]">
-            Stock is held for 30 minutes after you place the order while you complete payment.
+          <p className="text-center text-[12px] text-[#5F6B64]">
+            Stock is held for {quote?.paymentWindowMinutes ?? 30} minutes after you place the order while you complete payment.
           </p>
         </aside>
       </div>

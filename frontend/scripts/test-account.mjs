@@ -30,7 +30,7 @@ const product = (slug, name) => ({
 function fakeBackend(opts = {}) {
   const s = {
     calls: [],
-    me: { id: 'u1', email: 'priya@example.com', phone: null, emailVerified: true, phoneVerified: false, mfaEnabled: false, firstName: 'Priya', lastName: 'R', newsletterSubscribed: false, roles: ['CUSTOMER'], createdAt: '2026-01-05T00:00:00Z' },
+    me: { id: 'u1', email: 'priya@example.com', phone: opts.phone ?? null, emailVerified: opts.emailVerified ?? true, phoneVerified: false, mfaEnabled: false, firstName: 'Priya', lastName: 'R', newsletterSubscribed: false, roles: ['CUSTOMER'], createdAt: '2026-01-05T00:00:00Z' },
     addresses: opts.addresses ?? [addr(A1, 'Priya R', true), addr(A2, 'Office Desk', false)],
     orderStatus: opts.orderStatus ?? 'DELIVERED',
     wishlist: [product('copper-bottle', 'Copper Bottle'), product('clay-pot', 'Clay Pot')],
@@ -40,8 +40,10 @@ function fakeBackend(opts = {}) {
       { id: 's2', deviceLabel: null, userAgent: 'Mozilla/5.0 (iPhone) Safari/605', ip: '10.0.0.2', createdAt: '2026-11-10T00:00:00Z', lastSeenAt: '2026-11-12T00:00:00Z', current: false },
     ],
     returns: [],
-    ordersCount: opts.ordersCount ?? 1,
+    meFails: opts.meFailsOnce ? 1 : 0,
+    ordersCount: opts.ordersCount ?? 1, ordersTotal: opts.ordersTotal ?? opts.ordersCount ?? 1,
   };
+  const pageMeta = (page, total, pageSize = 20) => ({ page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
   const order = () => ({
     id: OID, orderNumber: 'YL-260001', status: s.orderStatus, placedAt: '2026-11-10T10:00:00Z',
     paidAt: s.orderStatus === 'INVENTORY_RESERVED' ? null : '2026-11-10T10:05:00Z',
@@ -51,7 +53,15 @@ function fakeBackend(opts = {}) {
     totals: { subtotalMinor: 98000, discountMinor: 0, shippingMinor: 0, gstIncludedMinor: 14949, totalMinor: 98000 }, couponCode: null,
     shippingAddress: { name: 'Priya R', phone: '+919876543210', line1: '12 Lake Road', line2: null, landmark: null, city: 'Chennai', state: 'Tamil Nadu', postalCode: '600001', country: 'IN' },
     shippingMethod: null,
-    items: [{ id: 'b0000000-0000-4000-8000-000000000001', sku: 'SKU-1', productName: 'Copper Bottle <b>x</b>', variantName: '1 L', imageUrl: null, quantity: 2, unitPriceMinor: 49000, lineDiscountMinor: 0, lineTotalMinor: 98000 }],
+    // the API's return facts: open while DELIVERED and inside the window, units not yet returned
+    returnableUntil: s.orderStatus === 'DELIVERED' ? new Date(Date.now() + 3 * 86_400_000).toISOString() : null,
+    timeline: [
+      { status: 'PAYMENT_PENDING', at: '2026-11-10T10:00:00Z', reason: null },
+      { status: 'PAID', at: '2026-11-10T10:05:00Z', reason: null },
+      { status: 'DELIVERED', at: '2026-11-14T10:00:00Z', reason: null },
+    ],
+    items: [{ id: 'b0000000-0000-4000-8000-000000000001', sku: 'SKU-1', productName: 'Copper Bottle <b>x</b>', variantName: '1 L', imageUrl: null, quantity: 2, unitPriceMinor: 49000, lineDiscountMinor: 0, lineTotalMinor: 98000,
+      returnableQuantity: s.orderStatus === 'DELIVERED' ? 2 - s.returns.reduce((n, r) => n + r.quantity, 0) : 0 }],
   });
   async function handle(route) {
     const req = route.request();
@@ -63,7 +73,12 @@ function fakeBackend(opts = {}) {
     if (path === '/catalog/categories') return route.fulfill(ok([]));
     if (path === '/auth/refresh') return route.fulfill(ok({ accessToken: 'at', csrfToken: 'csrf' }));
     if (path === '/cart') return route.fulfill(ok({ items: [], itemCount: 0, coupon: null, couponError: null, totals: { subtotalMinor: 0, discountMinor: 0, shippingMinor: 0, gstIncludedMinor: 0, totalMinor: 0, currency: 'INR' } }));
+    if (path === '/me' && m === 'GET' && s.meFails > 0) {
+      s.meFails -= 1;
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, message: 'Busy', error: { code: 'SERVICE_UNAVAILABLE' } }) });
+    }
     if (path === '/me' && m === 'GET') return route.fulfill(ok(s.me));
+    if (path === '/auth/logout') return route.fulfill(ok(null));
     if (path === '/me' && m === 'PATCH') {
       Object.assign(s.me, body);
       return route.fulfill(ok({ firstName: s.me.firstName, lastName: s.me.lastName, newsletterSubscribed: s.me.newsletterSubscribed }));
@@ -83,7 +98,7 @@ function fakeBackend(opts = {}) {
     if ((mm = /^\/me\/addresses\/([^/]+)$/.exec(path))) {
       const a = s.addresses.find((x) => x.id === mm[1]);
       if (m === 'PATCH') {
-        if (body.postalCode === '000000') return route.fulfill(fail(400, 'Validation failed', 'VALIDATION_ERROR', [{ path: ['postalCode'], message: 'Enter a valid 6-digit PIN code' }]));
+        if (body.postalCode === '000000') return route.fulfill(fail(400, 'Validation failed', 'VALIDATION_FAILED', [{ path: 'postalCode', message: 'Enter a valid 6-digit PIN code' }]));
         Object.assign(a, { ...body, phoneE164: '+91' + String(body.phone ?? '').replace(/\D/g, '').slice(-10) });
         return route.fulfill(ok(a));
       }
@@ -98,7 +113,7 @@ function fakeBackend(opts = {}) {
         status: i === 0 ? s.orderStatus : 'PAID', placedAt: '2026-11-10T10:00:00Z', totals: order().totals, itemCount: 2,
         items: [{ productName: 'Copper Bottle', imageUrl: null, quantity: 2 }], cancellable: false,
       })) : [];
-      return route.fulfill(ok(rows));
+      return route.fulfill(ok(rows, pageMeta(page, s.ordersTotal)));
     }
     if (path === `/orders/${OID}`) return route.fulfill(ok(order()));
     if (path === `/orders/${OID}/tracking`) return route.fulfill(ok({ shipment: { carrier: 'Delhivery', trackingNumber: 'DL123', status: 'DELIVERED', shippedAt: null, deliveredAt: null, events: [{ status: 'OUT_FOR_DELIVERY', location: 'Chennai', note: null, occurredAt: '2026-11-14T08:00:00Z' }] } }));
@@ -118,8 +133,8 @@ function fakeBackend(opts = {}) {
       s.returns.push(r);
       return route.fulfill(ok(r));
     }
-    if (path === '/returns') return route.fulfill(ok(s.returns));
-    if (path === '/me/reviews') return route.fulfill(ok(s.reviews));
+    if (path === '/returns') return route.fulfill(ok(s.returns, pageMeta(1, s.returns.length)));
+    if (path === '/me/reviews') return route.fulfill(ok(s.reviews, pageMeta(1, s.reviews.length)));
     if ((mm = /^\/me\/reviews\/([^/]+)$/.exec(path))) {
       if (m === 'DELETE') { s.reviews = []; return route.fulfill(ok(null)); }
       Object.assign(s.reviews[0], body, { status: 'PENDING' });
@@ -127,7 +142,7 @@ function fakeBackend(opts = {}) {
       delete rest.product;
       return route.fulfill(ok(rest));
     }
-    if (path === '/me/wishlist') return route.fulfill(ok(s.wishlist));
+    if (path === '/me/wishlist') return route.fulfill(ok(s.wishlist, pageMeta(1, s.wishlist.length, Number(url.searchParams.get('pageSize')) || 20)));
     if ((mm = /^\/me\/wishlist\/([^/]+)$/.exec(path))) {
       if (m === 'DELETE') s.wishlist = s.wishlist.filter((p) => p.slug !== mm[1]);
       else if (!s.wishlist.some((p) => p.slug === mm[1])) s.wishlist.push(product(mm[1], mm[1]));
@@ -148,8 +163,41 @@ function fakeBackend(opts = {}) {
       return route.fulfill(ok({ recoveryCodes: ['AAAA-BBBB', 'CCCC-DDDD'] }));
     }
     if (path === '/auth/mfa/disable') {
+      if (body.recoveryCode !== undefined && body.recoveryCode !== 'AAAA-BBBB') return route.fulfill(fail(401, 'That recovery code is not valid', 'UNAUTHORIZED'));
       s.me.mfaEnabled = false;
+      s.lastDisable = body;
       return route.fulfill(ok(null));
+    }
+    if (path === '/me/export') {
+      if (body.password !== 'right-password') return route.fulfill(fail(401, 'Your password is incorrect', 'UNAUTHORIZED'));
+      return route.fulfill(ok({ profile: { email: s.me.email }, orders: [] }));
+    }
+    if (path === '/me' && m === 'DELETE') {
+      if (body.password !== 'right-password') return route.fulfill(fail(401, 'Your password is incorrect', 'UNAUTHORIZED'));
+      s.deleted = true;
+      return route.fulfill(ok(null));
+    }
+    if (path === '/auth/change-password') {
+      if (body.currentPassword !== 'right-password') return route.fulfill(fail(401, 'Your current password is incorrect', 'UNAUTHORIZED'));
+      s.passwordChanged = true;
+      return route.fulfill(ok(null));
+    }
+    if (path === '/auth/logout-all') {
+      s.loggedOutAll = true;
+      return route.fulfill(ok({ sessionsRevoked: 2 }));
+    }
+    if (path === '/auth/phone/send-otp') {
+      s.otpSent = (s.otpSent ?? 0) + 1;
+      return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ success: true, data: null }) });
+    }
+    if (path === '/auth/phone/verify') {
+      if (body.code !== '123456') return route.fulfill(fail(400, 'That code is not right', 'BAD_REQUEST'));
+      s.me.phoneVerified = true;
+      return route.fulfill(ok(null));
+    }
+    if (path === '/auth/resend-verification') {
+      s.resent = body.email;
+      return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ success: true, data: null }) });
     }
     return route.fulfill(fail(404, `Unmocked ${m} ${path}`, 'NOT_FOUND'));
   }
@@ -232,6 +280,8 @@ await test('orders: list links to detail with tracking, invoice is escaped, retu
   await page.getByRole('heading', { name: 'Order YL-260001' }).waitFor();
   await page.getByText('DL123').waitFor();
   await page.getByText('Copper Bottle <b>x</b>').waitFor(); // rendered as text, not HTML
+  await page.getByText(/You can ask for a return until/).waitFor();
+  await page.getByRole('heading', { name: 'History' }).waitFor();
   // Invoice opens in a new window with user data escaped.
   const [popup] = await Promise.all([context.waitForEvent('page'), page.getByRole('button', { name: 'Invoice' }).click()]);
   await popup.waitForLoadState();
@@ -274,7 +324,7 @@ await test('orders: a full page offers Next', async (page, be) => {
   await page.getByRole('button', { name: 'Next →' }).click();
   await page.getByText('No more orders').waitFor();
   assert.ok(be.s.calls.some((c) => c.path === '/orders' && c.query.includes('page=2')));
-}, { backend: { ordersCount: 20 } });
+}, { backend: { ordersCount: 20, ordersTotal: 25 } });
 
 await test('order detail: unknown order shows a not-found message', async (page) => {
   await page.goto(`${BASE}/account/orders/0190a1b2-c3d4-7e5f-8a9b-ffffffffffff`);
@@ -307,6 +357,37 @@ await test('reviews: edit goes back to moderation; delete', async (page, be) => 
   await page.getByText('No reviews yet').waitFor();
 });
 
+await test('a momentary 5xx on the profile does not sign the customer out', async (page) => {
+  await page.goto(`${BASE}/account/orders`);
+  await page.getByRole('heading', { name: /orders/i }).first().waitFor();
+  assert.ok(!page.url().includes('/auth/login'), 'still signed in after a retried 503');
+}, { backend: { meFailsOnce: true } });
+
+await test('signing out in one tab signs out the other tabs', async (page, be, context) => {
+  await page.goto(`${BASE}/account/orders`);
+  await page.getByRole('heading', { name: /orders/i }).first().waitFor();
+  const other = await context.newPage();
+  await other.goto(`${BASE}/account/profile`);
+  await other.getByRole('heading').first().waitFor();
+  await page.getByRole('button', { name: /^Log out/ }).filter({ visible: true }).first().click();
+  await other.waitForURL(/\/auth\/login/, { timeout: 10_000 });
+}, {});
+
+await test('your data: download a copy, then delete the account (typed confirmation)', async (page, be) => {
+  await page.goto(`${BASE}/account/data`);
+  await page.getByRole('button', { name: 'Download my data' }).click();
+  await page.getByLabel('Your password').fill('right-password');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download', exact: true }).click()]);
+  assert.match(download.suggestedFilename(), /^yalli-my-data-\d{4}-\d{2}-\d{2}\.json$/);
+  await page.getByRole('button', { name: 'Delete my account…' }).click();
+  await page.getByLabel('Your password').fill('right-password');
+  assert.equal(await page.getByRole('button', { name: 'Delete my account', exact: true }).isDisabled(), true, 'needs DELETE typed');
+  await page.getByLabel('Type DELETE to confirm').fill('DELETE');
+  await page.getByRole('button', { name: 'Delete my account', exact: true }).click();
+  await page.waitForURL((u) => u.pathname === '/');
+  assert.ok(be.s.deleted);
+});
+
 await test('sessions: current device marked, other device signed out', async (page, be) => {
   await page.goto(`${BASE}/account/sessions`);
   await page.getByText('This device').waitFor();
@@ -317,7 +398,7 @@ await test('sessions: current device marked, other device signed out', async (pa
   assert.ok(!be.s.calls.some((c) => c.path === '/auth/sessions/s1'));
 });
 
-await test('2FA: wrong password, enroll, wrong code, confirm, recovery codes, disable', async (page) => {
+await test('2FA: wrong password, enroll, wrong code, confirm, recovery codes, disable', async (page, be) => {
   await page.goto(`${BASE}/account/security/2fa`);
   await page.getByLabel('Your password').fill('wrong');
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -336,10 +417,44 @@ await test('2FA: wrong password, enroll, wrong code, confirm, recovery codes, di
   await page.getByRole('heading', { name: '2FA is on' }).waitFor();
   await page.getByRole('button', { name: 'Turn off 2FA' }).click();
   await page.getByLabel('Your password').fill('right-password');
-  await page.getByLabel(/6-digit code/).fill('123456');
+  // lost the phone: switch to a recovery code
+  await page.getByRole('button', { name: 'Lost your phone? Use a recovery code' }).click();
+  await page.getByLabel('One of your recovery codes').fill('AAAA-BBBB');
   await page.getByRole('button', { name: 'Turn off 2FA' }).last().click();
   await page.getByRole('heading', { name: 'Turn on 2FA' }).waitFor();
+  assert.deepEqual(be.s.lastDisable, { password: 'right-password', recoveryCode: 'AAAA-BBBB' });
 });
+
+await test('security: change password (wrong current, then right), sign out of all devices', async (page, be) => {
+  await page.goto(`${BASE}/account/security`);
+  await page.getByRole('heading', { name: 'Change password' }).waitFor();
+  await page.getByLabel('Current password').fill('wrong-password');
+  await page.getByLabel(/^New password/).fill('blue mango sunrise 42');
+  await page.getByLabel('Repeat the new password').fill('blue mango sunrise 42');
+  await page.getByRole('button', { name: 'Change password' }).click();
+  await page.getByText('Your current password is incorrect').waitFor();
+  await page.getByLabel('Current password').fill('right-password');
+  await page.getByRole('button', { name: 'Change password' }).click();
+  await page.getByText('Password changed. Other devices were signed out.').waitFor();
+  assert.ok(be.s.passwordChanged);
+  await page.getByRole('button', { name: 'Sign out of all devices' }).click();
+  await page.waitForURL(/\/auth\/login/);
+  assert.ok(be.s.loggedOutAll);
+});
+
+await test('profile: verify the phone by SMS code and resend the email link', async (page, be) => {
+  await page.goto(`${BASE}/account/profile`);
+  await page.getByRole('button', { name: 'Send a new verification link' }).click();
+  await page.getByText('A new link is on its way to priya@example.com.').waitFor();
+  assert.equal(be.s.resent, 'priya@example.com');
+  await page.getByRole('button', { name: 'Send a code by SMS' }).click();
+  await page.getByLabel('SMS code').fill('000000');
+  await page.getByRole('button', { name: 'Verify', exact: true }).click();
+  await page.getByText('That code is not right').waitFor();
+  await page.getByLabel('SMS code').fill('123456');
+  await page.getByRole('button', { name: 'Verify', exact: true }).click();
+  await main(page).getByText('Verified').nth(1).waitFor();
+}, { backend: { phone: '+919876543210', emailVerified: false } });
 
 await test('header wishlist badge shows the server count', async (page) => {
   await page.goto(`${BASE}/account/wishlist`);

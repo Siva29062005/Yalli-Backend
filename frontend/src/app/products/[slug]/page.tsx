@@ -4,7 +4,6 @@ import { cache } from 'react';
 import { AnnouncementBar } from '@/components/AnnouncementBar';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
-import { CartDrawer } from '@/components/CartDrawer';
 import { ProductDetailClient } from '@/components/ProductDetailClient';
 import { JsonLd } from '@/components/JsonLd';
 import { getProduct, getReviews, listProducts } from '@/lib/catalog-api';
@@ -50,7 +49,6 @@ export default async function ProductPage({ params }: Params) {
       />
       <AnnouncementBar />
       <Header />
-      <CartDrawer />
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 md:px-8 lg:px-12">
         <ProductDetailClient
           product={product}

@@ -22,6 +22,7 @@ interface ListingRow {
   on_sale: boolean;
   available: number;
   image_key: string | null;
+  price_varies: boolean;
   total: number;
 }
 
@@ -115,6 +116,15 @@ export class CatalogQueryService {
         WHERE pv.is_active AND pv.deleted_at IS NULL
         ORDER BY pv.product_id, CASE WHEN ${SALE_ACTIVE} THEN pv.sale_price_minor ELSE pv.price_minor END ASC, pv.position ASC
       ),
+      vr AS (
+        -- Do the active variants have DIFFERENT current prices? Then the card says "from" the lowest one.
+        SELECT pv.product_id,
+          MIN(CASE WHEN ${SALE_ACTIVE} THEN pv.sale_price_minor ELSE pv.price_minor END)
+            <> MAX(CASE WHEN ${SALE_ACTIVE} THEN pv.sale_price_minor ELSE pv.price_minor END) AS varies
+        FROM product_variants pv
+        WHERE pv.is_active AND pv.deleted_at IS NULL
+        GROUP BY pv.product_id
+      ),
       a AS (
         SELECT pv.product_id, SUM(i.on_hand - i.reserved)::int AS available
         FROM product_variants pv
@@ -126,9 +136,11 @@ export class CatalogQueryService {
       SELECT p.id, p.slug, p.name, p.summary, b.name AS brand_name, b.slug AS brand_slug,
              v.min_price, v.compare_at, v.on_sale, COALESCE(a.available, 0)::int AS available,
              (SELECT pi.storage_key FROM product_images pi WHERE pi.product_id = p.id ORDER BY pi.position, pi.created_at LIMIT 1) AS image_key,
+             COALESCE(vr.varies, false) AS price_varies,
              COUNT(*) OVER ()::int AS total
       FROM products p
       JOIN v ON v.product_id = p.id
+      LEFT JOIN vr ON vr.product_id = p.id
       LEFT JOIN a ON a.product_id = p.id
       LEFT JOIN brands b ON b.id = p.brand_id
       WHERE ${Prisma.join(where, ' AND ')}
@@ -151,6 +163,8 @@ export class CatalogQueryService {
           compareAtMinor: r.compare_at,
           onSale: r.on_sale,
           currency: CURRENCY,
+          /** The variants cost different amounts: show "from" before the lowest price. */
+          fromPrice: r.price_varies,
         },
         inStock: r.available > 0,
         imageUrl: this.imageUrl(r.image_key),
@@ -368,13 +382,23 @@ export class CatalogQueryService {
     return roots;
   }
 
-  async brands() {
+  /** Brands with their published product count; with `category`, only brands that have products in it (and below). */
+  async brands(category?: string) {
+    const inCategory = category
+      ? Prisma.sql`AND EXISTS (
+          WITH RECURSIVE tree AS (
+            SELECT id FROM categories WHERE slug = ${category} AND is_active
+            UNION SELECT c.id FROM categories c JOIN tree t ON c.parent_id = t.id WHERE c.is_active)
+          SELECT 1 FROM product_categories pc WHERE pc.product_id = p.id AND pc.category_id IN (SELECT id FROM tree))`
+      : Prisma.empty;
     const rows = await this.prisma.$queryRaw<
       { name: string; slug: string; n: number }[]
     >`
       SELECT b.name, b.slug, COUNT(p.id)::int AS n
-      FROM brands b LEFT JOIN products p ON p.brand_id = b.id AND p.status = 'PUBLISHED' AND p.deleted_at IS NULL
-      GROUP BY b.id ORDER BY b.name`;
+      FROM brands b LEFT JOIN products p ON p.brand_id = b.id AND p.status = 'PUBLISHED' AND p.deleted_at IS NULL ${inCategory}
+      GROUP BY b.id
+      ${category ? Prisma.sql`HAVING COUNT(p.id) > 0` : Prisma.empty}
+      ORDER BY b.name`;
     return rows.map((r) => ({ name: r.name, slug: r.slug, productCount: r.n }));
   }
 }
