@@ -149,13 +149,24 @@ function CouponForm({ coupon, onClose, onSaved }: { coupon: Coupon | null; onClo
   );
   if (!isNew && !detail.data) return <section className={`${adminCard} p-6 text-sm`}>{detail.error ? <Alert kind="error">{detail.error}</Alert> : 'Loading…'}</section>;
   if (canReadCategories && !categories.data && !categories.error) return <section className={`${adminCard} p-6 text-sm`}>Loading…</section>;
-  return <CouponFields coupon={coupon} detail={detail.data} categories={categories.data ?? null} run={withStepUp} onClose={onClose} onSaved={onSaved} />;
+  return (
+    <CouponFields
+      coupon={coupon}
+      detail={detail.data}
+      categories={categories.data ?? null}
+      categoriesUnavailable={canReadCategories ? 'error' : 'permission'}
+      run={withStepUp}
+      onClose={onClose}
+      onSaved={onSaved}
+    />
+  );
 }
 
 function CouponFields({
   coupon,
   detail,
   categories,
+  categoriesUnavailable,
   run,
   onClose,
   onSaved,
@@ -164,6 +175,8 @@ function CouponFields({
   detail: CouponDetail | null;
   /** null: this account may not list categories (no products.read). */
   categories: CategoryOption[] | null;
+  /** Why `categories` is null: no products.read, or the list failed to load. */
+  categoriesUnavailable: 'permission' | 'error';
   run: <T>(call: () => Promise<T>) => Promise<T>;
   onClose: () => void;
   onSaved: (message: string) => void;
@@ -304,9 +317,11 @@ function CouponFields({
           <label className="flex items-center gap-2 text-sm"><input type="radio" checked={scope === 'CATEGORIES'} disabled={categories === null && scope !== 'CATEGORIES'} onChange={() => setScope('CATEGORIES')} /> Only selected categories</label>
           {categories === null && (
             <p className="pl-6 text-xs text-[#4A5550]">
-              {scope === 'CATEGORIES'
-                ? 'This coupon keeps its current categories: changing them needs product access.'
-                : 'Category coupons need product access; ask a product manager to set the categories.'}
+              {categoriesUnavailable === 'error'
+                ? 'The category list could not be loaded. Close the form and open it again to choose categories.'
+                : scope === 'CATEGORIES'
+                  ? 'This coupon keeps its current categories: changing them needs product access.'
+                  : 'Category coupons need product access; ask a product manager to set the categories.'}
             </p>
           )}
           {scope === 'CATEGORIES' && categories !== null && (

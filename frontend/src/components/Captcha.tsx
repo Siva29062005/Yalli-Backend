@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * Cloudflare Turnstile. The backend requires a token on sign-up and forgot-password in production
@@ -33,6 +33,7 @@ function loadTurnstile(): Promise<void> {
     s.onload = () => resolve();
     s.onerror = () => {
       loading = null;
+      s.remove(); // let a retry add a fresh script tag
       reject(new Error('captcha script failed to load'));
     };
     document.head.appendChild(s);
@@ -43,6 +44,8 @@ function loadTurnstile(): Promise<void> {
 export function Captcha({ onToken, action, resetKey = 0 }: { onToken: (token: string | null) => void; action: string; resetKey?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const callback = useRef(onToken);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     callback.current = onToken;
   });
@@ -52,24 +55,44 @@ export function Captcha({ onToken, action, resetKey = 0 }: { onToken: (token: st
     let id: string | undefined;
     let cancelled = false;
     callback.current(null);
+    const fail = () => {
+      callback.current(null);
+      if (!cancelled) setFailed(true);
+    };
     loadTurnstile()
       .then(() => {
-        if (cancelled || !box.current || !window.turnstile) return;
+        if (cancelled || !box.current) return;
+        if (!window.turnstile) return fail();
+        setFailed(false);
         id = window.turnstile.render(box.current, {
           sitekey: TURNSTILE_SITE_KEY,
           action,
           callback: (token: string) => callback.current(token),
           'expired-callback': () => callback.current(null),
-          'error-callback': () => callback.current(null),
+          'error-callback': fail,
         });
       })
-      .catch(() => callback.current(null));
+      .catch(fail);
     return () => {
       cancelled = true;
       if (id) window.turnstile?.remove(id);
     };
-  }, [action, resetKey]);
+  }, [action, resetKey, attempt]);
 
   if (!TURNSTILE_SITE_KEY) return null;
-  return <div ref={box} className="min-h-[65px]" aria-label="Security check" />;
+  return (
+    <div role="group" aria-label="Security check" className="space-y-2">
+      <div ref={box} className="min-h-[65px]" />
+      {failed && (
+        <p role="alert" className="text-[13px] text-[#B42318]">
+          The security check could not load. If you use a content blocker or a strict network, allow
+          challenges.cloudflare.com, then{' '}
+          <button type="button" className="font-semibold underline" onClick={() => setAttempt((n) => n + 1)}>
+            try again
+          </button>
+          .
+        </p>
+      )}
+    </div>
+  );
 }

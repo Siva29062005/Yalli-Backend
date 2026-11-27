@@ -192,12 +192,15 @@ export class AuthController {
         code: ErrorCode.Unauthorized,
       });
     try {
-      const cookieMode = this.cookies.isCookieMode(req);
+      // The browser path ONLY: the refresh token came from the HttpOnly cookie (CsrfGuard then checked the CSRF header
+      // against the CSRF cookie). A token sent in the body (API / mobile client) gets strict reuse detection and a new
+      // CSRF token, whatever X-Auth-Mode says.
+      const fromCookie =
+        this.cookies.isCookieMode(req) && dto.refreshToken === undefined;
       const r = await this.auth.refresh(raw, requestContext(req), {
-        browserGrace: cookieMode,
+        browserGrace: fromCookie,
       });
-      // The CSRF header was already checked against the cookie (CsrfGuard), so this is the session's own token.
-      const csrf = cookieMode ? this.cookies.readCsrf(req) : undefined;
+      const csrf = fromCookie ? this.cookies.readCsrf(req) : undefined;
       if ('kind' in r)
         return {
           mfaRequired: false,

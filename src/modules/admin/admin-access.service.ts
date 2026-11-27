@@ -195,6 +195,11 @@ export class AdminAccessService {
       create: { userId: target.id, roleId: role.id, grantedBy: actor.userId },
     });
     await this.authz.invalidate(target.id);
+    // A staff role must not ride on a session opened as a customer: that session may be "remembered" for weeks and may
+    // predate the second factor. Signing out everywhere forces a fresh staff sign-in (MFA, browser-session cookies,
+    // STAFF_SESSION_MAX_HOURS).
+    if (role.name !== 'CUSTOMER')
+      await this.sessions.revokeAllForUser(target.id, 'ROLE_ASSIGNED');
     await this.audit.record({
       action: AuditAction.RoleAssigned,
       outcome: 'SUCCESS',

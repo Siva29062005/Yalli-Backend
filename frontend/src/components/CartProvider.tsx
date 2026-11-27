@@ -40,7 +40,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     const gen = ++generation.current;
     try {
       let view: CartView;
-      if (signedIn) view = (await mergeGuestCart()) ?? (await cartRequest(true, '/cart'));
+      // A failed merge (network, 5xx) must not hide the customer's own cart: show it, and keep the guest token so the
+      // guest items are merged on a later load.
+      if (signedIn) view = (await mergeGuestCart().catch(() => null)) ?? (await cartRequest(true, '/cart'));
       else if (guestToken.get()) view = await cartRequest(false, '/cart');
       else view = EMPTY_CART;
       if (gen !== generation.current) return;

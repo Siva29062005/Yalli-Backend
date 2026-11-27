@@ -16,6 +16,15 @@ if (httpsSite && !process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim())
       '(it requires a Turnstile token).',
   );
 const RAZORPAY = 'https://*.razorpay.com';
+// A browser-side API on another origin (NEXT_PUBLIC_API_URL, instead of the same-origin /api/v1 proxy) must be allowed
+// to receive the calls.
+const apiOrigin = (() => {
+  try {
+    return process.env.NEXT_PUBLIC_API_URL ? new URL(process.env.NEXT_PUBLIC_API_URL).origin : '';
+  } catch {
+    return '';
+  }
+})();
 const TURNSTILE = 'https://challenges.cloudflare.com';
 const csp = [
   "default-src 'self'",
@@ -24,7 +33,7 @@ const csp = [
   "font-src 'self' data: https://fonts.gstatic.com",
   // Product images come from the media host (backend in development, the CDN in production) as absolute URLs.
   `img-src 'self' data: blob: https:${httpsSite ? '' : ' http://localhost:* http://127.0.0.1:*'}`,
-  `connect-src 'self' ${RAZORPAY} ${TURNSTILE}${isDev ? ' ws://localhost:* ws://127.0.0.1:*' : ''}`,
+  `connect-src 'self'${apiOrigin ? ` ${apiOrigin}` : ''} ${RAZORPAY} ${TURNSTILE}${isDev ? ' ws://localhost:* ws://127.0.0.1:*' : ''}`,
   `frame-src ${RAZORPAY} ${TURNSTILE}`,
   `form-action 'self' ${RAZORPAY}`,
   "object-src 'none'",

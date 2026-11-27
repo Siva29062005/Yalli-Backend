@@ -18,6 +18,7 @@ import type {
 } from '../../generated/prisma/client.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, type RequestContext } from '../audit/audit.service.js';
+import { InventoryService } from '../inventory/inventory.service.js';
 import { OrderLifecycleService } from '../orders/order-lifecycle.service.js';
 import { REFUNDABLE } from '../orders/order-state-machine.js';
 import { OutboxService } from '../outbox/outbox.service.js';
@@ -66,6 +67,7 @@ export class RefundService {
     private readonly lifecycle: OrderLifecycleService,
     private readonly outbox: OutboxService,
     private readonly audit: AuditService,
+    private readonly inventory: InventoryService,
   ) {}
 
   // ------------------------------------------------------------------------------- request
@@ -468,7 +470,12 @@ export class RefundService {
     });
     const refunds = await tx.refund.findMany({
       where: { paymentId },
-      select: { status: true, amountMinor: true },
+      select: {
+        status: true,
+        amountMinor: true,
+        idempotencyKey: true,
+        reason: true,
+      },
     });
     const processed = refunds
       .filter((r) => r.status === 'PROCESSED')
@@ -493,6 +500,24 @@ export class RefundService {
 
     if (order.status === 'CANCELLED') return; // late-capture refunds do not reopen a cancelled order
     const actor = { type: 'SYSTEM' as const };
+
+    // A STAFF cancel only requested the cancellation (OrderService.cancel). Once its refund has been PROCESSED, the
+    // order is cancelled for real: stock back on the shelf, cancelledAt, the order.cancelled event.
+    const cancelRefund = refunds.find(
+      (r) =>
+        r.idempotencyKey === `cancel:${orderId}` && r.status === 'PROCESSED',
+    );
+    let cancelledAt = order.cancelledAt;
+    if (cancelRefund && !cancelledAt) {
+      const done = await this.lifecycle.markPaidOrderCancelledInTx(
+        tx,
+        orderId,
+        cancelRefund.reason.replace(/^Order cancelled: /, ''),
+        this.inventory,
+      );
+      cancelledAt = done.cancelledAt;
+    }
+
     if (open > 0) {
       if (order.status !== 'REFUND_PENDING') {
         await this.lifecycle.transition(tx, orderId, 'REFUND_PENDING', actor, {
@@ -504,6 +529,19 @@ export class RefundService {
       order.status === 'REFUND_PENDING' ||
       order.status === 'PARTIALLY_REFUNDED'
     ) {
+      // FIRST: a cancelled order (its goods already back on the shelf) never returns to a shippable state, even when an
+      // earlier partial refund makes the payment PARTIALLY_REFUNDED. It waits in REFUND_PENDING until it is refunded.
+      if (
+        order.status === 'REFUND_PENDING' &&
+        cancelledAt &&
+        paymentStatus !== 'REFUNDED'
+      ) {
+        this.logger.warn(
+          { orderId },
+          'Refund for a cancelled order did not complete; the order is waiting for a manual refund',
+        );
+        return;
+      }
       if (paymentStatus === 'REFUNDED')
         await this.lifecycle.transition(tx, orderId, 'REFUNDED', actor, {
           reason: 'fully refunded',
@@ -520,14 +558,7 @@ export class RefundService {
             event: { type: 'order.partially_refunded' },
           },
         );
-      else if (order.status === 'REFUND_PENDING' && order.cancelledAt) {
-        // A CANCELLED order whose refund failed must NOT return to a shippable state: the goods are already back on the
-        // shelf. It stays REFUND_PENDING (visible to finance) until a refund for the money succeeds.
-        this.logger.warn(
-          { orderId },
-          'Refund for a cancelled order failed; the order is waiting for a manual refund',
-        );
-      } else if (order.status === 'REFUND_PENDING')
+      else if (order.status === 'REFUND_PENDING')
         await this.lifecycle.transition(
           tx,
           orderId,

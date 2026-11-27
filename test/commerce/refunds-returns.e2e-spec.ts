@@ -220,14 +220,16 @@ describe('staff cancels a PAID order: the refund needs a second approver', () =>
       .set(authed(actor))
       .send({ reason: 'Customer phoned to cancel' });
 
-  it('an ORDER_MANAGER cancel raises a PENDING refund in their name; no money moves until finance approves', async () => {
-    const { order, payment, total } = await paidOrder(59_000, 2);
+  it('an ORDER_MANAGER cancel only REQUESTS it: a PENDING refund in their name, nothing moves until finance approves', async () => {
+    const { order, variant, payment, total } = await paidOrder(59_000, 2);
     const om = await s.staff('ORDER_MANAGER');
+    const stockBefore = await shop.stock(variant.id);
     const res = await staffCancel(om, order.id);
     expect(res.status).toBe(200);
     let db = await shop.dbOrder(order.id);
     expect(db.status).toBe('REFUND_PENDING');
-    expect(db.cancelledAt).not.toBeNull();
+    expect(db.cancelledAt).toBeNull(); // not cancelled yet
+    expect(await shop.stock(variant.id)).toEqual(stockBefore); // nothing restocked yet
     expect(db.refunds).toHaveLength(1);
     expect(db.refunds[0]).toMatchObject({
       kind: 'ADMIN',
@@ -244,10 +246,69 @@ describe('staff cancels a PAID order: the refund needs a second approver', () =>
     expect(refunded(payment.id)).toBe(total);
     db = await shop.dbOrder(order.id);
     expect(db.status).toBe('REFUNDED');
+    expect(db.cancelledAt).not.toBeNull(); // cancelled once the refund was processed
+    expect((await shop.stock(variant.id)).onHand).toBe(stockBefore.onHand + 2); // and restocked exactly once
     expect(db.refunds[0]).toMatchObject({
       status: 'PROCESSED',
       approvedById: finance.userId,
     });
+  });
+
+  it('a REJECTED staff cancel leaves the order where it was (not cancelled, not restocked) and it can still ship', async () => {
+    const { order, variant } = await paidOrder(59_000, 1);
+    const om = await s.staff('ORDER_MANAGER');
+    const stockBefore = await shop.stock(variant.id);
+    await staffCancel(om, order.id).expect(200);
+    const r = (await shop.dbOrder(order.id)).refunds[0]!;
+    const finance = await s.staff('FINANCE_MANAGER');
+    await ctx
+      .http()
+      .post(`/api/v1/admin/refunds/${r.id}/reject`)
+      .set(authed(finance))
+      .send({ reason: 'Already shipped by courier' })
+      .expect(200);
+    const db = await shop.dbOrder(order.id);
+    expect(db.status).toBe('PAID');
+    expect(db.cancelledAt).toBeNull();
+    expect(await shop.stock(variant.id)).toEqual(stockBefore);
+    await ctx
+      .http()
+      .post(`/api/v1/admin/orders/${order.id}/fulfilment`)
+      .set(authed(om))
+      .send({ status: 'PROCESSING' })
+      .expect(200);
+  });
+
+  it('after a partial refund, a customer cancel whose refund FAILS stays cancelled-and-waiting (never back to PAID)', async () => {
+    const { u, order } = await paidOrder(100_000, 1);
+    const req = await requestRefund(await s.staff('CUSTOMER_SUPPORT'), {
+      orderId: order.id,
+      amountMinor: 20_000,
+      reason: 'Goodwill: late dispatch',
+    });
+    await approve(await s.staff('FINANCE_MANAGER'), req.body.data.id).expect(
+      200,
+    );
+    expect((await shop.dbOrder(order.id)).status).toBe('PAID');
+    ctx.razorpay.failNext.push({ match: '/refund', mode: 'reject' });
+    await ctx
+      .http()
+      .post(`/api/v1/orders/${order.id}/cancel`)
+      .set(authed(u))
+      .send({ reason: 'Changed my mind' })
+      .expect(200);
+    const db = await shop.dbOrder(order.id);
+    expect(db.cancelledAt).not.toBeNull();
+    expect(db.status).toBe('REFUND_PENDING'); // waiting for a manual refund, NOT shippable
+    expect(
+      (
+        await ctx
+          .http()
+          .post(`/api/v1/admin/orders/${order.id}/fulfilment`)
+          .set(authed(await s.staff('ORDER_MANAGER')))
+          .send({ status: 'PROCESSING' })
+      ).status,
+    ).toBe(409);
   });
 
   it('a customer cancel of the same kind of order is still refunded at once (system request, no person to approve)', async () => {

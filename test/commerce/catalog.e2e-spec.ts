@@ -795,6 +795,14 @@ describe('the storefront server (server-side rendering) has its own budget', () 
     expect(statuses.every((c) => c === 200)).toBe(true);
   });
 
+  it('each keyed request counts ONCE against the storefront budget (both rate-limit guards run)', async () => {
+    const { createHash } = await import('node:crypto');
+    const key = `rl:frontend-server:${createHash('sha256').update('frontend-server').digest('hex').slice(0, 32)}`;
+    const before = Number((await ctx.store.get(key)) ?? 0);
+    await burst({ 'X-Forwarded-For': freshIp(), 'X-Frontend-Key': KEY }, 5);
+    expect(Number(await ctx.store.get(key)) - before).toBe(5);
+  });
+
   it('a wrong key gets the normal per-IP limit', async () => {
     const statuses = await burst({
       'X-Forwarded-For': freshIp(),

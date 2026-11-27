@@ -267,8 +267,13 @@ Identity and access
 - [ ] Per-account MFA limit is a fixed 15-minute window of 10 that resets (`mfa.service.ts`): with a known password,
       about 960 guesses a day (~8% success a month), and the owner is not told. Add a daily cap / escalating lockout and
       email the owner on `MfaLocked` (correct password + wrong codes = password compromised).
-- [ ] Enabling MFA (`confirm`) or granting a staff role (`assignRole`) leaves older password-only sessions alive. Revoke
-      the other sessions, as password change and role revoke already do.
+- [x] (2026-11-27) Granting a non-customer role (`assignRole`) signs the person out everywhere.
+- [ ] Enabling MFA (`confirm`) leaves older password-only sessions alive. Revoke the other sessions, as password change
+      and role revoke already do.
+- [ ] Turnstile verification does not check the `action` and `hostname` in Cloudflare's answer (`captcha.adapters.ts`):
+      a token solved for one form or host is accepted on another. Pass the expected action and compare both.
+- [ ] An authorization whose capture the provider keeps rejecting keeps its order from expiring until the provider voids
+      it (days). Cap it: after the payment window plus a margin, cancel and let the authorization lapse.
 - [ ] Two SUPER_ADMINs can suspend each other at once (`admin-access.service.ts` `setStatus`, no transaction or
       last-holder check), leaving none and no bootstrap path. Serialise it like `revokeRole`.
 - [ ] Account deletion keeps `ip`, `userAgent` and `deviceLabel` in `user_sessions`, against the privacy page; scrub them.

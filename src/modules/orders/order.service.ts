@@ -165,55 +165,44 @@ export class OrderService {
           code: 'NOTHING_TO_REFUND',
         });
 
-      // Goods go back on the shelf.
-      for (const ref of [
-        { referenceType: 'ORDER', referenceId: orderId },
-        { referenceType: 'ORDER_LATE', referenceId: orderId },
-      ]) {
-        await this.inventory.restockCommittedInTx(
-          tx,
-          ref,
-          'order cancelled after payment',
-        );
-      }
-      const now = new Date();
-      await tx.order.update({
-        where: { id: orderId },
-        data: {
-          cancelledAt: now,
-          cancelReason: reason.slice(0, 200),
-          inventoryReleasedAt: now,
-        },
-      });
-      // A customer cancelling their own paid order gets their money back automatically. A STAFF cancel is a refund a
-      // person asked for, so it waits for a second approver (four-eyes), like any other staff refund: otherwise staff
-      // could ship goods off-system and refund the order at once.
+      // A customer cancelling their own paid order gets their money back automatically, and the order is cancelled now.
+      // A STAFF cancel is a refund a person asked for: it only REQUESTS the cancellation. A second person approves the
+      // refund (four-eyes); the order is cancelled and restocked when that refund is processed (RefundService.recompute),
+      // and a rejected or failed refund leaves the order where it was. Otherwise staff could ship goods off-system and
+      // refund the order at once.
       const byStaff = actor.type === 'ADMIN';
       if (byStaff && !actor.id)
         throw new Error('A staff cancellation must name the staff member');
+      const cancelReason = `Order cancelled: ${reason}`.slice(0, 200);
+      if (byStaff) {
+        await this.refunds.requestInTx(tx, {
+          paymentId: payment.id,
+          kind: 'ADMIN',
+          amountMinor: payment.capturedMinor - payment.refundedMinor,
+          reason: cancelReason,
+          requestedById: actor.id ?? null,
+          autoApprove: false,
+          idempotencyKey: `cancel:${orderId}`,
+        });
+        return null;
+      }
+      await this.lifecycle.markPaidOrderCancelledInTx(
+        tx,
+        orderId,
+        reason,
+        this.inventory,
+      );
       const refund = await this.refunds.requestInTx(tx, {
         paymentId: payment.id,
-        kind: byStaff ? 'ADMIN' : 'CUSTOMER_CANCEL',
+        kind: 'CUSTOMER_CANCEL',
         amountMinor: payment.capturedMinor - payment.refundedMinor,
-        reason: `Order cancelled: ${reason}`.slice(0, 200),
-        requestedById: byStaff ? (actor.id ?? null) : null,
-        autoApprove: !byStaff,
+        reason: cancelReason,
+        requestedById: null,
+        autoApprove: true,
         idempotencyKey: `cancel:${orderId}`,
       });
       // The refund request above already moved the order to REFUND_PENDING (and recorded it in the history).
-      await this.outbox.add(tx, {
-        aggregateType: 'order',
-        aggregateId: orderId,
-        eventType: 'order.cancelled',
-        payload: {
-          orderId,
-          orderNumber: order.orderNumber,
-          userId: order.userId,
-          reason,
-          paid: true,
-        },
-      });
-      return refund.status === 'APPROVED' ? refund : null; // a staff refund is executed when approved
+      return refund;
     });
     await this.audit.record({
       action: AuditAction.OrderCancelled,
@@ -222,7 +211,14 @@ export class OrderService {
       ...ctx,
       resourceType: 'order',
       resourceId: orderId,
-      metadata: { reason, by: actor.type },
+      // A staff cancel of a paid order is only requested here: it completes when finance's approved refund is processed.
+      metadata: {
+        reason,
+        by: actor.type,
+        ...(actor.type === 'ADMIN' && !refundToExecute
+          ? { pendingRefundApproval: true }
+          : {}),
+      },
     });
     if (refundToExecute)
       await this.refunds.execute(refundToExecute.id).catch(() => undefined);

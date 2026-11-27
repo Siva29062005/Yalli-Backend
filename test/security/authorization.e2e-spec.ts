@@ -11,6 +11,7 @@ import {
   authed,
   createTestApp,
   freshIp,
+  totp,
   waitFor,
   type Session,
   type TestContext,
@@ -268,17 +269,32 @@ describe('vertical privilege escalation (BFLA): customers and low roles cannot r
 });
 
 describe('role management rules', () => {
-  it('an ADMIN can grant a lower-ranked role they fully hold, and it applies IMMEDIATELY (no re-login)', async () => {
+  it('an ADMIN can grant a lower-ranked role they fully hold; the person is signed out and has it at the next (MFA) sign-in', async () => {
     const admin = await s.staff('ADMIN');
     const target = await s.session();
-    await s.enableMfa(target); // a staff role is only given to someone who already has a second factor
+    const { secret } = await s.enableMfa(target); // a staff role is only given to someone who already has a second factor
     await ctx
       .http()
       .post(`/api/v1/admin/users/${target.userId}/roles`)
       .set(as(admin))
       .send({ role: 'ORDER_MANAGER' })
       .expect(200);
-    const me = await ctx.http().get('/api/v1/me').set(as(target));
+    // The session opened as a customer cannot carry the staff role (it may be "remembered" for weeks).
+    const old = await ctx.http().get('/api/v1/me').set(as(target));
+    expect(old.status).toBe(401);
+    expect(old.body.error.code).toBe('ACCESS_TOKEN_INVALID');
+    const login = await s.login(target.email, target.password, target.ip);
+    expect(login.body.data.mfaRequired).toBe(true);
+    const verified = await ctx
+      .http()
+      .post('/api/v1/auth/mfa/verify')
+      .set('X-Forwarded-For', target.ip)
+      .send({ mfaToken: login.body.data.mfaToken, code: totp(secret, 1) });
+    expect(verified.status).toBe(200);
+    const me = await ctx
+      .http()
+      .get('/api/v1/me')
+      .set(as({ accessToken: verified.body.data.accessToken, ip: target.ip }));
     expect(me.body.data.roles.sort()).toEqual(['CUSTOMER', 'ORDER_MANAGER']);
     const audit = await ctx.prisma.auditLog.findFirstOrThrow({
       where: {

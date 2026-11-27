@@ -151,6 +151,8 @@ export function AdminAccess({ children }: { children: React.ReactNode }) {
     } catch (error) {
       clearAdminSession();
       setCode('');
+      // An expired or used-up sign-in challenge cannot be retried: back to the password step. A wrong code can.
+      if (error instanceof ApiError && error.code === 'MFA_CHALLENGE_EXPIRED') setChallenge('');
       setError(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
     } finally {
       setPassword('');

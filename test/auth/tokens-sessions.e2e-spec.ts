@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { Logger } from '@nestjs/common';
 import { SignJWT, generateKeyPair, importPKCS8 } from 'jose';
 import {
@@ -557,6 +558,71 @@ describe('cookie mode (browser) and CSRF', () => {
       orderBy: { createdAt: 'desc' },
     });
     expect(session.revokedReason).toBe('REFRESH_REUSE');
+  });
+
+  it('a body token sent WITH X-Auth-Mode: cookie gets no grace either (grace is for the HttpOnly cookie only)', async () => {
+    const a = await s.session();
+    expect((await refresh(a.refreshToken, a.ip)).status).toBe(200);
+    const replay = await ctx
+      .http()
+      .post('/api/v1/auth/refresh')
+      .set({ 'X-Forwarded-For': freshIp(), 'X-Auth-Mode': 'cookie' })
+      .send({ refreshToken: a.refreshToken });
+    expect(replay.status).toBe(401);
+    const session = await ctx.prisma.userSession.findFirstOrThrow({
+      where: { userId: a.userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(session.revokedReason).toBe('REFRESH_REUSE');
+  });
+
+  it('the grace window yields at most two extra access tokens per refresh token, then it is theft', async () => {
+    const c = await cookieLogin();
+    expect((await cookieRefresh(c, c.refresh)).status).toBe(200); // the real rotation
+    expect((await cookieRefresh(c, c.refresh)).status).toBe(200); // grace 1
+    expect((await cookieRefresh(c, c.refresh)).status).toBe(200); // grace 2
+    expect((await cookieRefresh(c, c.refresh)).status).toBe(401); // a third replay is not a tab race
+    const userId = jwtPayload(c.res.body.data.accessToken as string)[
+      'sub'
+    ] as string;
+    const session = await ctx.prisma.userSession.findFirstOrThrow({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(session.revokedReason).toBe('REFRESH_REUSE');
+  });
+
+  it('the tab that LOSES the atomic claim (truly simultaneous) also gets the grace (deterministic)', async () => {
+    const c = await cookieLogin();
+    const original = ctx.prisma.refreshToken.updateMany.bind(
+      ctx.prisma.refreshToken,
+    );
+    // Another tab claims the token between this request's read and its claim.
+    const spy = vi
+      .spyOn(ctx.prisma.refreshToken, 'updateMany')
+      .mockImplementationOnce((async (args: { where: { id: string } }) => {
+        await original({
+          where: { id: args.where.id },
+          data: { usedAt: new Date() },
+        });
+        return { count: 0 };
+      }) as never);
+    try {
+      const r = await cookieRefresh(c, c.refresh);
+      expect(r.status).toBe(200);
+      expect(spy).toHaveBeenCalled();
+      expect((await me(r.body.data.accessToken)).status).toBe(200);
+      const userId = jwtPayload(c.res.body.data.accessToken as string)[
+        'sub'
+      ] as string;
+      expect(
+        await ctx.prisma.auditLog.count({
+          where: { action: 'auth.refresh.grace_reuse', actorId: userId },
+        }),
+      ).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('API (body-mode) clients get no grace: an immediate replay still revokes the session', async () => {

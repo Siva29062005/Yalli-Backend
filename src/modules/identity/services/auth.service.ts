@@ -56,6 +56,8 @@ export interface GraceTokens {
  * or for API clients, reuse is treated as theft as before.
  */
 export const REFRESH_REUSE_GRACE_MS = 10_000;
+/** Access tokens one used refresh token can still yield inside the window (enough for three tabs racing). */
+export const REFRESH_REUSE_GRACE_MAX = 2;
 
 export type LoginResult =
   | ({ kind: 'tokens' } & SessionTokens)
@@ -449,7 +451,13 @@ export class AuthService {
         if (
           live &&
           again?.usedAt &&
-          now.getTime() - again.usedAt.getTime() < REFRESH_REUSE_GRACE_MS
+          now.getTime() - again.usedAt.getTime() < REFRESH_REUSE_GRACE_MS &&
+          (
+            await this.store.incr(
+              `refresh:grace:${row.id}`,
+              Math.ceil(REFRESH_REUSE_GRACE_MS / 1000) + 5,
+            )
+          ).count <= REFRESH_REUSE_GRACE_MAX
         ) {
           await this.audit.record({
             action: AuditAction.RefreshGraceReuse,

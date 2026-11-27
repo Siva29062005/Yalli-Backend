@@ -907,6 +907,8 @@ model Payment {
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
   capturedAt        DateTime?     @map("captured_at") @db.Timestamptz(6)
+  /// Claim of the one capture attempt in flight (PaymentService.captureIfAuthorized); stale after 2 minutes.
+  captureStartedAt  DateTime?     @map("capture_started_at") @db.Timestamptz(6)
 
   order   Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
   events  PaymentEvent[]

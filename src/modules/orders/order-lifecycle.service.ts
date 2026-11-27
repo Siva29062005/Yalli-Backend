@@ -158,6 +158,58 @@ export class OrderLifecycleService {
     return order;
   }
 
+  /**
+   * Cancels a PAID order's fulfilment: its stock goes back on the shelf and the order is marked cancelled (the refund
+   * itself is handled by RefundService). Used at once for a customer's own cancel, and for a staff cancel only when its
+   * refund has been PROCESSED (a rejected or failed staff refund leaves the order and its stock untouched).
+   */
+  async markPaidOrderCancelledInTx(
+    tx: Tx,
+    orderId: string,
+    reason: string,
+    inventory: {
+      restockCommittedInTx(
+        tx: Tx,
+        ref: { referenceType: string; referenceId: string },
+        reason: string,
+      ): Promise<number>;
+    },
+  ) {
+    const order = await this.lock(tx, orderId);
+    if (order.cancelledAt) return order; // single-shot
+    for (const ref of [
+      { referenceType: 'ORDER', referenceId: orderId },
+      { referenceType: 'ORDER_LATE', referenceId: orderId },
+    ])
+      await inventory.restockCommittedInTx(
+        tx,
+        ref,
+        'order cancelled after payment',
+      );
+    const now = new Date();
+    const updated = await tx.order.update({
+      where: { id: orderId },
+      data: {
+        cancelledAt: now,
+        cancelReason: reason.slice(0, 200),
+        inventoryReleasedAt: now,
+      },
+    });
+    await this.outbox.add(tx, {
+      aggregateType: 'order',
+      aggregateId: orderId,
+      eventType: 'order.cancelled',
+      payload: {
+        orderId,
+        orderNumber: order.orderNumber,
+        userId: order.userId,
+        reason,
+        paid: true,
+      },
+    });
+    return updated;
+  }
+
   /** Orders still in the checkout window whose payment window has passed. */
   expiredUnpaid(now = new Date(), limit = 100) {
     return this.prisma.order.findMany({

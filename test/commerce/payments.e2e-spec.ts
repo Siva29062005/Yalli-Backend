@@ -642,13 +642,71 @@ describe('failures, retries and out-of-order delivery', () => {
     expect(ctx.razorpay.payments.get(auth.id)!.status).toBe('authorized'); // the capture call failed
     expect(await status(order.id)).toBe('PAYMENT_PENDING');
 
+    // the failed attempt holds the capture claim for 2 minutes; afterwards reconciliation retries it
     await ctx.prisma.payment.updateMany({
       where: { orderId: order.id },
-      data: { updatedAt: new Date(Date.now() - 10 * 60_000) },
+      data: {
+        updatedAt: new Date(Date.now() - 10 * 60_000),
+        captureStartedAt: new Date(Date.now() - 3 * 60_000),
+      },
     });
     await ctx.worker.reconcilePayments();
     expect(ctx.razorpay.payments.get(auth.id)!.status).toBe('captured');
     expect(await status(order.id)).toBe('PAID');
+  });
+
+  it('NO DOUBLE CHARGE: after a capture that timed out but worked, a second authorization is never captured', async () => {
+    const { order, init } = await pending();
+    ctx.razorpay.failNext.push({
+      match: '/capture',
+      mode: 'timeout-after-effect',
+    });
+    const a = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    await shop.webhook(ctx.razorpay.paymentWebhook('payment.authorized', a));
+    expect(ctx.razorpay.payments.get(a.id)!.status).toBe('captured'); // captured at the provider…
+    expect(await status(order.id)).toBe('PAYMENT_PENDING'); // …but we never heard back
+
+    // a second authorization on the same provider order (another tab, a UPI retry) arrives
+    const b = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    await shop.webhook(ctx.razorpay.paymentWebhook('payment.authorized', b));
+    expect(ctx.razorpay.payments.get(b.id)!.status).toBe('authorized'); // never captured
+
+    // once the claim is stale, reconciliation finds the capture that DID happen and applies it
+    await ctx.prisma.payment.updateMany({
+      where: { orderId: order.id },
+      data: {
+        updatedAt: new Date(Date.now() - 10 * 60_000),
+        captureStartedAt: new Date(Date.now() - 3 * 60_000),
+      },
+    });
+    await ctx.worker.reconcilePayments();
+    expect(await status(order.id)).toBe('PAID');
+    expect(ctx.razorpay.payments.get(b.id)!.status).toBe('authorized');
+    expect(
+      [...ctx.razorpay.payments.values()].filter(
+        (p) => p.order_id === init.providerOrderId && p.status === 'captured',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('an authorization for the wrong amount is a mismatch: not captured, and the order can still expire', async () => {
+    const { order, init } = await pending(59_000);
+    const odd = ctx.razorpay.pay(init.providerOrderId, 'authorized', {
+      amount: 5_000,
+    });
+    const res = await shop.webhook(
+      ctx.razorpay.paymentWebhook('payment.authorized', odd),
+    );
+    expect(res.body.data.outcome).toBe('mismatch');
+    expect((await shop.dbOrder(order.id)).payments[0]!.status).not.toBe(
+      'AUTHORIZED',
+    );
+    await ctx.prisma.order.update({
+      where: { id: order.id },
+      data: { paymentExpiresAt: new Date(Date.now() - 60_000) },
+    });
+    await ctx.worker.expireUnpaidOrders();
+    expect(await status(order.id)).toBe('CANCELLED');
   });
 
   it('a retry inside the checkout after a FAILED attempt (same provider order) is authorized, captured and paid', async () => {

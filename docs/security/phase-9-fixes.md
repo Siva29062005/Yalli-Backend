@@ -42,10 +42,38 @@ Each line names the control, where it lives, and the test that proves it. Nothin
 - **CSP keeps `'unsafe-inline'` for scripts.** Next inlines its bootstrap scripts; a nonce policy forces every page to
   render per request (no static or cached pages). Revisit with Next's experimental SRI or nonces once traffic and hosting
   costs are known. The CSP still blocks scripts from other hosts, plugins and framing.
-- **The refresh grace window** lets a replayed refresh cookie, within 10 seconds of its first use and on a still-active
-  session, obtain one short-lived access token (no new refresh token). Reuse after that window still revokes the session.
-- **Staff cancel restocks at once,** before the refund is approved. If finance rejects the refund (the goods had in fact
-  shipped), correct the stock by hand; the rejection is audited.
+- **The refresh grace window** lets a replayed refresh COOKIE, within 10 seconds of its first use and on a still-active
+  session, obtain at most two short-lived access tokens (no new refresh token). A token sent in the request body never
+  gets grace. Reuse after that window, or a third replay, still revokes the session.
+- **Deploy the backend before the frontend:** the browser refreshes only on `ACCESS_TOKEN_INVALID`, so a new frontend in
+  front of an old backend would stop refreshing expired access tokens (the user would have to reload).
+- **An authorization that can never be captured** (the provider keeps rejecting the capture) keeps its order from
+  expiring until the provider voids it (days); reconciliation retries the capture every 2 minutes. Watch the
+  `Capture of authorized payment failed` log line.
 - **Captcha after repeated login failures** is still P1 (the backend has no login captcha yet).
 - **Existing credit notes** issued before the invoice-number change keep the old `INV-…` reference (credit notes are
   immutable). Only development data is affected.
+
+## Follow-up review of the Phase 9 commit (2026-11-27)
+
+An adversarial review of commit `02eff2a` found, and this follow-up fixed:
+
+| Issue | Fix | Verified by |
+|---|---|---|
+| A cancelled order with an earlier partial refund went back to PAID when its cancel refund failed or was rejected (shippable after restock) | `recompute` checks `cancelledAt` before the partial-refund branch | "after a partial refund, a customer cancel whose refund FAILS stays cancelled-and-waiting" |
+| A rejected staff cancel left the order stuck in REFUND_PENDING, already restocked | A staff cancel only REQUESTS the cancellation (pending refund, nothing restocked); the order is cancelled and restocked when the refund is PROCESSED (`markPaidOrderCancelledInTx`); a rejected or failed refund returns the order to where it was | "only REQUESTS it", "a REJECTED staff cancel leaves the order where it was" |
+| A second authorization could be captured after a capture that timed out but worked (double charge); capture could loop | One capture attempt at a time (`payments.capture_started_at` claim, stale after 2 minutes); an already-captured provider payment is applied instead of capturing another; an authorization for the wrong amount is a `mismatch` (no capture, order can expire) | "NO DOUBLE CHARGE", "authorization for the wrong amount", migration `20261127000400_payment_capture_claim` |
+| Any client could get the refresh grace window by adding `X-Auth-Mode: cookie` to a body token | Grace (and the kept CSRF token) only when the refresh token came from the cookie | "a body token sent WITH X-Auth-Mode: cookie gets no grace" |
+| A staff role granted after sign-in rode on the customer session (persistent, 30 days) | Granting any non-customer role signs the person out everywhere (`ROLE_ASSIGNED`); the next sign-in is a staff sign-in | authorization e2e |
+| Unlimited access tokens within the grace window | At most `REFRESH_REUSE_GRACE_MAX` (2) per refresh token | "at most two extra access tokens" |
+| The claim-loser branch of the tab race was only tested by chance | Deterministic test (the claim is taken by "another tab" between read and claim) | "the tab that LOSES the atomic claim" |
+| The storefront budget was counted twice (both rate-limit guards) | Only the IP guard owns IP budgets | "each keyed request counts ONCE" |
+| Captcha: no message or retry when Turnstile cannot load | Message with "try again", the failed script is removed, `role="group"` | `test-auth.mjs` |
+| CSP blocked a configured cross-origin `NEXT_PUBLIC_API_URL` | Its origin is added to `connect-src` | build |
+| A failing guest-cart merge hid the customer's own cart | Fall back to the user's cart, keep the guest token for a later merge | `test-cart.mjs` |
+| Coupon form said "needs product access" when the category list merely failed to load | Distinct message | `test-admin-screens.mjs` |
+| Admin sign-in stayed on the code step after an expired challenge | Back to the password step on `MFA_CHALLENGE_EXPIRED` | `test-admin-access.mjs` |
+
+Not changed on purpose: order line snapshots (`order_items.product_name`) written before the `stripTags` fix keep the
+encoded text, because order lines are immutable records; only development data is affected.
+

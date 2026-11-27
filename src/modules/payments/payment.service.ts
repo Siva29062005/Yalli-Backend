@@ -567,28 +567,50 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Captures the authorized payment of an order, at most ONCE:
+   * - one attempt at a time per payment (a claim in the database, stale after 2 minutes, so a crashed attempt is retried
+   *   by reconciliation), which also ends any capture -> "authorized" -> capture loop;
+   * - if the provider already shows a CAPTURED payment for this provider order (an earlier capture call timed out but
+   *   worked), that one is applied and nothing else is captured: a second authorization (another tab, a UPI retry) is
+   *   left to lapse and the provider voids it. Capturing it would charge the customer twice.
+   */
   async captureIfAuthorized(paymentId: string): Promise<void> {
     const payment = await this.prisma.payment.findUnique({
       where: { id: paymentId },
     });
     if (!payment?.providerOrderId) return;
-    const candidates = (
-      await this.provider.fetchOrderPayments(payment.providerOrderId)
-    ).filter((p) => p.status === 'authorized');
-    for (const c of candidates) {
-      if (
-        c.amountMinor !== payment.amountMinor ||
-        c.currency !== payment.currency
-      )
-        continue; // never capture an unexpected amount
-      const captured = await this.provider.capturePayment(
-        c.id,
-        payment.amountMinor,
-        payment.currency,
+    const claimed = await this.prisma.$executeRaw`
+      UPDATE payments SET capture_started_at = now()
+      WHERE id = ${paymentId}::uuid AND status = 'AUTHORIZED'
+        AND (capture_started_at IS NULL OR capture_started_at < now() - interval '2 minutes')`;
+    if (claimed !== 1) return;
+    const found = await this.provider.fetchOrderPayments(
+      payment.providerOrderId,
+    );
+    const alreadyCaptured = found.find((p) => p.status === 'captured');
+    if (alreadyCaptured) {
+      await this.applyAndFinish(
+        paymentId,
+        alreadyCaptured,
+        'RECONCILIATION',
+        undefined,
       );
-      await this.applyAndFinish(paymentId, captured, 'SYSTEM', undefined);
-      return; // one capture per order: any other authorization is left to lapse (the provider voids it)
+      return;
     }
+    const candidate = found.find(
+      (p) =>
+        p.status === 'authorized' &&
+        p.amountMinor === payment.amountMinor &&
+        p.currency === payment.currency, // never capture an unexpected amount
+    );
+    if (!candidate) return;
+    const captured = await this.provider.capturePayment(
+      candidate.id,
+      payment.amountMinor,
+      payment.currency,
+    );
+    await this.applyAndFinish(paymentId, captured, 'SYSTEM', undefined);
   }
 
   /**
@@ -646,6 +668,19 @@ export class PaymentService {
         return this.onCaptured(tx, order, payment, facts, source, record);
       case 'authorized':
         if (MONEY_HELD_STATUSES.includes(payment.status)) return 'duplicate';
+        // An authorization for a different amount is never captured; report it as a mismatch so it neither blocks the
+        // expiry of the order nor triggers capture attempts.
+        if (
+          facts.amountMinor !== payment.amountMinor ||
+          facts.currency !== payment.currency
+        ) {
+          await record('payment.amount_mismatch', payment.status, null, {
+            expectedMinor: payment.amountMinor,
+            currency: facts.currency,
+            stage: 'authorized',
+          });
+          return 'mismatch';
+        }
         // Still authorized but not captured (an earlier capture call failed): report it again so the caller retries
         // the capture. Treating it as a duplicate left the money uncaptured until the expiry job cancelled the order.
         if (payment.status === 'AUTHORIZED') return 'authorized';

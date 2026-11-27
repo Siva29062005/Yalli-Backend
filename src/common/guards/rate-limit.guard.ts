@@ -62,6 +62,8 @@ abstract class BaseRateLimitGuard implements CanActivate {
   }
 
   protected abstract rulesFor(declared: RateLimitRule[]): RateLimitRule[];
+  /** Only the IP guard owns IP budgets (incl. the storefront server's): both guards run on every request. */
+  protected abstract readonly ownsIpRules: boolean;
 
   /** A public, read-only request from the storefront server (proved by the shared key; compared in constant time). */
   protected isFrontendServerRead(
@@ -94,14 +96,15 @@ abstract class BaseRateLimitGuard implements CanActivate {
         context.getClass(),
       ]) ?? [];
 
-    const rules = this.isFrontendServerRead(req, context)
-      ? [
-          FRONTEND_SERVER_RULE,
-          ...this.rulesFor(declared).filter(
-            (r) => r.key !== 'ip' && r.name !== GLOBAL_RULE.name,
-          ),
-        ]
-      : this.rulesFor(declared);
+    const rules =
+      this.ownsIpRules && this.isFrontendServerRead(req, context)
+        ? [
+            FRONTEND_SERVER_RULE,
+            ...this.rulesFor(declared).filter(
+              (r) => r.key !== 'ip' && r.name !== GLOBAL_RULE.name,
+            ),
+          ]
+        : this.rulesFor(declared);
     for (const rule of rules) {
       const subject = this.subject(rule, req);
       if (subject === undefined) continue;
@@ -157,6 +160,7 @@ abstract class BaseRateLimitGuard implements CanActivate {
 /** Runs FIRST (before authentication): global + IP/body-keyed rules, so floods are cut off cheaply. */
 @Injectable()
 export class IpRateLimitGuard extends BaseRateLimitGuard {
+  protected readonly ownsIpRules = true;
   constructor(
     reflector: Reflector,
     store: EphemeralStore,
@@ -174,6 +178,7 @@ export class IpRateLimitGuard extends BaseRateLimitGuard {
 /** Runs AFTER authentication: rules keyed on the authenticated user. */
 @Injectable()
 export class PrincipalRateLimitGuard extends BaseRateLimitGuard {
+  protected readonly ownsIpRules = false;
   constructor(
     reflector: Reflector,
     store: EphemeralStore,

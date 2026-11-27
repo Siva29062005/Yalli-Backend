@@ -23,6 +23,9 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
    The Next server's own server-side catalogue reads go to the API's internal address with `FRONTEND_SERVER_KEY`
    (same secret in both services, from Secrets Manager): they get a separate budget (6000/min) instead of the per-IP
    limits. Per-visitor limits for page views belong in a WAF rate-based rule at CloudFront.
+   The single `frontend-server` budget is shared by every frontend replica; a WAF rate-based rule per client IP at
+   CloudFront is therefore a LAUNCH REQUIREMENT, otherwise one visitor requesting many uncached pages can use it up.
+   Deploy the backend before the frontend (the browser refreshes only on the backend's `ACCESS_TOKEN_INVALID`).
 4b. Frontend build: set `NEXT_PUBLIC_BUSINESS_WEBSITE_URL` (https), `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and the business
    details; runtime: `API_INTERNAL_URL`, `FRONTEND_SERVER_KEY`. The CSP (next.config.ts) allows Razorpay and Turnstile;
    test a real Razorpay checkout on staging, because the CSP only allows `*.razorpay.com`.
