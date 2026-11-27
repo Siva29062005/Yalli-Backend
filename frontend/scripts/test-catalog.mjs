@@ -55,6 +55,7 @@ function mockApi(port) {
         if (q) list = list.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()));
         if (url.searchParams.get('brand')) list = list.filter((p) => p.brand.slug === url.searchParams.get('brand'));
         if (url.searchParams.get('inStock')) list = list.filter((p) => p.inStock);
+        if (url.searchParams.get('special')) list = list.filter((p) => p.price.onSale);
         if (url.searchParams.get('sort') === 'price_desc') list = [...list].sort((a, b) => b.price.amountMinor - a.price.amountMinor);
         const page = Number(url.searchParams.get('page') || 1);
         const size = Number(url.searchParams.get('pageSize') || 20);
@@ -65,7 +66,7 @@ function mockApi(port) {
       if (path === '/catalog/brands')
         return send(200, url.searchParams.get('category')
           ? [{ name: 'Yalli', slug: 'yalli', productCount: 3 }]
-          : [{ name: 'Prestige', slug: 'prestige', productCount: 15 }, { name: 'Yalli', slug: 'yalli', productCount: 15 }]);
+          : [{ name: 'Prestige', slug: 'prestige', productCount: 15 }, { name: 'Yalli', slug: 'yalli', productCount: 15 }, { name: 'Gone', slug: 'gone', productCount: 0 }]);
       // product-0 has 8 reviews (two pages of 6); every other product has 1
       let m = path.match(/^\/catalog\/products\/([^/]+)\/reviews\/summary$/);
       if (m) return send(200, m[1] === 'product-0'
@@ -134,6 +135,28 @@ if (process.argv[2] === '--mock-api') {
   // Empty + invalid params do not crash.
   await page.goto(`${base}/catalog?q=zzzz&page=-3&sort=hack&min=abc`, { waitUntil: 'load' });
   await page.locator('main:visible').getByText('No products match your filters.').first().waitFor();
+
+  // /specials and /brands/x: the page's own filter is fixed (no "On sale" box, no "Clear all" for it) and survives
+  // a change of category.
+  await page.goto(`${base}/specials`, { waitUntil: 'load' });
+  await page.locator('article').first().waitFor();
+  assert.match(await page.locator('[aria-live=polite]').first().innerText(), /10\s+products/);
+  assert.equal(await page.getByRole('checkbox', { name: 'On sale' }).count(), 0, 'no On sale box on /specials');
+  assert.equal(await page.getByRole('button', { name: 'Clear all' }).filter({ visible: true }).count(), 0, 'nothing to clear on /specials');
+  // the boxes follow the URL, so their state changes only after the navigation: click, then wait for the URL
+  await page.getByRole('checkbox', { name: 'In stock only' }).filter({ visible: true }).first().click();
+  await page.waitForURL(/inStock=true/);
+  assert.ok((await page.getByRole('button', { name: 'Clear all' }).filter({ visible: true }).count()) > 0);
+  await page.getByRole('radio', { name: /^Collection 1(\s+\d+)?$/ }).filter({ visible: true }).first().click();
+  await page.waitForURL(/\/catalog\/collection-1\?.*sale=true/);
+  await page.goto(`${base}/brands/yalli`, { waitUntil: 'load' });
+  await page.locator('article').first().waitFor();
+  assert.match(await page.locator('[aria-live=polite]').first().innerText(), /15\s+products/);
+  assert.equal(await page.getByRole('button', { name: 'Clear all' }).filter({ visible: true }).count(), 0, 'the brand is not a clearable filter');
+  await page.getByRole('radio', { name: /^Collection 1(\s+\d+)?$/ }).filter({ visible: true }).first().click();
+  await page.waitForURL(/\/catalog\/collection-1\?.*brand=yalli/);
+  // a brand with nothing to buy is a 404, like an unknown one
+  assert.equal((await page.goto(`${base}/brands/gone`)).status(), 404);
 
   // Product detail.
   await page.goto(`${base}/products/product-0`, { waitUntil: 'load' });

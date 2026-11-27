@@ -75,24 +75,29 @@ export default function ProfilePage() {
               <span className="text-[13px] font-medium text-[#4A5550]">Last name</span>
               <input className={inputClass} value={lastName} maxLength={60} autoComplete="family-name" onChange={(e) => setLastName(e.target.value)} />
             </label>
-            <label className="space-y-1.5 block sm:col-span-2">
-              <span className="text-[13px] font-medium text-[#4A5550]">Email</span>
-              <input className={inputClass} value={user.email} disabled readOnly />
+            {/* The verify controls sit NEXT to the labels, not inside them (no controls nested in a <label>). */}
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className="space-y-1.5 block">
+                <span className="text-[13px] font-medium text-[#4A5550]">Email</span>
+                <input className={inputClass} value={user.email} disabled readOnly />
+              </label>
               <span className="text-[12px] text-[#5F6B64] flex items-center gap-1">
                 {user.emailVerified ? <><Check className="h-3.5 w-3.5 text-[#116644]" /> Verified</> : "Not verified yet"}
               </span>
               {!user.emailVerified && <ResendVerification email={user.email} />}
-            </label>
+            </div>
             {user.phone && (
-              <label className="space-y-1.5 block sm:col-span-2">
-                <span className="text-[13px] font-medium text-[#4A5550]">Phone</span>
-                <input className={inputClass} value={formatPhone(user.phone)} disabled readOnly />
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="space-y-1.5 block">
+                  <span className="text-[13px] font-medium text-[#4A5550]">Phone</span>
+                  <input className={inputClass} value={formatPhone(user.phone)} disabled readOnly />
+                </label>
                 {user.phoneVerified ? (
                   <span className="text-[12px] text-[#5F6B64] flex items-center gap-1"><Check className="h-3.5 w-3.5 text-[#116644]" /> Verified</span>
                 ) : (
                   <PhoneVerification onVerified={() => void refreshProfile()} />
                 )}
-              </label>
+              </div>
             )}
           </div>
 
@@ -207,6 +212,12 @@ function PhoneVerification({ onVerified }: { onVerified: () => void }) {
             maxLength={6}
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+            onKeyDown={(e) => {
+              // Enter verifies the code (it must not submit the surrounding profile form)
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              if (!busy && code.length === 6) void run(async () => { await accountApi.verifyPhone(code); onVerified(); });
+            }}
           />
           <button type="button" disabled={busy || code.length !== 6} className="font-semibold text-[#116644] hover:underline disabled:opacity-50" onClick={() => run(async () => { await accountApi.verifyPhone(code); onVerified(); })}>
             {busy ? "Checking…" : "Verify"}

@@ -7,13 +7,14 @@ import { AccountShell, inputClass, primaryButton, secondaryButton } from "@/comp
 import { useAuth } from "@/components/AuthProvider";
 import { accountApi } from "@/lib/account-api";
 import { fieldErrors, passwordProblems } from "@/lib/auth-api";
+import { ApiError } from "@/lib/http";
 
 const card = "rounded-3xl border border-[#E6EAE7] bg-white p-5 md:p-8 space-y-4 max-w-2xl";
 const message = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
 /** Sign-in and security: change password, two-step verification, sign out everywhere. The server checks everything. */
 export default function SecurityPage() {
-  const { user, logout } = useAuth();
+  const { user, endLocally } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -38,8 +39,12 @@ export default function SecurityPage() {
       setConfirm("");
       setDone(true);
     } catch (err) {
+      // The server answers a wrong current password with 401, and password-policy problems as field messages
+      // ("is too repetitive") that need their subject.
       const fields = fieldErrors(err);
-      setError(fields.newPassword ?? fields.currentPassword ?? message(err, "Could not change your password."));
+      if (err instanceof ApiError && err.status === 401) setError("Your current password is not right.");
+      else if (fields.newPassword) setError(/^[a-z]/.test(fields.newPassword) ? `The new password ${fields.newPassword}.` : fields.newPassword);
+      else setError(fields.currentPassword ?? message(err, "Could not change your password."));
     } finally {
       setBusy(null);
     }
@@ -54,7 +59,7 @@ export default function SecurityPage() {
     } catch {
       /* signed out locally below either way */
     }
-    await logout("/auth/login");
+    endLocally("/auth/login");
   };
 
   return (

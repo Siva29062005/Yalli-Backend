@@ -17,11 +17,25 @@ interface AuthContextValue {
   login: (email: string, password: string, remember: boolean) => Promise<LoginResult>;
   verifyMfa: (mfaToken: string, factor: { code: string } | { recoveryCode: string }, remember: boolean) => Promise<void>;
   logout: (redirectTo?: string) => Promise<void>;
+  /** The server already ended the session (account deleted, signed out everywhere): forget it here and in every tab. */
+  endLocally: (redirectTo: string) => void;
   refreshProfile: () => Promise<CustomerProfile | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 const SESSION_CHANNEL = 'yalli-customer-session';
+/** Identifies this tab, so it ignores its own logout broadcast (BroadcastChannel delivers to every other object). */
+const TAB_ID = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Math.random());
+
+function broadcastLogout() {
+  if (typeof BroadcastChannel === 'undefined') return;
+  const channel = new BroadcastChannel(SESSION_CHANNEL);
+  channel.postMessage({ type: 'logout', from: TAB_ID });
+  channel.close();
+}
+
+/** Retry /me only for a blip (network, timeout, 5xx). 401/403 = signed out; 429 and other 4xx are not retried. */
+const transient = (e: unknown) => !(e instanceof ApiError) || e.status === 0 || e.status >= 500;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<Status>('loading');
@@ -37,8 +51,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setStatus('authenticated');
         return me;
       } catch (e) {
-        const signedOut = e instanceof ApiError && (e.status === 401 || e.status === 403);
-        if (signedOut || attempt >= 2) {
+        if (!transient(e) || attempt >= 2) {
+          // Signed out (or still failing): forget the session completely, so state and tokens agree.
+          customerSession.clear();
           setUser(null);
           setStatus('anonymous');
           return null;
@@ -64,7 +79,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(SESSION_CHANNEL) : null;
     if (channel)
       channel.onmessage = (m) => {
-        if (m.data !== 'logout') return;
+        const msg = m.data as { type?: string; from?: string } | null;
+        if (msg?.type !== 'logout' || msg.from === TAB_ID) return; // our own sign-out is handled by logout()
         customerSession.clear();
         expire();
       };
@@ -100,11 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await customerSession.logout();
     } finally {
-      if (typeof BroadcastChannel !== 'undefined') {
-        const channel = new BroadcastChannel(SESSION_CHANNEL);
-        channel.postMessage('logout');
-        channel.close();
-      }
+      broadcastLogout();
       if (redirectTo) window.location.replace(redirectTo);
       else {
         setUser(null);
@@ -113,9 +125,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const endLocally = useCallback((redirectTo: string) => {
+    customerSession.clear(); // no /auth/logout: the session is already gone, a call would only fail and refresh
+    broadcastLogout();
+    window.location.replace(redirectTo);
+  }, []);
+
   const value = useMemo(
-    () => ({ status, user, login, verifyMfa, logout, refreshProfile }),
-    [status, user, login, verifyMfa, logout, refreshProfile],
+    () => ({ status, user, login, verifyMfa, logout, endLocally, refreshProfile }),
+    [status, user, login, verifyMfa, logout, endLocally, refreshProfile],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

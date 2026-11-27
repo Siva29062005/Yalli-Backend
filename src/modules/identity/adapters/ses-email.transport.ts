@@ -18,6 +18,8 @@ export class SesEmailTransport extends EmailTransport {
     private readonly client: Pick<SESv2Client, 'send'> = new SESv2Client({
       region: config.get('AWS_REGION', { infer: true }),
       maxAttempts: 3,
+      // Bounded: a slow SES must not hold requests or consumers for minutes.
+      requestHandler: { connectionTimeout: 3_000, requestTimeout: 10_000 },
     }),
   ) {
     super();

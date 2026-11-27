@@ -28,6 +28,9 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 
 export function CategoryTiles() {
   const { categories: CATEGORIES, loading, error, refresh } = useCategories();
+  // The tiles are server-rendered: a failed background revalidation keeps them, so only say "unavailable" (or
+  // "loading") when there is nothing real to show (the list then holds just the "All" tile).
+  const nothingShown = CATEGORIES.length <= 1;
   return (
     <section className="py-8">
       <div className="flex items-center justify-between mb-6">
@@ -47,12 +50,12 @@ export function CategoryTiles() {
         </Link>
       </div>
 
-      {loading && (
+      {loading && nothingShown && (
         <p role="status" className="mb-4 text-sm text-[#4A5550]">
           Loading categories…
         </p>
       )}
-      {error && (
+      {error && nothingShown && (
         <div
           role="status"
           className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"

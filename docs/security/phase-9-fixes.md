@@ -94,3 +94,29 @@ customer-type session after the revocation; the person still needs MFA, and the 
 If Razorpay does not yet list a capture that timed out (beyond the 2-minute claim), a second authorization could be
 captured; capture calls time out after 10 s, so this needs the provider to lag by minutes.
 
+
+## Review of the Phase 10 commit (`da146bc`, 2026-11-27)
+
+| Issue | Fix | Verified by |
+|---|---|---|
+| A 5-emoji contact message passed the 10-character check (UTF-16 length) and failed in PostgreSQL (500) | Length counted in code points, as Zod and PostgreSQL do | contact e2e "too little text" |
+| The per-address contact limit ran BEFORE the captcha: anyone could burn a customer's budget with junk requests | The limiter keeps only the per-IP budget (10/hour); the per-address cap (3/hour) counts stored messages after the captcha passed | "counts the per-address cap only after the captcha passed", "is rate-limited per IP address as well" |
+| The contact request waited for the support email (a slow SES held it open) | Send not awaited (stored first; failures logged); SES client has connect/request timeouts | code review |
+| The support email did not warn that sender details are unverified (social engineering of support staff) | Footnote: name, email and order number are not verified; check the order's email before sharing details | template |
+| Brand counts (and brand pages) included products with no active variant | `brands()` requires an active variant; a brand with no buyable product is a 404 | "brand counts leave out products with no active variant", `test-catalog.mjs` (`/brands/gone`) |
+| Account export and deletion ignored contact-form messages sent from the account's address | Export includes them; deletion erases them | customers e2e (export, erasure) |
+| Signing out in one tab: the tab received its own broadcast and was sent to the login page; a 4xx `/me` was retried; a failed retry left a stale session | Broadcasts carry the tab id; only network/5xx errors are retried; giving up clears the session; `endLocally()` for flows the server already ended (sign out everywhere, deletion) | `test-account.mjs` |
+| Change password showed the server's 401 text and bare field errors | Clear wording for a wrong current password and for new-password rules | `test-account.mjs` |
+| After deletion the customer landed on the home page with no confirmation | `/?account=deleted` shows a status message | `test-account.mjs` |
+| Export filename used the UTC date; the blob URL was revoked before some browsers started the download | India date; revoked after 10 s | `test-account.mjs` (filename) |
+| A failed credit-note render left an empty popup | The window is closed and an error shown | code review |
+| Profile: verify controls were nested in `<label>`s; Enter in the SMS box submitted the profile form | Controls moved next to the labels; Enter verifies the code | `test-account.mjs`, axe |
+| /specials and /brands/x offered "On sale"/"Clear all" for their own fixed filter, and a category change dropped it | `locked` filters: not clearable, carried into `/catalog/<category>` as query filters | `test-catalog.mjs` |
+| A cart load could overwrite the answer of an edit made while it was in flight (stale lines) | A load only applies if no newer edit has answered | code review |
+| "Show more reviews" could repeat reviews (page 1 is a cached render) and kept offering more after a short page | De-duplicated by id; stops on a short page | code review (`test-compare-reviews.mjs` paging still passes) |
+| Checkout: a delivery method that was switched off showed no reason; stock, coupon and empty-cart refusals did not refresh the cart and quote; an older quote could overwrite a newer one; a failed coupon removal was invisible | Own message for `INVALID_METHOD`; those codes reload cart + quote; only the newest quote request may set it; the cart error banner is on checkout | code review (`test-checkout.mjs` still passes) |
+| Price boxes started from the raw URL (`min=abc`), not the normalised query | Initialised from the parsed query | `test-catalog.mjs` |
+| The home tiles said "categories unavailable" when only the background revalidation failed (server tiles shown) | The banner only shows when there are no real tiles | code review |
+
+Residual (not verified): build-time category fetch in the root layout adds the API's latency to every uncached render;
+it is revalidated on mount and degrades to the "All" tile, but its cost was not measured.

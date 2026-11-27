@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env.js';
 import { ErrorCode } from '../../common/exceptions/error-codes.js';
@@ -15,6 +20,9 @@ export const CONTACT_TOPIC_LABEL: Record<ContactTopic, string> = {
   PRODUCT: 'A product',
   OTHER: 'Something else',
 };
+
+/** Stored messages per sender address per hour (after the captcha). */
+const MAX_PER_EMAIL_PER_HOUR = 3;
 
 export interface ContactInput {
   name: string;
@@ -56,11 +64,28 @@ export class ContactService {
       .replace(/[ \t]+/g, ' ')
       .trim();
     const name = stripTags(input.name).replace(/\s+/g, ' ').trim();
-    if (message.length < 10 || name.length === 0)
+    // Count CHARACTERS (code points), as Zod and PostgreSQL do: "😀".length is 2 in JavaScript.
+    if ([...message].length < 10 || name.length === 0)
       throw new BadRequestException({
         message: 'Please tell us a little more (at least 10 characters).',
         code: ErrorCode.ValidationFailed,
       });
+    // Per-address cap, counted only AFTER the captcha passed: nobody can burn someone else's budget with junk requests.
+    const recent = await this.prisma.contactMessage.count({
+      where: {
+        email: input.email,
+        createdAt: { gt: new Date(Date.now() - 3_600_000) },
+      },
+    });
+    if (recent >= MAX_PER_EMAIL_PER_HOUR)
+      throw new HttpException(
+        {
+          message:
+            'You have sent several messages already. We will reply to them soon.',
+          code: ErrorCode.TooManyRequests,
+        },
+        429,
+      );
     const saved = await this.prisma.contactMessage.create({
       data: {
         name,
@@ -72,7 +97,9 @@ export class ContactService {
       select: { id: true },
     });
     if (!this.inbox) return;
-    await this.notifications
+    // Not awaited: the message is stored; a slow mail service must not hold the customer's request open. The channel
+    // adapter logs (masked) and swallows delivery failures for this type.
+    void this.notifications
       .send({
         type: 'CONTACT_MESSAGE',
         email: this.inbox,

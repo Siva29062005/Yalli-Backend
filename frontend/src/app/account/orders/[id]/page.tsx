@@ -85,9 +85,14 @@ export default function OrderDetailPage() {
     setActionError(null);
     const w = window.open("", "_blank");
     if (!w) return setActionError("Allow pop-ups for this site to view the credit note.");
-    const { creditNoteHtml } = await import("@/lib/invoice");
-    w.document.write(creditNoteHtml(cn));
-    w.document.close();
+    try {
+      const { creditNoteHtml } = await import("@/lib/invoice");
+      w.document.write(creditNoteHtml(cn));
+      w.document.close();
+    } catch {
+      w.close();
+      setActionError("The credit note could not be opened. Please try again.");
+    }
   };
 
   const downloadInvoice = async () => {

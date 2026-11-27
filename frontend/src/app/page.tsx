@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import { AccountDeletedNotice } from "@/components/AccountDeletedNotice";
 import Image from "next/image";
 import { ArrowRight, ShieldCheck, FileText, Truck, MessageCircle } from "lucide-react";
 import { AnnouncementBar } from "@/components/AnnouncementBar";
@@ -32,6 +34,9 @@ export default async function HomePage() {
       <Header />
 
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 md:px-8 lg:px-12 py-6 space-y-12">
+        <Suspense>
+          <AccountDeletedNotice />
+        </Suspense>
         {/* 1. Hero Section matching Figma Screen 01 */}
         <section className="bg-[#EEFFEE]/60 rounded-3xl p-6 md:p-12 lg:p-16 border border-[#E0EFE5] overflow-hidden">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">

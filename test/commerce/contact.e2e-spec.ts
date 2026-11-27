@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { CaptchaVerifier } from '../../src/modules/identity/ports/ports.js';
 import {
   createTestApp,
   freshIp,
@@ -50,8 +51,33 @@ describe('contact form', () => {
       valid({ message: 'hi' }),
       valid({ message: '<b></b><i>tiny</i>' }),
       valid({ orderNumber: 'DROP TABLE;' }),
+      // 5 emoji are 10 UTF-16 units but only 5 characters: a 400, not a database error
+      valid({ message: '😀😀😀😀😀' }),
     ])
       expect((await send(body)).status).toBe(400);
+  });
+
+  it('counts the per-address cap only after the captcha passed', async () => {
+    const email = `victim.${Date.now()}@example.test`;
+    const captcha = ctx.app.get(CaptchaVerifier);
+    const spy = vi.spyOn(captcha, 'verify').mockResolvedValue(false);
+    try {
+      for (let i = 0; i < 5; i++)
+        expect((await send(valid({ email }))).status).toBe(400);
+    } finally {
+      spy.mockRestore();
+    }
+    // the refused attempts did not use up the real sender's budget
+    expect((await send(valid({ email }))).status).toBe(202);
+  });
+
+  it('is rate-limited per IP address as well', async () => {
+    const ip = freshIp();
+    const statuses = [];
+    for (let i = 0; i < 11; i++)
+      statuses.push((await send(valid(), ip)).status);
+    expect(statuses.slice(0, 10).every((x) => x === 202)).toBe(true);
+    expect(statuses[10]).toBe(429);
   });
 
   it('drops a bot that fills the hidden field, without telling it', async () => {

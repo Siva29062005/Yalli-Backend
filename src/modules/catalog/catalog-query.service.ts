@@ -395,7 +395,10 @@ export class CatalogQueryService {
       { name: string; slug: string; n: number }[]
     >`
       SELECT b.name, b.slug, COUNT(p.id)::int AS n
-      FROM brands b LEFT JOIN products p ON p.brand_id = b.id AND p.status = 'PUBLISHED' AND p.deleted_at IS NULL ${inCategory}
+      FROM brands b LEFT JOIN products p ON p.brand_id = b.id AND p.status = 'PUBLISHED' AND p.deleted_at IS NULL
+        -- same visibility as the listing: at least one active variant
+        AND EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id AND pv.is_active AND pv.deleted_at IS NULL)
+        ${inCategory}
       GROUP BY b.id
       ${category ? Prisma.sql`HAVING COUNT(p.id) > 0` : Prisma.empty}
       ORDER BY b.name`;

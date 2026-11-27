@@ -33,11 +33,6 @@ export const contactSchema = z
   })
   .strict();
 
-const emailKey = (req: Request) => {
-  const e = (req.body as { email?: unknown } | undefined)?.email;
-  return typeof e === 'string' ? e.trim().toLowerCase() : undefined;
-};
-
 @ApiTags('contact')
 @Controller('contact')
 export class ContactController {
@@ -47,10 +42,10 @@ export class ContactController {
   @Post()
   @HttpCode(202)
   @ResponseMessage('Thanks, we have your message and will reply by email')
-  @RateLimit(
-    { name: 'contact-ip', limit: 5, windowSeconds: HOUR, key: 'ip' },
-    { name: 'contact-email', limit: 3, windowSeconds: HOUR, key: emailKey },
-  )
+  // Per IP only here (before validation): a per-address limit at this point would let anyone exhaust someone else's
+  // address with junk. The per-address cap is in ContactService, after the captcha. 10/hour leaves room for shared
+  // mobile-network IPs.
+  @RateLimit({ name: 'contact-ip', limit: 10, windowSeconds: HOUR, key: 'ip' })
   async submit(
     @Body({ schema: contactSchema }) dto: z.infer<typeof contactSchema>,
     @Req() req: Request,

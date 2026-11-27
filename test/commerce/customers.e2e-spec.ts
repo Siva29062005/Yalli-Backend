@@ -193,6 +193,14 @@ describe('personal data export', () => {
   it("requires the password and returns the customer's own data without secrets", async () => {
     const u = await s.session();
     await addAddress(u);
+    await ctx.prisma.contactMessage.create({
+      data: {
+        name: 'Me',
+        email: u.email,
+        topic: 'ORDER',
+        message: 'Where is my parcel please?',
+      },
+    });
     expect(
       (
         await ctx
@@ -213,6 +221,13 @@ describe('personal data export', () => {
     expect(data.addresses).toHaveLength(1);
     expect(data.consents[0]).toMatchObject({ type: 'PRIVACY_POLICY' });
     expect(data.securityEvents.length).toBeGreaterThan(0);
+    // Contact-form messages sent from the account's address are personal data too
+    expect(data.contactMessages).toEqual([
+      expect.objectContaining({
+        topic: 'ORDER',
+        message: 'Where is my parcel please?',
+      }),
+    ]);
     expect(JSON.stringify(data)).not.toMatch(
       /argon2|passwordHash|tokenHash|secretEnc|codeHash/,
     );
@@ -243,6 +258,32 @@ describe('personal data export', () => {
 });
 
 describe('account deletion (right to erasure)', () => {
+  it("erases the contact-form messages sent from the account's address (and nobody else's)", async () => {
+    const u = await s.session();
+    const other = `other.${Date.now()}@example.test`;
+    for (const email of [u.email, other])
+      await ctx.prisma.contactMessage.create({
+        data: {
+          name: 'Someone',
+          email,
+          topic: 'OTHER',
+          message: 'A question about a product.',
+        },
+      });
+    await ctx
+      .http()
+      .delete('/api/v1/me')
+      .set(authed(u))
+      .send({ password: u.password })
+      .expect(200);
+    expect(
+      await ctx.prisma.contactMessage.count({ where: { email: u.email } }),
+    ).toBe(0);
+    expect(
+      await ctx.prisma.contactMessage.count({ where: { email: other } }),
+    ).toBe(1);
+  });
+
   it('anonymises personal data, ends every session, and the email can be used for a brand-new account', async () => {
     const u = await s.session();
     await addAddress(u);

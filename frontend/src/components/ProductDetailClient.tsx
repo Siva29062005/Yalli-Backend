@@ -86,6 +86,7 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
   const [reviewPage, setReviewPage] = useState(1);
   const [loadingReviews, setLoadingReviews] = useState(false);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const [reviewsDone, setReviewsDone] = useState(false);
   const loadMoreReviews = async () => {
     setLoadingReviews(true);
     setReviewsError(null);
@@ -94,7 +95,13 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
       const page = await requestApi<Review[]>(
         `/catalog/products/${encodeURIComponent(product.slug)}/reviews?page=${next}&pageSize=${REVIEW_PAGE_SIZE}`,
       );
-      setMoreReviews((list) => [...list, ...page]);
+      // Page 1 came from a cached server render: skip reviews already shown (approvals shift the pages), and stop when
+      // the server has no more (the cached count can be higher than what really exists after a moderation).
+      setMoreReviews((list) => {
+        const seen = new Set([...(reviews?.reviews ?? []), ...list].map((r) => r.id));
+        return [...list, ...page.filter((r) => !seen.has(r.id))];
+      });
+      if (page.length < REVIEW_PAGE_SIZE) setReviewsDone(true);
       setReviewPage(next);
     } catch {
       setReviewsError('More reviews could not be loaded. Please try again.');
@@ -405,7 +412,7 @@ export function ProductDetailClient({ product, relatedProducts, reviews }: Props
                 </article>
               ))}
             </div>
-            {reviews.reviews.length + moreReviews.length < reviews.summary.count && (
+            {!reviewsDone && reviews.reviews.length + moreReviews.length < reviews.summary.count && (
               <div className="space-y-2">
                 <button
                   type="button"

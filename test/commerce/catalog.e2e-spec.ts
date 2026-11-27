@@ -951,6 +951,26 @@ describe('storefront listing details (Phase 10)', () => {
         .status,
     ).toBe(400);
   });
+
+  it('brand counts leave out products with no active variant (they are not listed either)', async () => {
+    const brand = await fx.brand();
+    await fx.product({ brandId: brand.id });
+    const { variant } = await fx.product({ brandId: brand.id });
+    await ctx.prisma.productVariant.update({
+      where: { id: variant.id },
+      data: { isActive: false },
+    });
+    const all = (await ctx.http().get('/api/v1/catalog/brands')).body.data as {
+      slug: string;
+      productCount: number;
+    }[];
+    expect(all.find((b) => b.slug === brand.slug)?.productCount).toBe(1);
+    const listed = await ctx
+      .http()
+      .get(`/api/v1/catalog/products?brand=${brand.slug}`)
+      .expect(200);
+    expect(listed.body.data).toHaveLength(1);
+  });
 });
 
 describe('data repair migration 20261127000000_plain_text_entities', () => {

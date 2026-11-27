@@ -9,6 +9,7 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/components/AuthProvider";
 import { useCart } from "@/components/CartProvider";
+import { CartErrorBanner } from "@/components/CartLineControls";
 import { ProductImage } from "@/components/ProductImage";
 import { formatPaise } from "@/lib/formatters";
 import { AddressForm } from "@/components/AddressForm";
@@ -53,6 +54,9 @@ export default function CheckoutPage() {
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState<string | null>(null);
   const keyFor = useRef(idempotencyKeys()).current;
+  // Each quote request takes a number; only the newest one may set the quote (the effect's and the re-quote after a
+  // refused order race otherwise, and an old answer would show a stale total).
+  const quoteGen = useRef(0);
 
   useEffect(() => {
     if (authStatus === "anonymous") router.replace("/auth/login?next=%2Fcheckout");
@@ -82,21 +86,23 @@ export default function CheckoutPage() {
   );
   useEffect(() => {
     if (!addressId || cart.items.length === 0) return;
+    const gen = ++quoteGen.current;
     let active = true;
+    const current = () => active && gen === quoteGen.current;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- loading flag for the request below
     setQuoting(true);
     setQuoteError(null);
     checkoutApi
       .quote(addressId, shippingCode)
       .then((q) => {
-        if (!active) return;
+        if (!current()) return;
         setQuote(q);
         if (!shippingCode && q.shipping.selected) setShippingCode(q.shipping.selected);
         else if (!shippingCode && q.shipping.options.length > 0 && q.shipping.status === "CHOICE_REQUIRED")
           setShippingCode(q.shipping.options[0].code);
       })
-      .catch((e) => active && (setQuote(null), setQuoteError(checkoutErrorMessage(e))))
-      .finally(() => active && setQuoting(false));
+      .catch((e) => current() && (setQuote(null), setQuoteError(checkoutErrorMessage(e))))
+      .finally(() => current() && setQuoting(false));
     return () => {
       active = false;
     };
@@ -115,7 +121,18 @@ export default function CheckoutPage() {
       setPlacing(false);
       // Anything the server says changed (price, stock, delivery, the total): show the fresh cart and quote so the
       // customer sees why, instead of retrying into the same refusal.
-      const stale = ["PRICE_CHANGED", "CART_HAS_UNAVAILABLE_ITEMS", "SHIPPING_UNAVAILABLE", "SHIPPING_METHOD_INVALID", "SHIPPING_METHOD_REQUIRED", "ORDER_TOTAL_TOO_LOW"];
+      const stale = [
+        "PRICE_CHANGED",
+        "CART_HAS_UNAVAILABLE_ITEMS",
+        "CART_EMPTY",
+        "INSUFFICIENT_STOCK",
+        "COUPON_INVALID",
+        "COUPON_NOT_APPLICABLE",
+        "SHIPPING_UNAVAILABLE",
+        "SHIPPING_METHOD_INVALID",
+        "SHIPPING_METHOD_REQUIRED",
+        "ORDER_TOTAL_TOO_LOW",
+      ];
       if (e instanceof ApiError && stale.includes(e.code ?? "")) {
         setPlaceError(
           e.code === "PRICE_CHANGED"
@@ -123,7 +140,11 @@ export default function CheckoutPage() {
             : checkoutErrorMessage(e),
         );
         void reloadCart();
-        checkoutApi.quote(addressId, shippingCode).then(setQuote).catch(() => setQuote(null));
+        const gen = ++quoteGen.current;
+        checkoutApi
+          .quote(addressId, shippingCode)
+          .then((q) => gen === quoteGen.current && setQuote(q))
+          .catch(() => gen === quoteGen.current && setQuote(null));
       } else {
         setPlaceError(checkoutErrorMessage(e));
       }
@@ -281,11 +302,18 @@ export default function CheckoutPage() {
               <h2 id="ship-h" className="font-heading text-[18px] font-bold text-[#113322] mb-4">2. Delivery method</h2>
               {shipping.status === "UNAVAILABLE" ? (
                 <p className="text-[14px] text-[#B42318]">We don’t deliver to this PIN code yet. Please choose another address.</p>
+              ) : shipping.status === "INVALID_METHOD" && shipping.options.length === 0 ? (
+                <p role="alert" className="text-[14px] text-[#B42318]">The delivery method you chose is no longer offered. Please try again in a moment.</p>
               ) : shipping.status === "FREE" ? (
                 <p className="text-[14px] text-[#5C6B62]">Standard delivery — <span className="font-semibold text-[#116644]">Free</span></p>
               ) : (
                 <fieldset className="space-y-2">
                   <legend className="sr-only">Choose a delivery method</legend>
+                  {shipping.status === "INVALID_METHOD" && (
+                    <p role="alert" className="text-[14px] text-[#B42318]">
+                      The delivery method you chose is no longer offered. Please pick one of these.
+                    </p>
+                  )}
                   {shipping.options.map((o) => (
                     <label
                       key={o.code}
@@ -322,6 +350,8 @@ export default function CheckoutPage() {
         {/* Summary */}
         <aside className={`${card} space-y-4 lg:sticky lg:top-24 min-w-0`} aria-labelledby="sum-h">
           <h2 id="sum-h" className="font-heading text-[18px] font-bold text-[#113322]">Order summary</h2>
+          {/* A cart action that failed here (e.g. removing the coupon) must be visible on this page too. */}
+          <CartErrorBanner />
           <ul className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
             {cart.items.map((i) => (
               <li key={i.variantId} className="flex gap-3 min-w-0">

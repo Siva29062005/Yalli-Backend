@@ -24,17 +24,23 @@ interface Props {
   query: ProductQuery;
   categorySlug?: string;
   heading?: string;
+  /** A filter the PAGE itself stands for (a brand page, the specials page): not shown as a removable filter. */
+  locked?: { brand?: string; special?: boolean };
 }
 
-export function CatalogView({ page, error, brands, query, categorySlug, heading }: Props) {
+/** Paise -> the rupee text shown in the price boxes (integer maths only). */
+const rupeesText = (p: number | undefined) =>
+  p === undefined ? '' : `${Math.floor(p / 100)}${p % 100 ? `.${String(p % 100).padStart(2, '0')}` : ''}`;
+
+export function CatalogView({ page, error, brands, query, categorySlug, heading, locked = {} }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
   const { categories } = useCategories();
   const [search, setSearch] = useState(query.q ?? '');
-  const [min, setMin] = useState(params.get('min') ?? '');
-  const [max, setMax] = useState(params.get('max') ?? '');
+  const [min, setMin] = useState(() => rupeesText(query.minPrice));
+  const [max, setMax] = useState(() => rupeesText(query.maxPrice));
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersPanel = useRef<HTMLDivElement>(null);
 
@@ -73,8 +79,6 @@ export function CatalogView({ page, error, brands, query, categorySlug, heading 
 
   // Keep the price boxes in sync with the URL (back/forward, links, the min/max swap parseProductQuery makes).
   // query prices are paise; the boxes show rupees (integer maths only).
-  const rupeesText = (p: number | undefined) =>
-    p === undefined ? '' : `${Math.floor(p / 100)}${p % 100 ? `.${String(p % 100).padStart(2, '0')}` : ''}`;
   const urlMin = rupeesText(query.minPrice);
   const urlMax = rupeesText(query.maxPrice);
   const [syncedPrice, setSyncedPrice] = useState(`${urlMin}|${urlMax}`);
@@ -105,6 +109,9 @@ export function CatalogView({ page, error, brands, query, categorySlug, heading 
   const goCategory = (slug: string | null) => {
     const keep = new URLSearchParams(params.toString());
     keep.delete('page');
+    // The page's own filter lives in its path (/brands/x, /specials): carry it over as a query filter.
+    if (locked.brand) keep.set('brand', locked.brand);
+    if (locked.special) keep.set('sale', 'true');
     const qs = keep.toString();
     const base = slug ? `/catalog/${slug}` : '/catalog';
     startTransition(() => router.push(qs ? `${base}?${qs}` : base));
@@ -118,7 +125,11 @@ export function CatalogView({ page, error, brands, query, categorySlug, heading 
   const totalPages = page?.meta.totalPages ?? 0;
   const current = query.page ?? 1;
   const activeFilters =
-    !!query.brand || !!query.inStock || !!query.special || query.minPrice !== undefined || query.maxPrice !== undefined;
+    (!!query.brand && !locked.brand) ||
+    !!query.inStock ||
+    (!!query.special && !locked.special) ||
+    query.minPrice !== undefined ||
+    query.maxPrice !== undefined;
 
   const pageHref = (n: number) => {
     const next = new URLSearchParams(params.toString());
@@ -243,15 +254,17 @@ export function CatalogView({ page, error, brands, query, categorySlug, heading 
           />
           In stock only
         </label>
-        <label className="flex cursor-pointer items-center gap-2.5 py-1">
-          <input
-            type="checkbox"
-            checked={!!query.special}
-            onChange={(e) => navigate({ sale: e.target.checked ? 'true' : null })}
-            className="h-4 w-4 accent-[#116644]"
-          />
-          On sale
-        </label>
+        {!locked.special && (
+          <label className="flex cursor-pointer items-center gap-2.5 py-1">
+            <input
+              type="checkbox"
+              checked={!!query.special}
+              onChange={(e) => navigate({ sale: e.target.checked ? 'true' : null })}
+              className="h-4 w-4 accent-[#116644]"
+            />
+            On sale
+          </label>
+        )}
       </div>
     </div>
   );

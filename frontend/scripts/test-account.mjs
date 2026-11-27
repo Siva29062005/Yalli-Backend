@@ -284,7 +284,8 @@ await test('orders: list links to detail with tracking, invoice is escaped, retu
   await page.getByRole('heading', { name: 'History' }).waitFor();
   // Invoice opens in a new window with user data escaped.
   const [popup] = await Promise.all([context.waitForEvent('page'), page.getByRole('button', { name: 'Invoice' }).click()]);
-  await popup.waitForLoadState();
+  // the window opens first ("Preparing your invoice…", for pop-up blockers); the invoice replaces it once loaded
+  await popup.waitForFunction(() => !document.body?.innerText.includes('Preparing your invoice'), null, { timeout: 10_000 });
   const html = await popup.content();
   assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'buyer name escaped');
   assert.equal(await popup.locator('script').count(), 0);
@@ -371,6 +372,10 @@ await test('signing out in one tab signs out the other tabs', async (page, be, c
   await other.getByRole('heading').first().waitFor();
   await page.getByRole('button', { name: /^Log out/ }).filter({ visible: true }).first().click();
   await other.waitForURL(/\/auth\/login/, { timeout: 10_000 });
+  // the tab that signed out goes where it asked (home), not to the login page its own broadcast would send it to
+  await page.waitForURL((u) => u.pathname === '/', { timeout: 10_000 });
+  await page.waitForTimeout(500);
+  assert.equal(new URL(page.url()).pathname, '/', 'the signing-out tab stays on the home page');
 }, {});
 
 await test('your data: download a copy, then delete the account (typed confirmation)', async (page, be) => {
@@ -386,6 +391,7 @@ await test('your data: download a copy, then delete the account (typed confirmat
   await page.getByRole('button', { name: 'Delete my account', exact: true }).click();
   await page.waitForURL((u) => u.pathname === '/');
   assert.ok(be.s.deleted);
+  await page.getByText('Your account has been deleted and you have been signed out.').waitFor();
 });
 
 await test('sessions: current device marked, other device signed out', async (page, be) => {
@@ -432,7 +438,7 @@ await test('security: change password (wrong current, then right), sign out of a
   await page.getByLabel(/^New password/).fill('blue mango sunrise 42');
   await page.getByLabel('Repeat the new password').fill('blue mango sunrise 42');
   await page.getByRole('button', { name: 'Change password' }).click();
-  await page.getByText('Your current password is incorrect').waitFor();
+  await page.getByText('Your current password is not right.').waitFor();
   await page.getByLabel('Current password').fill('right-password');
   await page.getByRole('button', { name: 'Change password' }).click();
   await page.getByText('Password changed. Other devices were signed out.').waitFor();

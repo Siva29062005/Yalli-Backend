@@ -11,6 +11,7 @@ export async function CatalogPage({
   categorySlug,
   heading,
   hideBrandFilter = false,
+  locked,
 }: {
   query: ProductQuery;
   categorySlug?: string;
@@ -18,6 +19,8 @@ export async function CatalogPage({
   heading?: string;
   /** A brand page already IS one brand. */
   hideBrandFilter?: boolean;
+  /** The filter the page stands for (see CatalogView). */
+  locked?: { brand?: string; special?: boolean };
 }) {
   const [products, brands] = await Promise.allSettled([
     listProducts(query),
@@ -43,6 +46,7 @@ export async function CatalogPage({
             query={query}
             categorySlug={categorySlug}
             heading={heading}
+            locked={locked}
           />
         </Suspense>
       </main>

@@ -12,7 +12,7 @@ const message = (e: unknown, fallback: string) => (e instanceof Error && e.messa
 
 /** The customer's rights over their data (DPDP Act): a copy of it, and erasure. The server re-checks the password. */
 export default function DataPage() {
-  const { user, logout } = useAuth();
+  const { user, endLocally } = useAuth();
   const [form, setForm] = useState<"export" | "delete" | null>(null);
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -65,9 +65,10 @@ export default function DataPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `yalli-my-data-${new Date().toISOString().slice(0, 10)}.json`;
+      // India date (en-CA formats as YYYY-MM-DD).
+      a.download = `yalli-my-data-${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}.json`;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000); // some browsers start the download asynchronously
       setExported(true);
       setPassword("");
       setCode("");
@@ -85,7 +86,7 @@ export default function DataPage() {
     setError(null);
     try {
       await accountApi.deleteAccount(password, user.mfaEnabled ? code : undefined);
-      await logout("/?account=deleted");
+      endLocally("/?account=deleted"); // the server already ended every session
     } catch (err) {
       setError(message(err, "Could not delete your account."));
       setBusy(false);

@@ -9,8 +9,11 @@ import { canonicalFor, isFilteredListing } from '@/lib/site';
 type Params = { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> };
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+// A brand with nothing on sale (no buyable product) is a 404, like an unknown one: no empty indexable pages.
 const findBrand = (slug: string) =>
-  SLUG.test(slug) ? listBrands().then((list) => list.find((b) => b.slug === slug) ?? null) : Promise.resolve(null);
+  SLUG.test(slug)
+    ? listBrands().then((list) => list.find((b) => b.slug === slug && b.productCount > 0) ?? null)
+    : Promise.resolve(null);
 
 export async function generateMetadata({ params, searchParams }: Params): Promise<Metadata> {
   const { slug } = await params;
@@ -32,7 +35,7 @@ export default async function BrandPage({ params, searchParams }: Params) {
   const query = { ...parseProductQuery(await searchParams), brand: slug };
   return (
     <Suspense fallback={<CatalogLoading />}>
-      <CatalogPage query={query} heading={brand?.name ?? 'Brand'} hideBrandFilter />
+      <CatalogPage query={query} heading={brand?.name ?? 'Brand'} hideBrandFilter locked={{ brand: slug }} />
     </Suspense>
   );
 }

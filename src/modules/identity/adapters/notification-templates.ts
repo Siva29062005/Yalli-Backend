@@ -247,7 +247,7 @@ export function renderEmail(
             m.message,
           ],
           footnote:
-            'Reply to the customer from your own mailbox. Never ask for card numbers, passwords or one-time codes.',
+            'The name, email and order number were typed by the sender and are NOT verified: before sharing any order or delivery details, check that this email is the one on that order. Never ask for card numbers, passwords or one-time codes.',
         },
       );
     default: {

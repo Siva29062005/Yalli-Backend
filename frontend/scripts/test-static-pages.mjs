@@ -41,7 +41,8 @@ const WIDTHS = [320, 375, 768, 1440];
 
 async function open(path) {
   const response = await page.goto(`${base}${path}`);
-  await page.locator('footer').waitFor();
+  // visible only: while React streams a page, the incoming copy waits in a hidden <div> next to the shown one
+  await page.locator('footer').filter({ visible: true }).first().waitFor();
   return response;
 }
 async function assertNoOverflow(label) {

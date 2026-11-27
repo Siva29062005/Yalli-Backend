@@ -21,7 +21,7 @@ export default async function SpecialsPage({ searchParams }: { searchParams: Sea
   const query = { ...parseProductQuery(await searchParams), special: true };
   return (
     <Suspense fallback={<CatalogLoading />}>
-      <CatalogPage query={query} heading="On sale" />
+      <CatalogPage query={query} heading="On sale" locked={{ special: true }} />
     </Suspense>
   );
 }

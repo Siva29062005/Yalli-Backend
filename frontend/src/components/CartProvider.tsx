@@ -42,6 +42,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const load = useCallback(async () => {
     const gen = ++generation.current;
+    // The edits issued BEFORE this load started are reflected in its answer; later ones are not (they win).
+    const seqAtStart = issued.current;
     try {
       let view: CartView;
       // A failed merge (network, 5xx) must not hide the customer's own cart: show it, and keep the guest token so the
@@ -50,8 +52,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       else if (guestToken.get()) view = await cartRequest(false, '/cart');
       else view = EMPTY_CART;
       if (gen !== generation.current) return;
-      applied.current = issued.current; // a full reload supersedes every earlier edit's answer
-      setCart(view && Array.isArray(view.items) ? view : EMPTY_CART);
+      if (seqAtStart >= applied.current) {
+        applied.current = seqAtStart;
+        setCart(view && Array.isArray(view.items) ? view : EMPTY_CART);
+      } // else: a newer edit already answered with a fresher cart; keep it
       setStatus('ready');
       setError(null);
     } catch (e) {

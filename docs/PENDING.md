@@ -307,6 +307,12 @@ Catalogue and content
 - [ ] `DELETE /admin/variants/:id` needs `products.update`, not `products.delete`; the import CLI's `--publish` and stock
       receipts do not check the `--as` user's permissions; category counts include products with no active variant.
 
+### Review of the Phase 10 commit (da146bc, 2026-11-27)
+- [x] (2026-11-27) 18 confirmed findings fixed (contact form limits and length, brand counts, contact data in export and
+      erasure, multi-tab sign-out, locked filters on /specials and /brands, cart load race, review paging, checkout
+      refusals and quote race, price boxes, category banner). Record: `docs/security/phase-9-fixes.md`, last section.
+- [ ] Measure the cost of the root layout's server category fetch on uncached renders (Phase 14 load check).
+
 ### Frontend review 2026-11-19: features with a backend but no UI
 - [x] (2026-11-27, Phase 10) Customers: change password and sign out everywhere (`/account/security`), phone
       verification and resend verification email (profile), data export (`/account/data`), 2FA disable with a recovery

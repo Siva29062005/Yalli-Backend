@@ -102,6 +102,7 @@ export class AccountService {
       cart,
       reviews,
       wishlist,
+      contactMessages,
     ] = await Promise.all([
       this.prisma.customer.findUnique({
         where: { userId: user.id },
@@ -180,6 +181,16 @@ export class AccountService {
         where: { userId: user.id },
         select: { createdAt: true, product: { select: { name: true } } },
       }),
+      this.prisma.contactMessage.findMany({
+        where: { email: user.email },
+        select: {
+          topic: true,
+          orderNumber: true,
+          message: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
     ]);
     await this.audit.record({
       action: AuditAction.DataExported,
@@ -214,6 +225,7 @@ export class AccountService {
         product: w.product.name,
         addedAt: w.createdAt,
       })),
+      contactMessages,
       cart:
         cart?.items.map((i) => ({
           sku: i.variant.sku,
@@ -270,6 +282,8 @@ export class AccountService {
       this.prisma.mfaMethod.deleteMany({ where: { userId: user.id } }),
       this.prisma.mfaRecoveryCode.deleteMany({ where: { userId: user.id } }),
       this.prisma.verificationToken.deleteMany({ where: { userId: user.id } }),
+      // Contact-form messages are keyed by the address they were sent from (the form is public).
+      this.prisma.contactMessage.deleteMany({ where: { email: user.email } }),
     ]);
     await this.sessions.revokeAllForUser(user.id, 'ACCOUNT_DELETED');
     await this.authz.invalidate(user.id);
