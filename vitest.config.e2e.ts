@@ -29,6 +29,8 @@ export default defineConfig({
       REQUEST_BODY_LIMIT_KB: '1',
       // One proxy hop: tests set X-Forwarded-For to get a distinct client IP (and so distinct rate-limit buckets).
       TRUST_PROXY_HOPS: '1',
+      // The storefront server's shared key (rate-limit budget for its server-side catalogue reads).
+      FRONTEND_SERVER_KEY: 'test-frontend-server-key-0123456789abcdef',
       COOKIE_SECURE: 'false',
       BACKGROUND_JOBS_ENABLED: 'false',
       EVENT_BUS_DRIVER: 'memory',

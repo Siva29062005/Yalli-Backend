@@ -1,6 +1,8 @@
 import { createTokenSession } from './token-session';
 
-// Staff sessions are always tab-scoped: closing the tab ends them.
+// Staff sessions are never "remembered": the CSRF token lives in sessionStorage (this tab), the server sends staff
+// refresh cookies without an expiry (dropped when the browser closes), and ends every staff session after
+// STAFF_SESSION_MAX_HOURS (default 12) whatever the browser keeps.
 const session = createTokenSession({
   csrfKey: 'yalli_admin_csrf',
   deviceLabel: 'Yalli staff workspace',

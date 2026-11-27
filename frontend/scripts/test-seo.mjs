@@ -63,6 +63,11 @@ const home = await text('/');
 assert.match(home.body, new RegExp(`<link rel="canonical" href="${SITE}"`));
 assert.ok([...home.body.matchAll(/application\/ld\+json">([\s\S]*?)<\/script>/g)].some((m) => JSON.parse(m[1])['@type'] === 'WebSite'));
 ok('home: canonical and WebSite search structured data');
+// The home page makes no promise the shop does not keep (CLAUDE.md, Phase 9).
+for (const claim of [/WELCOME100/, /replacement/i, /Free shipping above/i, /WhatsApp/i, /Ananya/, /catalog\/tablet/, /Save up to \d+%/])
+  assert.doesNotMatch(home.body, claim, `home page must not claim ${claim}`);
+assert.match(home.body, /href="\/returns"/);
+ok('home: no invented offers, coupons, testimonials, fees or support channels');
 
 // listings: plain page indexed, filtered/search/paged pages are not
 const plain = await text('/catalog');
@@ -84,6 +89,23 @@ ok('policy pages have canonical links');
 for (const p of ['/cart', '/checkout', '/account/orders', '/auth/login', '/admin/orders', '/compare'])
   assert.match((await text(p)).headers.get('x-robots-tag') ?? '', /noindex/, `${p} sends X-Robots-Tag noindex`);
 ok('private areas send X-Robots-Tag: noindex, nofollow');
+
+// security headers on every page (next.config.ts)
+for (const p of ['/', '/products/' + slug, '/checkout', '/admin/orders']) {
+  const h = (await text(p)).headers;
+  const csp = h.get('content-security-policy') ?? '';
+  assert.match(csp, /default-src 'self'/, `${p} has a CSP`);
+  assert.match(csp, /frame-ancestors 'none'/, `${p} cannot be framed`);
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /script-src 'self' 'unsafe-inline' https:\/\/\*\.razorpay\.com https:\/\/challenges\.cloudflare\.com/);
+  assert.doesNotMatch(csp, /unsafe-eval/, 'no unsafe-eval in a production build');
+  assert.equal(h.get('x-frame-options'), 'DENY');
+  assert.equal(h.get('x-content-type-options'), 'nosniff');
+  assert.equal(h.get('x-powered-by'), null);
+}
+assert.equal((await text('/auth/reset-password')).headers.get('referrer-policy'), 'no-referrer', 'auth pages send no referrer');
+assert.equal((await text('/')).headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+ok('security headers: CSP, no framing, nosniff, no-referrer on sign-in and reset pages');
 
 // API outage: the sitemap still answers with the static pages
 if (process.env.DEAD_API_FRONTEND_URL) {

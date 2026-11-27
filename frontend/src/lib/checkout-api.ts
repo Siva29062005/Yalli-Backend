@@ -183,6 +183,13 @@ export type PaymentResult =
  * Opens Razorpay's hosted checkout. Card/UPI data never touches our code. The browser's success callback is only
  * a hint: the backend verifies the signature AND asks Razorpay before marking the order paid.
  */
+/**
+ * A NEW key for every Pay click. Reusing one key per order made the server replay the first answer for 24 hours, so a
+ * Pay click after the order was cancelled or expired still opened the payment window. A double click is still safe:
+ * the server allows one live payment per order.
+ */
+export const payAttemptKey = (orderId: string) => `pay-${orderId}-${crypto.randomUUID()}`;
+
 export async function payForOrder(orderId: string, key: string): Promise<PaymentResult> {
   const start = await customerSession.request<PaymentStart>(`/orders/${encodeURIComponent(orderId)}/payments`, {
     method: 'POST',

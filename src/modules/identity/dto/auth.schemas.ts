@@ -47,6 +47,8 @@ export const loginSchema = z
     email: emailSchema,
     password: anyPassword,
     deviceLabel: z.string().trim().max(100).optional(),
+    /** "Keep me signed in". Absent or false: the refresh cookie lasts until the browser closes. Ignored for staff. */
+    remember: z.boolean().optional(),
   })
   .strict();
 export type LoginDto = z.infer<typeof loginSchema>;
@@ -80,6 +82,7 @@ export const mfaVerifySchema = z
     mfaToken: opaqueToken,
     code: otpCode.optional(),
     recoveryCode: z.string().min(8).max(32).optional(),
+    remember: z.boolean().optional(),
   })
   .strict()
   .refine(oneFactor, oneFactorMsg);

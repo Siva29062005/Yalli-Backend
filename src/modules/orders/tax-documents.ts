@@ -142,11 +142,31 @@ export function financialYear(at: Date): { label: string; short: string } {
   };
 }
 
+function documentNumber(
+  prefix: 'CN' | 'INV',
+  fyShort: string,
+  n: number,
+): string {
+  if (!/^[0-9]{4}$/.test(fyShort))
+    throw new RangeError('financial year must be 4 digits');
+  // At most 16 characters (GST): INV/ + 4 + / + up to 7 digits = 16.
+  const max = prefix === 'INV' ? 9_999_999 : 99_999_999;
+  if (!Number.isSafeInteger(n) || n < 1 || n > max)
+    throw new RangeError(`${prefix} serial out of range`);
+  return `${prefix}/${fyShort}/${String(n).padStart(6, '0')}`;
+}
+
 /** CN/2627/000001: at most 16 characters, unique and consecutive within the financial year. */
 export function creditNoteNumber(fyShort: string, n: number): string {
-  if (!Number.isSafeInteger(n) || n < 1 || n > 999_999_999)
-    throw new RangeError('credit note serial out of range');
-  return `CN/${fyShort}/${String(n).padStart(6, '0')}`;
+  return documentNumber('CN', fyShort, n);
+}
+
+/**
+ * INV/2627/000001: the GST tax invoice number (Rule 46: consecutive, unique within the financial year, at most 16
+ * characters). Assigned when the order is PAID, so unpaid and cancelled orders never use a number.
+ */
+export function invoiceNumber(fyShort: string, n: number): string {
+  return documentNumber('INV', fyShort, n);
 }
 
 // --------------------------------------------------------------------------------------------- credit notes

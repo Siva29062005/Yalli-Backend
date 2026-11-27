@@ -185,13 +185,19 @@ export class OrderService {
           inventoryReleasedAt: now,
         },
       });
+      // A customer cancelling their own paid order gets their money back automatically. A STAFF cancel is a refund a
+      // person asked for, so it waits for a second approver (four-eyes), like any other staff refund: otherwise staff
+      // could ship goods off-system and refund the order at once.
+      const byStaff = actor.type === 'ADMIN';
+      if (byStaff && !actor.id)
+        throw new Error('A staff cancellation must name the staff member');
       const refund = await this.refunds.requestInTx(tx, {
         paymentId: payment.id,
-        kind: 'CUSTOMER_CANCEL',
+        kind: byStaff ? 'ADMIN' : 'CUSTOMER_CANCEL',
         amountMinor: payment.capturedMinor - payment.refundedMinor,
         reason: `Order cancelled: ${reason}`.slice(0, 200),
-        requestedById: null,
-        autoApprove: true,
+        requestedById: byStaff ? (actor.id ?? null) : null,
+        autoApprove: !byStaff,
         idempotencyKey: `cancel:${orderId}`,
       });
       // The refund request above already moved the order to REFUND_PENDING (and recorded it in the history).
@@ -207,7 +213,7 @@ export class OrderService {
           paid: true,
         },
       });
-      return refund;
+      return refund.status === 'APPROVED' ? refund : null; // a staff refund is executed when approved
     });
     await this.audit.record({
       action: AuditAction.OrderCancelled,
@@ -235,7 +241,7 @@ export class OrderService {
       o.shipState.trim().toLowerCase() ===
       this.sellerState.trim().toLowerCase();
     return {
-      invoiceNumber: `INV-${o.orderNumber}`,
+      invoiceNumber: o.invoiceNumber!, // set with paidAt (orders_invoice_paid_chk)
       invoiceDate: o.paidAt,
       orderNumber: o.orderNumber,
       taxInvoice: this.sellerGstin !== undefined, // not a valid tax invoice until the seller GSTIN is configured

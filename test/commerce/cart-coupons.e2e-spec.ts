@@ -287,6 +287,38 @@ describe('signed-in cart and merge', () => {
   });
 });
 
+describe('merge respects the line limit', () => {
+  it('a 49-line cart merged with 3 new guest lines ends at exactly 50 lines', async () => {
+    const products = [];
+    for (let i = 0; i < 52; i++) products.push(await fx.product({ stock: 5 }));
+    const u = await s.session();
+    await userCart(u).add(products[0]!.variant.id, 1).expect(201);
+    const cart = await ctx.prisma.cart.findFirstOrThrow({
+      where: { userId: u.userId },
+    });
+    await ctx.prisma.cartItem.createMany({
+      data: products.slice(1, 49).map((p) => ({
+        cartId: cart.id,
+        variantId: p.variant.id,
+        quantity: 1,
+      })),
+    });
+    expect(
+      await ctx.prisma.cartItem.count({ where: { cartId: cart.id } }),
+    ).toBe(49);
+    const g = new Guest();
+    for (const p of products.slice(49, 52)) await g.add(p.variant.id, 1);
+    await ctx
+      .http()
+      .post('/api/v1/cart/merge')
+      .set({ ...authed(u), 'X-Cart-Token': g.token! })
+      .expect(200);
+    expect(
+      await ctx.prisma.cartItem.count({ where: { cartId: cart.id } }),
+    ).toBe(50);
+  });
+});
+
 describe('coupons in the cart', () => {
   it('applies a valid percentage coupon (case-insensitive code) with an exact discount', async () => {
     const { variant } = await fx.product({ priceMinor: 12_345 });

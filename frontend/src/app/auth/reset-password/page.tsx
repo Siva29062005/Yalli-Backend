@@ -2,7 +2,9 @@
 
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useUrlToken } from '@/lib/url-token';
+import { Captcha, captchaRequired } from '@/components/Captcha';
 import { Check, Lock } from 'lucide-react';
 import { AuthNarrowShell, FieldError, FormAlert, inputClass } from '@/components/AuthShell';
 import { errorMessage, fieldErrors, forgotPassword, passwordProblems, resetPassword } from '@/lib/auth-api';
@@ -14,6 +16,8 @@ function RequestLink() {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaRound, setCaptchaRound] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   if (sent) {
@@ -37,15 +41,20 @@ function RequestLink() {
     <form
       onSubmit={async (e) => {
         e.preventDefault();
-        setBusy(true);
         setError(null);
+        if (captchaRequired && !captchaToken) {
+          setError('Please complete the security check.');
+          return;
+        }
+        setBusy(true);
         try {
-          await forgotPassword(email.trim());
+          await forgotPassword(email.trim(), captchaToken ?? undefined);
           setSent(true);
         } catch (err) {
           setError(errorMessage(err));
         } finally {
           setBusy(false);
+          setCaptchaRound((n) => n + 1); // single-use token
         }
       }}
       className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E6EAE7] space-y-4 text-left shadow-xs"
@@ -55,6 +64,7 @@ function RequestLink() {
         <label htmlFor="email" className="text-[12px] font-semibold text-[#113322]">Email address</label>
         <input id="email" type="email" required autoComplete="email" maxLength={254} placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
       </div>
+      <Captcha action="forgot_password" onToken={setCaptchaToken} resetKey={captchaRound} />
       <button type="submit" disabled={busy} className={buttonClass}>
         {busy ? 'Sending…' : 'Send reset link'}
       </button>
@@ -138,7 +148,7 @@ function ChooseNewPassword({ token }: { token: string }) {
 }
 
 function ResetPassword() {
-  const token = useSearchParams().get('token');
+  const token = useUrlToken();
   return (
     <>
       <div className="w-16 h-16 bg-[#EEFFEE] text-[#116644] rounded-full flex items-center justify-center mx-auto border border-[#D5EAD9]">

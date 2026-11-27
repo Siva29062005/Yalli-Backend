@@ -74,26 +74,26 @@ Follow-ups found while wiring (P1 unless noted):
 - [ ] No self-service "delete my account" screen (the pages tell customers to contact you).
 
 ### Frontend review 2026-11-19: launch blockers (each verified in the code)
-- [ ] **No captcha widget.** Register and forgot-password never send `captchaToken` (`lib/auth-api.ts`,
+- [x] (2026-11-27, Phase 9) **No captcha widget.** Register and forgot-password never send `captchaToken` (`lib/auth-api.ts`,
       `RegisterForm.tsx`), but production requires Turnstile (`env.ts`) and the backend rejects a missing token, so
       every sign-up and password reset would fail with `CAPTCHA_FAILED`. Add the Turnstile widget.
-- [ ] **Open redirect in `safeNext`** (`lib/customer-session.ts`): `next=%2F%09%2Fevil.com` (`/\t/evil.com`) passes the
+- [x] (2026-11-27, Phase 9) **Open redirect in `safeNext`** (`lib/customer-session.ts`): `next=%2F%09%2Fevil.com` (`/\t/evil.com`) passes the
       `//` and `/\` checks; the URL parser strips the tab, giving `//evil.com`. Login redirects a signed-in user on
       load, so no click is needed. Reject control characters or compare `new URL(next, origin).origin`.
-- [ ] **Two tabs end the session** (was P1). The access token is memory-only, so every new tab refreshes; two tabs
+- [x] (2026-11-27, Phase 9) **Two tabs end the session** (was P1). The access token is memory-only, so every new tab refreshes; two tabs
       loading together hit reuse detection (`auth.service.ts`, no grace window), revoke the session and email a
       theft warning. Coordinate refresh across tabs and/or add a short server grace window.
-- [ ] **Any 401 triggers refresh + retry** (`token-session.ts` `authed`): a wrong MFA code on step-up, 2FA disable or
+- [x] (2026-11-27, Phase 9) **Any 401 triggers refresh + retry** (`token-session.ts` `authed`): a wrong MFA code on step-up, 2FA disable or
       regenerate is sent twice, counting twice toward `MFA_FAIL_LIMIT` (lockout after ~5 typos) and rotating the
       refresh token each time. Give expired tokens a distinct error code and refresh only on it.
-- [ ] **Home page claims the shop does not honour** (`app/page.tsx`, `CartDrawer.tsx`): "up to 30% on bundles" (links
+- [x] (2026-11-27, Phase 9) **Home page claims the shop does not honour** (`app/page.tsx`, `CartDrawer.tsx`): "up to 30% on bundles" (links
       to a non-existent `/catalog/tablet`), coupon `WELCOME100` (does not exist), "7-day replacement" (the returns page
       says no replacements), "Free shipping above ₹499" (fee comes from shipping methods), "WhatsApp support", and an
       invented testimonial. Remove or derive from real data.
-- [ ] **Server-side catalogue fetches share one rate-limit bucket** (`lib/catalog-api.ts`): the Next server calls the API
+- [x] (2026-11-27, Phase 9) **Server-side catalogue fetches share one rate-limit bucket** (`lib/catalog-api.ts`): the Next server calls the API
       from its own IP, so ~75 product pages a minute across all shoppers exhaust `catalog-list` (120/min) and everyone
       gets 429. Forward the client IP from a trusted proxy hop, or exempt the frontend server with a separate limit.
-- [ ] **Finance Manager cannot create or edit coupons**: the coupon form requires `GET /admin/categories`
+- [x] (2026-11-27, Phase 9) **Finance Manager cannot create or edit coupons**: the coupon form requires `GET /admin/categories`
       (`products.read`), which that role lacks. Make the category list optional or grant it to `coupons.manage`.
 
 ### Found while planning (2026-11-27)
@@ -108,35 +108,35 @@ Follow-ups found while wiring (P1 unless noted):
       item 11 no longer mentions GitHub Actions, the README status and links are current.
 
 ### Security and bug review 2026-11-27: launch blockers (each verified in the code)
-- [ ] **A partial refund strands the order.** `PARTIALLY_REFUNDED` may only move to `REFUND_PENDING`
+- [x] (2026-11-27, Phase 9) **A partial refund strands the order.** `PARTIALLY_REFUNDED` may only move to `REFUND_PENDING`
       (`order-state-machine.ts`) and `statusBeforeRefund` is not restored after a successful partial refund
       (`refund.service.ts`). A goodwill refund on a PAID order means it can never ship; after returning one item of a
       two-item order the second return is refused (needs DELIVERED). Restore the previous fulfilment state.
-- [ ] **Staff cancel is an unapproved full refund.** Admin cancel needs only `orders.update` and raises an auto-approved
+- [x] (2026-11-27, Phase 9) **Staff cancel is an unapproved full refund.** Admin cancel needs only `orders.update` and raises an auto-approved
       refund with `requestedById: null` (`order.service.ts`), bypassing four-eyes; an ORDER_MANAGER can ship off-system,
       leave the order PROCESSING and cancel it. Require `refunds.create` + a second approver for paid orders cancelled by
       staff (keep auto-approve for customer self-cancel).
-- [ ] **An authorized payment is never captured after a first failure.** A second look at an AUTHORIZED payment returns
+- [x] (2026-11-27, Phase 9) **An authorized payment is never captured after a first failure.** A second look at an AUTHORIZED payment returns
       `duplicate`, so reconciliation never retries the capture, and an in-modal retry after a FAILED attempt is
       `ignored` (`payment.service.ts` `afterApply` / authorized branch); the expiry job then cancels a paying
       customer's order. Retry capture for AUTHORIZED payments in reconciliation, accept a new authorization on a FAILED
       payment of the same provider order, and enable auto-capture in the Razorpay dashboard regardless.
-- [ ] **`audit.record` inside the payment transaction** (`payment.service.ts` `onCaptured`: duplicate capture, amount
+- [x] (2026-11-27, Phase 9) **`audit.record` inside the payment transaction** (`payment.service.ts` `onCaptured`: duplicate capture, amount
       mismatch, late capture) uses the shared client: pool starvation under a burst of late captures (Phase 7 rule), and
       the audit row commits even if the transaction rolls back. Add an `audit.recordInTx(tx, …)` and extend
       `pool-starvation.e2e-spec.ts` to the late-capture path.
-- [ ] **Invoice numbers are not a consecutive series per financial year.** `INV-` + `YL<calendar year>-<sequence>`
+- [x] (2026-11-27, Phase 9) **Invoice numbers are not a consecutive series per financial year.** `INV-` + `YL<calendar year>-<sequence>`
       (`checkout.service.ts`) has gaps (unpaid/cancelled orders, rollbacks) and uses the calendar year in the server time
       zone (GST Rule 46). Number invoices at payment from `document_counters` per Indian FY, like credit notes.
-- [ ] **Plain-text fields are stored HTML-encoded.** `stripTags` (`common/utils/sanitize-html.ts`) returns `&amp;`,
+- [x] (2026-11-27, Phase 9) **Plain-text fields are stored HTML-encoded.** `stripTags` (`common/utils/sanitize-html.ts`) returns `&amp;`,
       `&lt;`, `&gt;`: "Kitchen & Dining" is stored and shown as `Kitchen &amp; Dining` (names, summaries, tags, alt text,
       review titles and bodies, imports), search for "&" stops matching, and the encoded text can exceed the column
       length after Zod checked it, giving a 500. Strip tags, decode entities, then re-check the length; repair stored rows.
-- [ ] **Staff sessions survive closing the tab.** The refresh and CSRF cookies get `expires` = the refresh expiry
+- [x] (2026-11-27, Phase 9) **Staff sessions survive closing the tab.** The refresh and CSRF cookies get `expires` = the refresh expiry
       (`auth-cookies.service.ts`), though `admin-session.ts` says staff sessions are tab-scoped; the CSRF cookie is
       readable by script. On a shared PC, reopening the tab restores a staff session. Use session cookies (no
       `Expires`) for staff and for customers without "keep me signed in".
-- [ ] **Client IP through the Next proxy.** The rewrite passes the browser's `X-Forwarded-For` unchanged and adds no hop.
+- [x] (2026-11-27, Phase 9) **Client IP through the Next proxy.** The rewrite passes the browser's `X-Forwarded-For` unchanged and adds no hop.
       With the default `TRUST_PROXY_HOPS=0` every shopper shares the Next server's IP (one attacker can trip the login
       and global limits for everyone); if Next is counted as a hop, `req.ip` is attacker-chosen and per-IP limits are
       bypassed. Decide the topology (Next appends the client IP, or the ALB/CloudFront hop count excludes Next), refuse
@@ -194,10 +194,10 @@ Researched and recorded in `docs/policies/store-policies-and-tax.md` (rules, sou
 
 ### Frontend review 2026-11-19: bugs
 Checkout and cart
-- [ ] Payment `Idempotency-Key` is fixed per order (`pay-${orderId}` in `checkout/page.tsx`, `OrderConfirmation.tsx`), so
+- [x] (2026-11-27, Phase 9) Payment `Idempotency-Key` is fixed per order (`pay-${orderId}` in `checkout/page.tsx`, `OrderConfirmation.tsx`), so
       every Pay click for 24 h replays the first response: an order cancelled meanwhile still opens Razorpay (then gets
       auto-refunded) and the FAILED→PENDING reset is skipped. Use a fresh key per click; reload the order on error.
-- [ ] A failed `/cart/merge` still clears the guest token (`cart-api.ts` `finally`): a network blip or 5xx on login loses
+- [x] (2026-11-27, Phase 9) A failed `/cart/merge` still clears the guest token (`cart-api.ts` `finally`): a network blip or 5xx on login loses
       the guest cart. Clear only on success or 400/404.
 - [ ] The cart "−" button sends `quantity - 1` even when the line is over stock, so it 409s forever; clamp to the
       available quantity (`CartLineControls.tsx`).
@@ -211,7 +211,7 @@ Checkout and cart
       cart page (all lines).
 
 Auth and account
-- [ ] A wrong 2FA code at login returns the user to the password step (`LoginForm.tsx` matches `/expired/` against "The
+- [x] (2026-11-27, Phase 9) A wrong 2FA code at login returns the user to the password step (`LoginForm.tsx` matches `/expired/` against "The
       code is incorrect or expired"). Distinguish wrong code from expired challenge by error code.
 - [ ] Order page: "Return this item" ignores `RETURN_WINDOW_DAYS` and units already returned, and the order is not reloaded
       after a return request (other buttons then fail with `ORDER_NOT_RETURNABLE`). Expose a return deadline from the API.
@@ -221,7 +221,8 @@ Auth and account
       provider stops early the same way (unpublished products are dropped after paging).
 - [ ] Invoice and credit-note windows open after an `await` (popup blockers). Open the window first.
 - [ ] `AuthProvider` signs the user out on any `/me` failure, including 5xx/network; logout is not seen by other tabs.
-      `RegisterForm` drops `next`. Reset/verify tokens stay in the URL (add `history.replaceState`, `Referrer-Policy`).
+      `RegisterForm` drops `next`. (Reset/verify tokens are now removed from the URL and `/auth/*` sends no referrer:
+      done 2026-11-27, Phase 9.)
 
 Storefront
 - [ ] `/catalog/all-products` (first home tile and footer link) is an empty page: the "All" placeholder category is sent
@@ -251,11 +252,11 @@ Money and orders
 - [ ] Refund webhook marks the event id processed before the work (`payment.service.ts`): a failure is acknowledged and
       only the reconcile poll catches it. On an amount mismatch the captured money is not auto-refunded and the payment is
       re-reconciled and re-audited every pass for 48 h.
-- [ ] `captureIfAuthorized` captures every authorized candidate (no break); a second capture is only audited.
+- [x] (2026-11-27, Phase 9) `captureIfAuthorized` captures every authorized candidate (no break); a second capture is only audited.
 - [ ] Creating a refund request is not audited (`commerce.controllers.ts`, `void ctx`).
-- [ ] Outbox: `run-once.ts` treats any P2002 from the work as "already processed"; `order-events.consumer.ts` reads
-      through `this.prisma` inside the de-dupe transaction (pool rule); the relay comment says it stops at the first
-      failure but the loop continues (ordering).
+- [x] (2026-11-27, Phase 9) Outbox: `run-once.ts` treated any P2002 from the work as "already processed" (now ON
+      CONFLICT DO NOTHING); `order-events.consumer.ts` read through `this.prisma` inside the de-dupe transaction (now `tx`).
+- [ ] Outbox relay: the comment says it stops at the first failure but the loop continues (event ordering).
 - [ ] Staff can backdate delivery (`occurredAt` has only a future bound, `shipping.service.ts`), closing the customer's
       return window or putting delivery before shipping. Require `occurredAt >= shippedAt` and the previous event.
 - [ ] Shipping methods (fee, free-above, active) are editable with `shipments.manage` (ORDER_MANAGER); deactivating all
@@ -296,7 +297,7 @@ Platform
       requests. Add an npm override to ≥ 3.22.1 or wait for Prisma.
 
 Catalogue and content
-- [ ] Cart merge can exceed 50 lines (count read once, `cart.service.ts`); checkout has no line cap.
+- [x] (2026-11-27, Phase 9) Cart merge can exceed 50 lines (count read once, `cart.service.ts`); checkout has no line cap.
 - [ ] "Verified purchase" stays after the item was returned and refunded (`hasReceivedProduct`).
 - [ ] `DELETE /admin/variants/:id` needs `products.update`, not `products.delete`; the import CLI's `--publish` and stock
       receipts do not check the `--as` user's permissions; category counts include products with no active variant.

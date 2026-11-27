@@ -1,6 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, ShieldCheck, FileText, Truck, MessageCircle, Star } from "lucide-react";
+import { ArrowRight, ShieldCheck, FileText, Truck, MessageCircle } from "lucide-react";
 import { AnnouncementBar } from "@/components/AnnouncementBar";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -21,6 +21,10 @@ export default async function HomePage() {
   const bestsellers = await listProducts({ inStock: true, pageSize: 5, sort: "newest" })
     .then((p) => p.items)
     .catch(() => []);
+  // The sale card is shown only while something is really on sale (best-effort, like the row above).
+  const onSale = await listProducts({ special: true, pageSize: 1 })
+    .then((p) => p.meta.total)
+    .catch(() => 0);
 
   return (
     <>
@@ -80,7 +84,7 @@ export default async function HomePage() {
           </div>
         </section>
 
-        {/* 2. Bestsellers Row matching Screen 01 */}
+        {/* 2. Newest products (there is no bestseller data yet) */}
         <section className="space-y-6">
           <div className="flex items-end justify-between">
             <div>
@@ -113,106 +117,78 @@ export default async function HomePage() {
           )}
         </section>
 
-        {/* 3. 8 Core Category Tiles (Context change to user-specified categories) */}
+        {/* 3. Category tiles (from the catalogue) */}
         <CategoryTiles />
 
-        {/* 4. Deal Strip matching Figma / Canva Spec */}
+        {/* 4. What the shop really offers. Every claim here is true today (CLAUDE.md: never claim a discount, free
+            shipping or a promise the shop does not keep): the sale card only appears while products are on sale. */}
         <section className="bg-[#EEFFEE]/50 rounded-2xl p-6 border border-[#E0EFE5]">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className={`grid grid-cols-1 gap-4 ${onSale > 0 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
+            {onSale > 0 && (
+              <div className="bg-white rounded-xl p-5 border border-[#E6EAE7] flex flex-col justify-between space-y-3">
+                <div>
+                  <span className="text-[11px] font-bold text-[#FF9900] uppercase tracking-wider">On sale now</span>
+                  <h3 className="font-heading text-[17px] font-bold text-[#113322]">
+                    {onSale === 1 ? "1 product at a special price" : `${onSale} products at special prices`}
+                  </h3>
+                </div>
+                <Link href="/catalog?sale=true" className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1">
+                  <span>See the offers</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            )}
+
             <div className="bg-white rounded-xl p-5 border border-[#E6EAE7] flex flex-col justify-between space-y-3">
               <div>
-                <span className="text-[11px] font-bold text-[#FF9900] uppercase tracking-wider">
-                  Combo Offers
-                </span>
-                <h3 className="font-heading text-[17px] font-bold text-[#113322]">
-                  Save up to 30% on curated bundles
-                </h3>
+                <span className="text-[11px] font-bold text-[#116644] uppercase tracking-wider">Secure checkout</span>
+                <h3 className="font-heading text-[17px] font-bold text-[#113322]">Pay online by UPI, card or netbanking through Razorpay</h3>
               </div>
-              <Link
-                href="/catalog/tablet"
-                className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1"
-              >
-                <span>Shop combo deals</span>
+              <Link href="/help#ordering" className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1">
+                <span>How paying works</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
 
             <div className="bg-white rounded-xl p-5 border border-[#E6EAE7] flex flex-col justify-between space-y-3">
               <div>
-                <span className="text-[11px] font-bold text-[#116644] uppercase tracking-wider">
-                  First Order Offer
-                </span>
-                <h3 className="font-heading text-[17px] font-bold text-[#113322]">
-                  Flat ₹100 off with code WELCOME100
-                </h3>
+                <span className="text-[11px] font-bold text-[#113322] uppercase tracking-wider">Returns</span>
+                <h3 className="font-heading text-[17px] font-bold text-[#113322]">Return an item within 7 days of delivery</h3>
               </div>
-              <Link
-                href="/catalog"
-                className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1"
-              >
-                <span>Use coupon now</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-
-            <div className="bg-white rounded-xl p-5 border border-[#E6EAE7] flex flex-col justify-between space-y-3">
-              <div>
-                <span className="text-[11px] font-bold text-[#113322] uppercase tracking-wider">
-                  Our Promise
-                </span>
-                <h3 className="font-heading text-[17px] font-bold text-[#113322]">
-                  7-Day easy replacement guarantee
-                </h3>
-              </div>
-              <Link
-                href="/shipping"
-                className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1"
-              >
-                <span>Learn about returns</span>
+              <Link href="/returns" className="text-[13px] font-semibold text-[#116644] hover:underline inline-flex items-center gap-1">
+                <span>Read the returns policy</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
           </div>
         </section>
 
-        {/* 5. Trust Row & Testimonial matching Figma Screen 01 */}
-        <section className="bg-white rounded-2xl p-6 border border-[#E6EAE7] flex flex-col md:flex-row items-center justify-between gap-6">
-          {/* Testimonial */}
-          <div className="flex items-center gap-3">
-            <div className="flex text-[#FF9900]">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className="w-4 h-4 fill-[#FF9900]" />
-              ))}
-            </div>
-            <p className="text-[14px] text-[#113322] italic">
-              &ldquo;Beautiful quality, without the big-brand price tag.&rdquo;
-            </p>
-            <span className="text-[13px] text-[#8A958E]">
-              — Ananya S., Bengaluru
-            </span>
-          </div>
-
-          {/* Trust Badges */}
-          <div className="flex flex-wrap items-center gap-6 text-[13px] text-[#4A5550]">
-            <div className="flex items-center gap-1.5">
-              <Truck className="w-4 h-4 text-[#116644]" />
-              <span>Free shipping above ₹499</span>
-            </div>
-            <span className="text-[#8A958E]">·</span>
+        {/* 5. Trust row: facts only (no invented reviews, fees or channels). */}
+        <section className="bg-white rounded-2xl p-6 border border-[#E6EAE7]">
+          <div className="flex flex-wrap items-center justify-center gap-6 text-[13px] text-[#4A5550]">
             <div className="flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-[#116644]" />
-              <span>Secure Razorpay</span>
+              <span>Secure payments with Razorpay</span>
             </div>
             <span className="text-[#8A958E]">·</span>
             <div className="flex items-center gap-1.5">
               <FileText className="w-4 h-4 text-[#116644]" />
-              <span>GST invoice</span>
+              <span>GST invoice with every order</span>
             </div>
             <span className="text-[#8A958E]">·</span>
             <div className="flex items-center gap-1.5">
-              <MessageCircle className="w-4 h-4 text-[#116644]" />
-              <span>WhatsApp support</span>
+              <Truck className="w-4 h-4 text-[#116644]" />
+              <span>Delivery fee shown before you pay</span>
             </div>
+            {(BUSINESS.supportEmail || BUSINESS.supportPhone) && (
+              <>
+                <span className="text-[#8A958E]">·</span>
+                <Link href="/contact" className="flex items-center gap-1.5 hover:text-[#116644]">
+                  <MessageCircle className="w-4 h-4 text-[#116644]" />
+                  <span>Contact support</span>
+                </Link>
+              </>
+            )}
           </div>
         </section>
       </main>

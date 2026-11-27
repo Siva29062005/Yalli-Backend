@@ -10,6 +10,7 @@ import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
 import { ErrorCode } from '../../common/exceptions/error-codes.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import type {
+  OrderStatus,
   PaymentStatus,
   Prisma,
   Refund,
@@ -71,6 +72,10 @@ export class RefundService {
 
   /** Joins the caller's transaction (so e.g. "cancel order" and "request refund" commit together). Idempotent per key. */
   async requestInTx(tx: Tx, input: RefundRequest): Promise<Refund> {
+    // Only the system (a customer's own cancel, a late capture, an out-of-stock payment) may skip approval: a refund a
+    // person asked for always needs someone else to approve it. Backed by refunds_human_approval_chk.
+    if (input.autoApprove && input.requestedById !== null)
+      throw new Error('A refund requested by a person cannot be auto-approved');
     const existing = await tx.refund.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
     });
@@ -424,6 +429,37 @@ export class RefundService {
 
   // ----------------------------------------------------------------------- derived states
 
+  /**
+   * A partial refund must not stop the order: it goes back to where its fulfilment was, so a goodwill refund on a PAID
+   * order can still ship and a delivered order can still have its other items returned. The amount refunded lives on
+   * the payment (PARTIALLY_REFUNDED) and in the credit notes. Only an order with nothing left to fulfil or return
+   * (every unit returned, delivery kept) is closed as PARTIALLY_REFUNDED.
+   */
+  private async statusAfterPartialRefund(
+    tx: Tx,
+    order: { id: string; statusBeforeRefund: OrderStatus | null },
+  ): Promise<OrderStatus> {
+    const before = order.statusBeforeRefund;
+    if (before === 'PAID' || before === 'PROCESSING' || before === 'DELIVERED')
+      return before;
+    if (before !== 'RETURNED') return 'PARTIALLY_REFUNDED';
+    // Sequential: one transaction is one connection.
+    const bought = await tx.orderItem.aggregate({
+      where: { orderId: order.id },
+      _sum: { quantity: true },
+    });
+    const returned = await tx.returnRequest.aggregate({
+      where: {
+        orderId: order.id,
+        status: { in: ['REQUESTED', 'APPROVED', 'RECEIVED', 'REFUNDED'] },
+      },
+      _sum: { quantity: true },
+    });
+    return (bought._sum.quantity ?? 0) > (returned._sum.quantity ?? 0)
+      ? 'DELIVERED'
+      : 'PARTIALLY_REFUNDED';
+  }
+
   /** Brings payment and order status in line with the refunds that exist (single source of truth: the refunds table). */
   async recompute(tx: Tx, orderId: string, paymentId: string): Promise<void> {
     const order = await this.lifecycle.lock(tx, orderId);
@@ -477,7 +513,7 @@ export class RefundService {
         await this.lifecycle.transition(
           tx,
           orderId,
-          'PARTIALLY_REFUNDED',
+          await this.statusAfterPartialRefund(tx, order),
           actor,
           {
             reason: 'partially refunded',

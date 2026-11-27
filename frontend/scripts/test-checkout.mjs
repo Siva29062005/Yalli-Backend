@@ -158,7 +158,8 @@ await test('happy path: server quote → order with idempotency key → Razorpay
   assert.deepEqual(place.body, { addressId: ADDRESS.id, expectedTotalMinor: 98000 });
   assert.match(place.headers['idempotency-key'], /^[0-9a-f-]{36}$/);
   const pay = be.s.calls.find((c) => c.path === `/orders/${ORDER_ID}/payments`);
-  assert.equal(pay.headers['idempotency-key'], `pay-${ORDER_ID}`);
+  // A new key for every Pay click (a fixed per-order key replayed the first answer for 24 hours).
+  assert.match(pay.headers['idempotency-key'], new RegExp(`^pay-${ORDER_ID}-[0-9a-f-]{36}$`));
   const confirm = be.s.calls.find((c) => c.path.endsWith('/payments/confirm'));
   assert.deepEqual(Object.keys(confirm.body).sort(), ['razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature']);
   await page.screenshot({ path: `${SHOTS}/confirmation-paid.png`, fullPage: true });
@@ -214,6 +215,12 @@ await test('declined payment keeps the order; retry pay and cancel are offered',
   await page.getByRole('heading', { name: 'Complete your payment' }).waitFor();
   await page.getByText(/left\)/).waitFor();
   await page.screenshot({ path: `${SHOTS}/confirmation-unpaid.png`, fullPage: true });
+  // Paying again uses a NEW idempotency key, so the server re-checks the order instead of replaying the first attempt.
+  await page.getByRole('button', { name: /^Pay ₹/ }).click();
+  await page.getByText('Card declined by bank').waitFor();
+  const keys = be.s.calls.filter((c) => c.path === `/orders/${ORDER_ID}/payments`).map((c) => c.headers['idempotency-key']);
+  assert.equal(keys.length, 2);
+  assert.notEqual(keys[0], keys[1]);
   page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: 'Cancel order' }).click();
   await page.getByRole('heading', { name: 'Order cancelled' }).waitFor();

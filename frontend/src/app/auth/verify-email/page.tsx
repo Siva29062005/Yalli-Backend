@@ -2,13 +2,13 @@
 
 import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useUrlToken } from '@/lib/url-token';
 import { CheckCircle2, Loader2, Mail, XCircle } from 'lucide-react';
 import { AuthNarrowShell, FormAlert, inputClass } from '@/components/AuthShell';
 import { errorMessage, resendVerification, verifyEmail } from '@/lib/auth-api';
 
 function VerifyEmail() {
-  const token = useSearchParams().get('token');
+  const token = useUrlToken();
   const [state, setState] = useState<'idle' | 'verifying' | 'done' | 'failed'>(token ? 'verifying' : 'idle');
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState('');

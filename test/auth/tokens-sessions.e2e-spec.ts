@@ -6,6 +6,7 @@ import {
   createTestApp,
   freshIp,
   jwtPayload,
+  totp,
   waitFor,
   type TestContext,
 } from '../support/test-app.js';
@@ -364,13 +365,15 @@ describe('JWT tampering and forgery', () => {
 });
 
 describe('cookie mode (browser) and CSRF', () => {
-  const cookieLogin = async () => {
+  const cookieLogin = async (
+    body: { remember?: boolean } = { remember: true },
+  ) => {
     const { email, password, ip } = await s.verifiedUser();
     const res = await ctx
       .http()
       .post('/api/v1/auth/login')
       .set({ 'X-Forwarded-For': ip, 'X-Auth-Mode': 'cookie' })
-      .send({ email, password });
+      .send({ email, password, ...body });
     const setCookie = res.headers['set-cookie'] as unknown as string[];
     const value = (name: string) =>
       setCookie
@@ -399,6 +402,170 @@ describe('cookie mode (browser) and CSRF', () => {
     expect(setCookie.find((c) => c.startsWith('yalli_csrf='))).not.toMatch(
       /HttpOnly/i,
     );
+  });
+
+  it('without "keep me signed in" both cookies are browser-session cookies (no Expires), and stay so after a refresh', async () => {
+    for (const body of [{}, { remember: false }]) {
+      const c = await cookieLogin(body);
+      expect(c.res.status).toBe(200);
+      for (const name of ['yalli_rt=', 'yalli_csrf='])
+        expect(c.setCookie.find((x) => x.startsWith(name))).not.toMatch(
+          /Expires=|Max-Age=/i,
+        );
+      const next = await ctx
+        .http()
+        .post('/api/v1/auth/refresh')
+        .set({
+          'X-Forwarded-For': c.ip,
+          'X-Auth-Mode': 'cookie',
+          'X-CSRF-Token': c.csrf,
+          Cookie: `yalli_rt=${c.refresh}; yalli_csrf=${c.csrf}`,
+        })
+        .send({});
+      expect(next.status).toBe(200);
+      expect(
+        (next.headers['set-cookie'] as unknown as string[]).find((x) =>
+          x.startsWith('yalli_rt='),
+        ),
+      ).not.toMatch(/Expires=/i);
+    }
+  });
+
+  it('"keep me signed in" keeps the expiry across refreshes', async () => {
+    const c = await cookieLogin({ remember: true });
+    const next = await ctx
+      .http()
+      .post('/api/v1/auth/refresh')
+      .set({
+        'X-Forwarded-For': c.ip,
+        'X-Auth-Mode': 'cookie',
+        'X-CSRF-Token': c.csrf,
+        Cookie: `yalli_rt=${c.refresh}; yalli_csrf=${c.csrf}`,
+      })
+      .send({});
+    expect(
+      (next.headers['set-cookie'] as unknown as string[]).find((x) =>
+        x.startsWith('yalli_rt='),
+      ),
+    ).toMatch(/Expires=/i);
+  });
+
+  it('a STAFF sign-in never persists, even when asked to, and the session ends within STAFF_SESSION_MAX_HOURS', async () => {
+    const staff = await s.staff('ORDER_MANAGER');
+    const login = await ctx
+      .http()
+      .post('/api/v1/auth/login')
+      .set({ 'X-Forwarded-For': staff.ip, 'X-Auth-Mode': 'cookie' })
+      .send({ email: staff.email, password: staff.password, remember: true });
+    expect(login.body.data.mfaRequired).toBe(true);
+    const verified = await ctx
+      .http()
+      .post('/api/v1/auth/mfa/verify')
+      .set({ 'X-Forwarded-For': staff.ip, 'X-Auth-Mode': 'cookie' })
+      .send({
+        mfaToken: login.body.data.mfaToken,
+        code: totp(staff.secret, 1),
+        remember: true,
+      });
+    expect(verified.status).toBe(200);
+    const cookies = verified.headers['set-cookie'] as unknown as string[];
+    for (const name of ['yalli_rt=', 'yalli_csrf='])
+      expect(cookies.find((x) => x.startsWith(name))).not.toMatch(/Expires=/i);
+    const session = await ctx.prisma.userSession.findFirstOrThrow({
+      where: { userId: staff.userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(session.persistent).toBe(false);
+    expect(
+      session.expiresAt.getTime() - session.createdAt.getTime(),
+    ).toBeLessThanOrEqual(12 * 3_600_000 + 5_000);
+  });
+
+  it('a customer session keeps the normal absolute lifetime', async () => {
+    const c = await cookieLogin({ remember: true });
+    expect(c.res.status).toBe(200);
+    const userId = jwtPayload(c.res.body.data.accessToken as string)[
+      'sub'
+    ] as string;
+    const session = await ctx.prisma.userSession.findFirstOrThrow({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(session.persistent).toBe(true);
+    expect(
+      session.expiresAt.getTime() - session.createdAt.getTime(),
+    ).toBeGreaterThan(7 * 24 * 3_600_000);
+  });
+
+  const cookieRefresh = (
+    c: { ip: string; csrf: string },
+    refreshToken: string,
+  ) =>
+    ctx
+      .http()
+      .post('/api/v1/auth/refresh')
+      .set({
+        'X-Forwarded-For': c.ip,
+        'X-Auth-Mode': 'cookie',
+        'X-CSRF-Token': c.csrf,
+        Cookie: `yalli_rt=${refreshToken}; yalli_csrf=${c.csrf}`,
+      })
+      .send({});
+
+  it('two TABS refreshing at the same instant both stay signed in (grace window), and the session is not revoked', async () => {
+    const c = await cookieLogin();
+    const [a, b] = await Promise.all([
+      cookieRefresh(c, c.refresh),
+      cookieRefresh(c, c.refresh),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    for (const r of [a, b]) {
+      expect((await me(r.body.data.accessToken)).status).toBe(200);
+      expect(r.body.data.csrfToken).toBe(c.csrf); // the CSRF token stays the same for every tab
+    }
+    const userId = jwtPayload(c.res.body.data.accessToken as string)[
+      'sub'
+    ] as string;
+    const session = await ctx.prisma.userSession.findFirstOrThrow({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(session.revokedAt).toBeNull();
+    // exactly one of them rotated the cookie; the other only got an access token
+    const rotated = [a, b].filter((r) =>
+      ((r.headers['set-cookie'] as unknown as string[] | undefined) ?? []).some(
+        (x) => x.startsWith('yalli_rt='),
+      ),
+    );
+    expect(rotated).toHaveLength(1);
+  });
+
+  it('a reused cookie token OUTSIDE the grace window is still treated as theft', async () => {
+    const c = await cookieLogin();
+    expect((await cookieRefresh(c, c.refresh)).status).toBe(200);
+    const userId = jwtPayload(c.res.body.data.accessToken as string)[
+      'sub'
+    ] as string;
+    await ctx.prisma.refreshToken.updateMany({
+      where: { session: { userId }, usedAt: { not: null } },
+      data: { usedAt: new Date(Date.now() - 11_000) },
+    });
+    const late = await cookieRefresh(c, c.refresh);
+    expect(late.status).toBe(401);
+    const session = await ctx.prisma.userSession.findFirstOrThrow({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(session.revokedReason).toBe('REFRESH_REUSE');
+  });
+
+  it('API (body-mode) clients get no grace: an immediate replay still revokes the session', async () => {
+    const a = await s.session();
+    const [x, y] = await Promise.all([
+      refresh(a.refreshToken, a.ip),
+      refresh(a.refreshToken, a.ip),
+    ]);
+    expect([x.status, y.status].sort((p, q) => p - q)).toEqual([200, 401]);
   });
 
   it('refuses a cookie-authenticated refresh without the CSRF header (cross-site forgery)', async () => {
@@ -482,5 +649,65 @@ describe('cookie mode (browser) and CSRF', () => {
     expect(
       cleared.some((c) => c.startsWith('yalli_rt=;') && /Max-Age=0/i.test(c)),
     ).toBe(true);
+  });
+});
+
+describe('401 codes tell a client when (and only when) to refresh', () => {
+  it('a missing, malformed, forged or revoked access token is ACCESS_TOKEN_INVALID', async () => {
+    const u = await s.session();
+    const forged = u.accessToken.slice(0, -4) + 'AAAA';
+    for (const header of [undefined, 'Bearer short', `Bearer ${forged}`]) {
+      const req = ctx
+        .http()
+        .get('/api/v1/me')
+        .set('X-Forwarded-For', freshIp());
+      const res = await (header ? req.set('Authorization', header) : req);
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('ACCESS_TOKEN_INVALID');
+    }
+    await ctx
+      .http()
+      .post('/api/v1/auth/logout')
+      .set(authed(u))
+      .send({})
+      .expect(200);
+    const after = await me(u.accessToken);
+    expect(after.status).toBe(401);
+    expect(after.body.error.code).toBe('ACCESS_TOKEN_INVALID');
+  });
+
+  it('a wrong step-up code is a plain UNAUTHORIZED (no refresh, no second guess)', async () => {
+    const staff = await s.staff('ORDER_MANAGER');
+    const res = await ctx
+      .http()
+      .post('/api/v1/auth/mfa/step-up')
+      .set(authed(staff))
+      .send({ code: '000000' });
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('an unknown or used-up sign-in challenge is MFA_CHALLENGE_EXPIRED; a wrong code is not', async () => {
+    const unknown = await ctx
+      .http()
+      .post('/api/v1/auth/mfa/verify')
+      .set('X-Forwarded-For', freshIp())
+      .send({ mfaToken: 'x'.repeat(43), code: '123456' });
+    expect(unknown.status).toBe(401);
+    expect(unknown.body.error.code).toBe('MFA_CHALLENGE_EXPIRED');
+
+    const staff = await s.staff('ORDER_MANAGER');
+    const login = await ctx
+      .http()
+      .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', staff.ip)
+      .send({ email: staff.email, password: staff.password });
+    const wrong = await ctx
+      .http()
+      .post('/api/v1/auth/mfa/verify')
+      .set('X-Forwarded-For', staff.ip)
+      .send({ mfaToken: login.body.data.mfaToken, code: '000000' });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body.error.code).toBe('UNAUTHORIZED');
   });
 });

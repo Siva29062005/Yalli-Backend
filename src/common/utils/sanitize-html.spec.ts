@@ -51,6 +51,39 @@ describe('sanitizeRichText (stored XSS defence)', () => {
   it('stripTags removes every tag', () => {
     expect(stripTags('<b>Bold</b> <script>x</script>name')).toBe('Bold name');
   });
+
+  it.each([
+    ['Kitchen & Dining', 'Kitchen & Dining'],
+    ['5 > 3 && 2 < 4', '5 > 3 && 2 < 4'],
+    ['Pots &amp; Pans', 'Pots & Pans'],
+    ['caf&eacute; &#169;', 'café ©'],
+    ['&amp;lt;', '&lt;'],
+    ['<b>Tom</b> & <i>Jerry</i>', 'Tom & Jerry'],
+    ['"Quoted" it\'s', '"Quoted" it\'s'],
+  ])(
+    'stripTags returns plain text, not HTML entities: %s',
+    (input, expected) => {
+      expect(stripTags(input)).toBe(expected);
+    },
+  );
+
+  it('stripTags keeps an escaped tag as harmless literal text', () => {
+    // Plain text: consumers escape it, so a literal "<img …>" is displayed, never executed.
+    expect(stripTags('&lt;img src=x onerror=alert(1)&gt;')).toBe(
+      '<img src=x onerror=alert(1)>',
+    );
+    expect(stripTags('<img src=x onerror=alert(1)>')).toBe('');
+  });
+
+  it('stripTags never makes text longer (column limits checked on the input still hold)', () => {
+    for (const s of [
+      '&'.repeat(2000),
+      '<'.repeat(500),
+      'a & b < c > d'.repeat(100),
+      '&amp;'.repeat(300),
+    ])
+      expect(stripTags(s).length).toBeLessThanOrEqual(s.length);
+  });
 });
 
 describe('slugs', () => {

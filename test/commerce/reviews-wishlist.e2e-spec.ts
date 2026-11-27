@@ -176,6 +176,21 @@ describe('input safety', () => {
     expect(r.body.data.title).toBe('Nice');
     expect(r.body.data.body).toBe('Really good product overall');
   });
+
+  it('keeps "&", "<" and ">" as text; a body full of "&" no longer grows past the column (was HTML-encoded, then 500)', async () => {
+    const { product, u } = await buyer();
+    // 900 characters (the e2e body limit is 1 KB): encoded as `&amp;` this was ~4,500, past VarChar(2000).
+    const body = `Pots & pans ${'&'.repeat(882)} 5 > 3`;
+    expect(body).toHaveLength(900);
+    const r = await post(
+      u,
+      product.slug,
+      goodReview({ title: 'Fish & chips <3', body }),
+    );
+    expect(r.status).toBe(201);
+    expect(r.body.data.title).toBe('Fish & chips <3');
+    expect(r.body.data.body).toBe(body);
+  });
 });
 
 describe('moderation and visibility', () => {

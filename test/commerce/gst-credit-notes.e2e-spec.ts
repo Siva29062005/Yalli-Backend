@@ -219,6 +219,46 @@ describe('GST on the delivery fee (composite supply)', () => {
   });
 });
 
+describe('invoice numbers (GST Rule 46)', () => {
+  it('are taken only when an order is PAID, consecutive within the financial year, and shown on the invoice', async () => {
+    const fy = financialYear(new Date());
+    const serial = (n: string | null) => Number(n!.split('/')[2]);
+    const a = await paidOrder([{ priceMinor: 20_000, gstRateBps: 1800 }]);
+    // An order that is placed but never paid must not use a number.
+    const unpaidBuyer = await shop.customer();
+    const { variant } = await shop.fx.product({ priceMinor: 20_000, stock: 5 });
+    const unpaid = await shop.order(unpaidBuyer, [{ variantId: variant.id }], {
+      shippingMethodCode: 'STANDARD',
+    });
+    const b = await paidOrder([{ priceMinor: 20_000, gstRateBps: 1800 }]);
+
+    expect(a.db.invoiceNumber).toMatch(new RegExp(`^INV/${fy.short}/\\d{6}$`));
+    expect(serial(b.db.invoiceNumber)).toBe(serial(a.db.invoiceNumber) + 1);
+    expect((await shop.dbOrder(unpaid.id)).invoiceNumber).toBeNull();
+    expect((await invoice(a.u, a.order.id)).invoiceNumber).toBe(
+      a.db.invoiceNumber,
+    );
+  });
+
+  it('the database ties invoice numbers to payment', async () => {
+    const { order } = await paidOrder([
+      { priceMinor: 20_000, gstRateBps: 1800 },
+    ]);
+    await expect(
+      ctx.prisma.order.update({
+        where: { id: order.id },
+        data: { invoiceNumber: null },
+      }),
+    ).rejects.toThrow(/orders_invoice_paid_chk/);
+    await expect(
+      ctx.prisma.order.update({
+        where: { id: order.id },
+        data: { invoiceNumber: 'INV-YL26-1' },
+      }),
+    ).rejects.toThrow(/orders_invoice_number_chk/);
+  });
+});
+
 describe('credit notes', () => {
   it('cancelling a paid order refunds everything and issues ONE credit note for all of it, delivery included', async () => {
     const { u, order, db } = await paidOrder([
@@ -237,7 +277,8 @@ describe('credit notes', () => {
     const cn = list[0]!;
     const fy = financialYear(new Date());
     expect(cn.creditNoteNumber).toMatch(new RegExp(`^CN/${fy.short}/\\d{6}$`));
-    expect(cn.invoiceNumber).toBe(`INV-${db.orderNumber}`);
+    expect(cn.invoiceNumber).toBe(db.invoiceNumber);
+    expect(cn.invoiceNumber).toMatch(new RegExp(`^INV/${fy.short}/\\d{6}$`));
     expect(cn.supply).toBe('INTRA_STATE');
     expect(cn.totals.totalMinor).toBe(db.totalMinor);
     expect(taxOf(cn.totals)).toBe(db.gstIncludedMinor); // exactly the GST that was invoiced

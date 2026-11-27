@@ -130,6 +130,15 @@ describe('validateEnv', () => {
       ).toThrow(/EVENT_BUS_DRIVER/);
       expect(() => validateEnv(prod)).toThrow(/SELLER_GSTIN/);
     });
+    it('refuses TRUST_PROXY_HOPS=0 in production (every client would share the proxy IP)', () => {
+      expect(() => validateEnv(prod)).toThrow(/TRUST_PROXY_HOPS/);
+      try {
+        validateEnv({ ...prod, TRUST_PROXY_HOPS: '2' });
+      } catch (e) {
+        expect(String(e)).not.toMatch(/TRUST_PROXY_HOPS/);
+      }
+    });
+
     it('refuses local-disk image storage in production', () => {
       expect(() => validateEnv({ ...prod, STORAGE_DRIVER: 'local' })).toThrow(
         /STORAGE_DRIVER/,

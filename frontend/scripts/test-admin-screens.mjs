@@ -16,10 +16,14 @@ page.on('dialog', (dialog) => void dialog.accept()); // window.confirm
 
 const ALL_PERMISSIONS = ['analytics.read', 'products.read', 'products.create', 'products.update', 'products.delete', 'products.publish', 'inventory.read', 'inventory.adjust', 'orders.read', 'orders.update', 'shipments.manage', 'payments.read', 'refunds.create', 'refunds.approve', 'coupons.manage', 'reviews.moderate', 'users.manage', 'customers.suspend'];
 const SUPPORT_PERMISSIONS = ['products.read', 'orders.read', 'refunds.create', 'customers.read', 'reviews.moderate'];
+// The real FINANCE_MANAGER role (src/modules/access/permissions.ts): coupons, but no products.read.
+const FINANCE_PERMISSIONS = ['orders.read', 'payments.read', 'refunds.create', 'refunds.approve', 'pricing.update', 'coupons.manage', 'audit.read', 'analytics.read'];
 let signedInAs = 'admin';
 const meFor = () => signedInAs === 'support'
   ? { id: 'staff-2', email: 'support@example.test', roles: ['CUSTOMER_SUPPORT'], mfaEnabled: true, permissions: SUPPORT_PERMISSIONS }
-  : { id: 'staff-1', email: 'admin@example.test', roles: ['SUPER_ADMIN'], mfaEnabled: true, permissions: ALL_PERMISSIONS };
+  : signedInAs === 'finance'
+    ? { id: 'staff-3', email: 'finance@example.test', roles: ['FINANCE_MANAGER'], mfaEnabled: true, permissions: FINANCE_PERMISSIONS }
+    : { id: 'staff-1', email: 'admin@example.test', roles: ['SUPER_ADMIN'], mfaEnabled: true, permissions: ALL_PERMISSIONS };
 const calls = [];
 const ok = (data, meta) => ({ status: 200, json: { success: true, data, ...(meta ? { meta } : {}) } });
 const list = (items) => ok(items, { page: 1, pageSize: 20, total: items.length, totalPages: 1 });
@@ -72,7 +76,8 @@ function handle(method, path, request) {
   // products
   if (m === 'GET /admin/products') return list([{ id: 'p1', slug: 'momo-steamer', name: 'Momo Steamer', status: 'DRAFT', updatedAt: '2026-11-18T09:00:00Z', _count: { variants: 1, images: 0 }, categories: ['Kitchen and Dining'], price: { minMinor: 49000, maxMinor: 79900, onSale: true }, stock: { available: 0, lowStock: false } }]);
   if (m === 'GET /admin/brands') return ok([{ id: 'b1', name: 'Yalli' }]);
-  if (m === 'GET /admin/categories') return ok([{ id: 'c1', name: 'Kitchen and Dining' }]);
+  if (m === 'GET /admin/categories')
+    return signedInAs === 'finance' ? fail(403, 'You do not have permission to perform this action', 'FORBIDDEN') : ok([{ id: 'c1', name: 'Kitchen and Dining' }]);
   if (m === 'POST /admin/products') return { status: 201, json: { success: true, data: { id: 'p1' } } };
   if (m === 'GET /admin/products/p1')
     return ok({ id: 'p1', slug: 'momo-steamer', name: 'Momo Steamer', summary: null, descriptionHtml: '', status: 'DRAFT', brandId: null, gstRateBps: 1800, hsnCode: null, categories: [{ id: 'c1', name: 'Kitchen and Dining' }], tags: [], attributes: [], images: [], variants: [{ id: 'v1', sku: 'YAL-ST-20', name: null, priceMinor: 79900, salePriceMinor: 49000, saleStartsAt: null, saleEndsAt: null, isActive: true, weightGrams: null, available: 7 }], updatedAt: '2026-11-18T09:00:00Z' });
@@ -339,6 +344,28 @@ try {
   await page.getByText(/You can request a refund here/).waitFor();
   await page.getByRole('button', { name: 'Request a refund' }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Approve' }).count(), 0);
+
+  // ----------------------------------------------------------------------------------------------- finance role
+  await page.getByRole('button', { name: 'Sign out of admin' }).click();
+  await page.getByLabel('Work email').waitFor();
+  signedInAs = 'finance';
+  await page.getByLabel('Work email').fill('finance@example.test');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Authenticator code').fill('123456');
+  await page.getByRole('button', { name: 'Verify and continue' }).click();
+  await page.locator('aside').getByRole('link', { name: 'Coupons' }).waitFor();
+  await go('Coupons', 'Coupons');
+  const financeMark = calls.length;
+  await page.getByRole('button', { name: 'New coupon' }).click();
+  await page.getByLabel('Code').fill('refund10');
+  await page.getByLabel('Percentage (%)').fill('10');
+  await page.getByText('Category coupons need product access').waitFor();
+  assert.equal(await page.getByRole('radio', { name: 'Only selected categories' }).isDisabled(), true);
+  await page.getByRole('button', { name: 'Create coupon' }).click();
+  await page.getByText('Coupon REFUND10 created.').waitFor();
+  assert.equal(lastCall('POST', '/admin/coupons').body.scope, 'ALL_ITEMS');
+  assert.equal(calls.slice(financeMark).some((c) => c.path === '/admin/categories'), false, 'no category request without products.read');
 
   // back to the administrator for the layout checks
   await page.getByRole('button', { name: 'Sign out of admin' }).click();

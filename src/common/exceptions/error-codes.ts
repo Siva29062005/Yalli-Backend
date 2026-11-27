@@ -2,6 +2,11 @@ export const ErrorCode = {
   BadRequest: 'BAD_REQUEST',
   ValidationFailed: 'VALIDATION_FAILED',
   Unauthorized: 'UNAUTHORIZED',
+  /** The access token is missing, expired, invalid or its session ended: the ONLY 401 a client should answer with a
+   *  silent refresh. Any other 401 (wrong password or code) is about the request and must not be retried. */
+  AccessTokenInvalid: 'ACCESS_TOKEN_INVALID',
+  /** The sign-in 2FA challenge is unknown, expired, used up or out of attempts: start again from the password. */
+  MfaChallengeExpired: 'MFA_CHALLENGE_EXPIRED',
   Forbidden: 'FORBIDDEN',
   StepUpRequired: 'STEP_UP_REQUIRED',
   EmailNotVerified: 'EMAIL_NOT_VERIFIED',

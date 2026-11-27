@@ -66,8 +66,8 @@ export function LoginForm() {
       router.replace(next);
     } catch (err) {
       setCode('');
-      // An expired/used challenge can't be retried: send the user back to the password step.
-      if (err instanceof ApiError && err.status === 401 && /expired|sign in again/i.test(err.message)) {
+      // Only an expired/used-up challenge sends the user back to the password step; a wrong code can simply be retyped.
+      if (err instanceof ApiError && err.code === 'MFA_CHALLENGE_EXPIRED') {
         setStep({ kind: 'credentials' });
       }
       setError(errorMessage(err, 'That code did not work. Please try again.'));

@@ -283,7 +283,7 @@ function OrderDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
                   className="space-y-3"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    if (!window.confirm(`Cancel ${o.orderNumber}? ${o.paidAt ? 'The customer is refunded in full to the original payment method.' : ''}`)) return;
+                    if (!window.confirm(`Cancel ${o.orderNumber}? ${o.paidAt ? 'A full refund is raised; finance must approve it (Refunds & returns) before the money goes back.' : ''}`)) return;
                     void act('Order cancelled.', () => adminPost(`/admin/orders/${id}/cancel`, { reason: cancelReason.trim() })).then(() => setCancelling(false));
                   }}
                 >

@@ -62,7 +62,8 @@ What the shop does:
 - One credit note per PROCESSED refund of an order that was invoiced (paid). Late payments on cancelled orders, which were
   never invoiced, get no note.
 - Number `CN/2627/000001`: consecutive and gapless within the Indian financial year (April-March, India time), at most 16
-  characters. Dated when issued; it states the original invoice number, the reason, place of supply and supply type.
+  characters. Tax invoices use the same scheme, `INV/2627/000001` (Rule 46), taken when the order is paid, so unpaid or
+  cancelled orders never use a number (since 2026-11-27; before, the invoice number was derived from the order number). Dated when issued; it states the original invoice number, the reason, place of supply and supply type.
 - Amount split: a return refund credits the returned item first; any other refund (cancellation, goodwill, correction)
   spreads by value over what the invoice has not yet credited, delivery included. The tax in each part is proportional to
   the GST actually invoiced on that line, so a full refund credits exactly the invoiced tax and repeated partial refunds can

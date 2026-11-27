@@ -107,7 +107,7 @@ function fakeBackend(opts = {}) {
       return route.fulfill(ok(order()));
     }
     if (path === `/orders/${OID}/invoice`) return route.fulfill(ok({
-      invoiceNumber: 'INV-YL-260001', invoiceDate: '2026-11-10T10:05:00Z', orderNumber: 'YL-260001', taxInvoice: false,
+      invoiceNumber: 'INV/2627/000001', invoiceDate: '2026-11-10T10:05:00Z', orderNumber: 'YL-260001', taxInvoice: false,
       seller: { name: 'Yalli Marketing', state: 'Tamil Nadu', gstin: null }, buyer: { name: '<script>alert(1)</script>', email: 'priya@example.com' },
       placeOfSupply: 'Tamil Nadu', supply: 'INTRA_STATE', currency: 'INR',
       lines: [{ description: 'Copper Bottle', sku: 'SKU-1', hsn: '7418', quantity: 2, unitPriceMinor: 49000, discountMinor: 0, taxableValueMinor: 83051, gstRateBps: 1800, cgstMinor: 7474, sgstMinor: 7475, igstMinor: 0, lineTotalMinor: 98000 }],

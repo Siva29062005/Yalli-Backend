@@ -5,8 +5,9 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
 import {
   RATE_LIMIT_KEY,
@@ -19,6 +20,22 @@ import {
   requestContext,
 } from '../../modules/audit/audit.service.js';
 import { ErrorCode } from '../exceptions/error-codes.js';
+import type { Env } from '../../config/env.js';
+import { IS_PUBLIC_KEY } from '../decorators/access.decorators.js';
+
+/**
+ * The storefront server's own budget for public GET requests (all shoppers' server-side renders share its IP and are
+ * cached per URL, so their volume follows the number of distinct pages, not of visitors). Still capped, so a leaked key
+ * cannot become an unlimited scraper.
+ */
+const FRONTEND_SERVER_RULE: RateLimitRule = {
+  name: 'frontend-server',
+  limit: 6000,
+  windowSeconds: 60,
+  key: 'ip',
+  sensitive: false,
+};
+export const FRONTEND_KEY_HEADER = 'x-frontend-key';
 
 /** Applies to every route; deliberately generous, it only blunts floods. */
 const GLOBAL_RULE: RateLimitRule = {
@@ -32,13 +49,40 @@ const GLOBAL_RULE: RateLimitRule = {
 abstract class BaseRateLimitGuard implements CanActivate {
   private readonly logger = new Logger('RateLimit');
 
+  private readonly frontendKey: Buffer | null;
+
   constructor(
     protected readonly reflector: Reflector,
     private readonly store: EphemeralStore,
     private readonly audit: AuditService,
-  ) {}
+    config: ConfigService<Env, true>,
+  ) {
+    const k = config.get('FRONTEND_SERVER_KEY', { infer: true });
+    this.frontendKey = k ? createHash('sha256').update(k).digest() : null;
+  }
 
   protected abstract rulesFor(declared: RateLimitRule[]): RateLimitRule[];
+
+  /** A public, read-only request from the storefront server (proved by the shared key; compared in constant time). */
+  protected isFrontendServerRead(
+    req: Request,
+    context: ExecutionContext,
+  ): boolean {
+    if (!this.frontendKey || (req.method !== 'GET' && req.method !== 'HEAD'))
+      return false;
+    const sent = req.headers[FRONTEND_KEY_HEADER];
+    if (typeof sent !== 'string' || sent.length === 0 || sent.length > 256)
+      return false;
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!isPublic) return false;
+    return timingSafeEqual(
+      createHash('sha256').update(sent).digest(),
+      this.frontendKey,
+    );
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (context.getType() !== 'http') return true;
@@ -50,7 +94,15 @@ abstract class BaseRateLimitGuard implements CanActivate {
         context.getClass(),
       ]) ?? [];
 
-    for (const rule of this.rulesFor(declared)) {
+    const rules = this.isFrontendServerRead(req, context)
+      ? [
+          FRONTEND_SERVER_RULE,
+          ...this.rulesFor(declared).filter(
+            (r) => r.key !== 'ip' && r.name !== GLOBAL_RULE.name,
+          ),
+        ]
+      : this.rulesFor(declared);
+    for (const rule of rules) {
       const subject = this.subject(rule, req);
       if (subject === undefined) continue;
       const key = `rl:${rule.name}:${createHash('sha256').update(subject).digest('hex').slice(0, 32)}`;
@@ -95,6 +147,7 @@ abstract class BaseRateLimitGuard implements CanActivate {
   }
 
   private subject(rule: RateLimitRule, req: Request): string | undefined {
+    if (rule === FRONTEND_SERVER_RULE) return 'frontend-server';
     if (rule.key === 'ip') return req.ip ?? 'unknown';
     if (rule.key === 'principal') return req.auth?.userId;
     return rule.key(req);
@@ -108,8 +161,9 @@ export class IpRateLimitGuard extends BaseRateLimitGuard {
     reflector: Reflector,
     store: EphemeralStore,
     audit: AuditService,
+    config: ConfigService<Env, true>,
   ) {
-    super(reflector, store, audit);
+    super(reflector, store, audit, config);
   }
 
   protected rulesFor(declared: RateLimitRule[]): RateLimitRule[] {
@@ -124,8 +178,9 @@ export class PrincipalRateLimitGuard extends BaseRateLimitGuard {
     reflector: Reflector,
     store: EphemeralStore,
     audit: AuditService,
+    config: ConfigService<Env, true>,
   ) {
-    super(reflector, store, audit);
+    super(reflector, store, audit, config);
   }
 
   protected rulesFor(declared: RateLimitRule[]): RateLimitRule[] {

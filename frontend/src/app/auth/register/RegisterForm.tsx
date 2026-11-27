@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { FieldError, FormAlert, inputClass, primaryButtonClass } from '@/components/AuthShell';
+import { Captcha, captchaRequired } from '@/components/Captcha';
 import { errorMessage, fieldErrors, passwordProblems, registerAccount, resendVerification } from '@/lib/auth-api';
 
 type Field = 'firstName' | 'lastName' | 'email' | 'phone' | 'password' | 'acceptPrivacyPolicy';
@@ -17,6 +18,8 @@ export function RegisterForm() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [resent, setResent] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaRound, setCaptchaRound] = useState(0);
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -45,6 +48,10 @@ export function RegisterForm() {
       document.getElementById(Object.keys(found)[0])?.focus();
       return;
     }
+    if (captchaRequired && !captchaToken) {
+      setFormError('Please complete the security check.');
+      return;
+    }
     setBusy(true);
     try {
       await registerAccount({
@@ -55,6 +62,7 @@ export function RegisterForm() {
         password: form.password,
         newsletter,
         acceptPrivacyPolicy: true,
+        ...(captchaToken ? { captchaToken } : {}),
       });
       setDone(true);
       setForm((f) => ({ ...f, password: '' }));
@@ -64,6 +72,7 @@ export function RegisterForm() {
       setFormError(Object.keys(fields).length ? 'Please fix the highlighted fields.' : errorMessage(err));
     } finally {
       setBusy(false);
+      setCaptchaRound((n) => n + 1); // a token works once: get a fresh one for the next attempt
     }
   };
 
@@ -190,6 +199,7 @@ export function RegisterForm() {
           </label>
           <FieldError id="acceptPrivacyPolicy-error" message={errors.acceptPrivacyPolicy} />
         </div>
+        <Captcha action="register" onToken={setCaptchaToken} resetKey={captchaRound} />
         <button type="submit" disabled={busy} className={primaryButtonClass}>
           {busy ? 'Creating your account…' : 'Create account →'}
         </button>

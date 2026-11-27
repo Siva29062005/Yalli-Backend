@@ -141,7 +141,7 @@ export function CartDrawer() {
                   </Link>
                 )}
               </div>
-              <p className="text-center text-[11px] text-[#8A958E]">Shipping is confirmed at checkout · 7-day easy replacement</p>
+              <p className="text-center text-[11px] text-[#8A958E]">Delivery fee is shown at checkout · Returns within 7 days of delivery</p>
             </div>
           )}
         </div>

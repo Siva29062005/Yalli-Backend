@@ -10,7 +10,7 @@ await page.route('**/api/v1/**', async (route) => {
   const path = new URL(request.url()).pathname.replace('/api/v1', '');
   const headers = { 'access-control-allow-origin': base, 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Authorization,Content-Type,X-Auth-Mode', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
   if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
-  if (expired && path === '/admin/categories') return route.fulfill({ status: 401, headers, json: { success: false, message: 'Session expired' } });
+  if (expired && path === '/admin/categories') return route.fulfill({ status: 401, headers, json: { success: false, message: 'Authentication required', error: { code: 'ACCESS_TOKEN_INVALID' } } });
   let data = [];
   if (path === '/auth/login') data = mode === 'no-mfa' ? { mfaRequired: false, accessToken: 'test-token' } : { mfaRequired: true, mfaToken: 'challenge' };
   if (path === '/auth/mfa/verify') data = { accessToken: 'test-token' };

@@ -20,6 +20,7 @@ export interface Actor {
 
 export interface TransitionExtras {
   paidAt?: Date;
+  invoiceNumber?: string;
   shippedAt?: Date;
   deliveredAt?: Date;
   cancelledAt?: Date;

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
+import { takeSerial } from './document-counter.js';
 import {
   paginated,
   type PaginationInput,
@@ -107,11 +108,7 @@ export class CreditNoteService {
     });
 
     const fy = financialYear(now);
-    const counter = `credit_note:${fy.label}`;
-    await tx.$executeRaw`INSERT INTO document_counters (name, next_value) VALUES (${counter}, 1) ON CONFLICT (name) DO NOTHING`;
-    const [taken] = await tx.$queryRaw<{ n: number }[]>`
-      UPDATE document_counters SET next_value = next_value + 1 WHERE name = ${counter} RETURNING (next_value - 1)::int AS n`;
-    if (!taken) throw new Error('credit note counter unavailable');
+    const serial = await takeSerial(tx, `credit_note:${fy.label}`);
 
     const sum = (
       k:
@@ -123,11 +120,11 @@ export class CreditNoteService {
     ) => lines.reduce((a, l) => a + l[k], 0);
     const note = await tx.creditNote.create({
       data: {
-        creditNoteNumber: creditNoteNumber(fy.short, taken.n),
+        creditNoteNumber: creditNoteNumber(fy.short, serial),
         financialYear: fy.label,
         refundId: refund.id,
         orderId: order.id,
-        invoiceNumber: `INV-${order.orderNumber}`,
+        invoiceNumber: order.invoiceNumber!, // set with paidAt (orders_invoice_paid_chk)
         reason: refund.reason,
         supply: same ? 'INTRA_STATE' : 'INTER_STATE',
         placeOfSupply: order.shipState,

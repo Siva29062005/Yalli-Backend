@@ -283,11 +283,13 @@ export class CartService {
         where: { id: target.id },
         include: { items: true },
       });
+      let lines = userCart.items.length; // counts the lines added below too, so a merge never exceeds the cap
       for (const item of guest.items) {
         const existing = userCart.items.find(
           (i) => i.variantId === item.variantId,
         );
-        if (!existing && userCart.items.length >= MAX_CART_LINES) break;
+        if (!existing && lines >= MAX_CART_LINES) break;
+        if (!existing) lines++;
         const cap = Math.min(
           MAX_LINE_QUANTITY,
           Math.max(

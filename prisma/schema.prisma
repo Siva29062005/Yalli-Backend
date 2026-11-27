@@ -235,6 +235,8 @@ model UserSession {
   mfaVerified     Boolean   @default(false) @map("mfa_verified")
   /// Last time the user actually proved their identity (login or step-up). Drives `auth_time` in access tokens.
   authenticatedAt DateTime  @default(now()) @map("authenticated_at") @db.Timestamptz(6)
+  /// "Keep me signed in": the refresh cookie gets an expiry. Otherwise it is a browser-session cookie. Never for staff.
+  persistent      Boolean   @default(false)
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]
@@ -774,6 +776,8 @@ enum ReturnReason {
 model Order {
   id                  String       @id @default(uuid(7)) @db.Uuid
   orderNumber         String       @unique @map("order_number") @db.VarChar(20)
+  /// GST invoice number (INV/<FY>/<serial>), taken when the order is PAID; gapless per financial year.
+  invoiceNumber       String?      @unique @map("invoice_number") @db.VarChar(16)
   userId              String       @map("user_id") @db.Uuid
   status              OrderStatus  @default(CREATED)
   /// Where the order was before a refund began (so a refund that fails can revert).

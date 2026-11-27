@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   CatalogFixture,
   Scenario,
@@ -304,6 +306,32 @@ describe('admin catalogue management', () => {
     ...over,
   });
 
+  it('stores names, summaries, tags and attributes as plain text: "&" stays "&" (no HTML entities)', async () => {
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const name = `Pots & Pans 5 > 3 ${randomBytes(3).toString('hex')}`;
+    const created = await ctx
+      .http()
+      .post('/api/v1/admin/products')
+      .set(authed(pm))
+      .send(
+        newProduct({
+          name,
+          summary: 'Tea & coffee, 5 > 3',
+          tags: ['Kitchen & Dining'],
+          attributes: [{ name: 'Size & fit', value: '<b>2 L</b> & up' }],
+        }),
+      );
+    expect(created.status).toBe(201);
+    const p = created.body.data;
+    expect(p.name).toBe(name);
+    expect(p.summary).toBe('Tea & coffee, 5 > 3');
+    expect(p.tags).toEqual(['kitchen & dining']);
+    expect(p.attributes).toMatchObject([
+      { name: 'Size & fit', value: '2 L & up' },
+    ]);
+    expect(p.slug).not.toMatch(/amp|lt|gt-/);
+  });
+
   it('a PRODUCT_MANAGER creates a draft (sanitised, invisible), publishes it (visible), and it is audited', async () => {
     const pm = await s.staff('PRODUCT_MANAGER');
     const created = await ctx
@@ -324,6 +352,9 @@ describe('admin catalogue management', () => {
     );
     expect(p.tags.sort()).toEqual(['kitchen', 'utensils']);
     expect(p.variants[0]).toMatchObject({ available: 0 }); // stock record created at zero
+    expect(p.attributes).toMatchObject([
+      { name: 'Material', value: 'Silicone' },
+    ]);
     expect(
       (await ctx.http().get(`/api/v1/catalog/products/${p.slug}`)).status,
     ).toBe(404);
@@ -739,6 +770,61 @@ describe('image upload security', () => {
   });
 });
 
+describe('the storefront server (server-side rendering) has its own budget', () => {
+  const KEY = 'test-frontend-server-key-0123456789abcdef'; // vitest.config.e2e.ts
+  const burst = async (headers: Record<string, string>, n = 130) => {
+    const statuses: number[] = [];
+    for (let i = 0; i < n; i++)
+      statuses.push(
+        (
+          await ctx
+            .http()
+            .get(`/api/v1/catalog/products?q=ssr${i}`)
+            .set(headers)
+        ).status,
+      );
+    return statuses;
+  };
+
+  it('public catalogue reads with the frontend key are not cut off at the per-IP limit (all shoppers share its IP)', async () => {
+    const ip = freshIp();
+    const statuses = await burst({
+      'X-Forwarded-For': ip,
+      'X-Frontend-Key': KEY,
+    });
+    expect(statuses.every((c) => c === 200)).toBe(true);
+  });
+
+  it('a wrong key gets the normal per-IP limit', async () => {
+    const statuses = await burst({
+      'X-Forwarded-For': freshIp(),
+      'X-Frontend-Key': `${KEY.slice(0, -1)}X`,
+    });
+    expect(statuses.slice(120).every((c) => c === 429)).toBe(true);
+  });
+
+  it('the key never relaxes writes or private routes', async () => {
+    const ip = freshIp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 35; i++)
+      statuses.push(
+        (
+          await ctx
+            .http()
+            .post('/api/v1/auth/login')
+            .set({ 'X-Forwarded-For': ip, 'X-Frontend-Key': KEY })
+            .send({
+              email: `nobody${i}@example.test`,
+              password: 'wrong-password-123',
+            })
+        ).status,
+      );
+    // login-ip (30 per 10 minutes) still applies to a POST, key or not
+    expect(statuses.slice(0, 30).every((c) => c === 401)).toBe(true);
+    expect(statuses.slice(30).every((c) => c === 429)).toBe(true);
+  });
+});
+
 describe('abuse protection on the public search', () => {
   it('has its own per-IP budget (varying the query cannot defeat the cache and exhaust the database), per client', async () => {
     const heavy = freshIp();
@@ -799,5 +885,71 @@ describe('a corrupted category tree cannot take the storefront down', () => {
     expect(tree.status).toBe(200);
     expect(list.status).toBe(200);
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
+
+describe('data repair migration 20261127000000_plain_text_entities', () => {
+  it('decodes text stored HTML-encoded by the old stripTags, leaves slugs alone, and skips colliding unique names', async () => {
+    const t = randomBytes(3).toString('hex');
+    const { product } = await fx.product({ name: `Pots ${t}` });
+    await ctx.prisma.product.update({
+      where: { id: product.id },
+      data: {
+        name: `Pots &amp; Pans ${t}`,
+        summary: '5 &gt; 3 &amp;&amp; 2 &lt; 4',
+      },
+    });
+    const kept = await fx.brand(`Fish & Chips ${t}`); // already decoded: an encoded twin must not collide with it
+    const twin = await ctx.prisma.brand.create({
+      data: { name: `Fish &amp; Chips ${t}`, slug: `twin-${t}` },
+    });
+    const brand = await ctx.prisma.brand.create({
+      data: { name: `Salt &amp; Pepper ${t}`, slug: `salt-${t}` },
+    });
+    const literal = await ctx.prisma.category.create({
+      data: { name: `Literal &amp;lt; ${t}`, slug: `literal-${t}` },
+    });
+
+    const sql = readFileSync(
+      join(
+        import.meta.dirname,
+        '../../prisma/migrations/20261127000000_plain_text_entities/migration.sql',
+      ),
+      'utf8',
+    );
+    const statements = sql
+      .split('\n')
+      .filter((l) => !l.startsWith('--'))
+      .join('\n')
+      .split(/;\s*$/m) // statement ends: a ";" at the end of a line (the entities inside strings end with ";" too)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    for (const st of statements) await ctx.prisma.$executeRawUnsafe(st); // static file content, no input
+
+    const p = await ctx.prisma.product.findUniqueOrThrow({
+      where: { id: product.id },
+    });
+    expect(p.name).toBe(`Pots & Pans ${t}`);
+    expect(p.summary).toBe('5 > 3 && 2 < 4');
+    expect(p.slug).toBe(product.slug);
+    expect(
+      (await ctx.prisma.brand.findUniqueOrThrow({ where: { id: brand.id } }))
+        .name,
+    ).toBe(`Salt & Pepper ${t}`);
+    expect(
+      (await ctx.prisma.brand.findUniqueOrThrow({ where: { id: twin.id } }))
+        .name,
+    ).toBe(`Fish &amp; Chips ${t}`);
+    expect(
+      (await ctx.prisma.brand.findUniqueOrThrow({ where: { id: kept.id } }))
+        .name,
+    ).toBe(`Fish & Chips ${t}`);
+    expect(
+      (
+        await ctx.prisma.category.findUniqueOrThrow({
+          where: { id: literal.id },
+        })
+      ).name,
+    ).toBe(`Literal &lt; ${t}`);
   });
 });

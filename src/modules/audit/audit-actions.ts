@@ -15,6 +15,7 @@ export const AuditAction = {
   SessionRevoked: 'auth.session.revoked',
   RefreshRotated: 'auth.refresh.rotated',
   RefreshReuseDetected: 'auth.refresh.reuse_detected',
+  RefreshGraceReuse: 'auth.refresh.grace_reuse',
   RefreshRejected: 'auth.refresh.rejected',
   PasswordResetRequested: 'auth.password.reset_requested',
   PasswordResetCompleted: 'auth.password.reset_completed',

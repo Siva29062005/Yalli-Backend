@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Request } from 'express';
+import type { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
 import type { AuditActionName } from './audit-actions.js';
 
@@ -60,6 +61,23 @@ export function requestContext(req: Request): RequestContext {
   };
 }
 
+function toRow(event: AuditEvent) {
+  return {
+    action: event.action,
+    outcome: event.outcome,
+    actorId: event.actorId ?? null,
+    actorType: event.actorType ?? (event.actorId ? 'USER' : 'ANONYMOUS'),
+    resourceType: event.resourceType ?? null,
+    resourceId: event.resourceId ?? null,
+    ip: event.ip ?? null,
+    userAgent: event.userAgent ?? null,
+    correlationId: event.correlationId ?? null,
+    metadata: event.metadata
+      ? (sanitizeMetadata(event.metadata) as object)
+      : undefined,
+  } satisfies Prisma.AuditLogUncheckedCreateInput;
+}
+
 /**
  * Writes to the append-only audit trail (INSERT only; the DB role cannot UPDATE/DELETE).
  * Trade-off: a failed audit write is logged loudly but does not fail the user's request, so an audit-store outage
@@ -73,24 +91,21 @@ export class AuditService {
 
   async record(event: AuditEvent): Promise<void> {
     try {
-      await this.prisma.auditLog.create({
-        data: {
-          action: event.action,
-          outcome: event.outcome,
-          actorId: event.actorId ?? null,
-          actorType: event.actorType ?? (event.actorId ? 'USER' : 'ANONYMOUS'),
-          resourceType: event.resourceType ?? null,
-          resourceId: event.resourceId ?? null,
-          ip: event.ip ?? null,
-          userAgent: event.userAgent ?? null,
-          correlationId: event.correlationId ?? null,
-          metadata: event.metadata
-            ? (sanitizeMetadata(event.metadata) as object)
-            : undefined,
-        },
-      });
+      await this.prisma.auditLog.create({ data: toRow(event) });
     } catch (err) {
       this.logger.error({ err, action: event.action }, 'Audit write failed');
     }
+  }
+
+  /**
+   * Same row, written on the caller's transaction: use this INSIDE `$transaction` (the shared client would take a
+   * second connection and can starve the pool). The row commits or rolls back with the business change. Errors are NOT
+   * swallowed: a failed insert aborts the PostgreSQL transaction anyway, so pretending it succeeded would be a lie.
+   */
+  async recordInTx(
+    tx: Prisma.TransactionClient,
+    event: AuditEvent,
+  ): Promise<void> {
+    await tx.auditLog.create({ data: toRow(event) });
   }
 }

@@ -188,7 +188,7 @@ export default function CartPage() {
                       GST invoice included
                     </span>
                     <span aria-hidden className="hidden sm:inline">·</span>
-                    <span>7-day easy returns</span>
+                    <span>Returns within 7 days of delivery</span>
                   </div>
                 </div>
               </div>

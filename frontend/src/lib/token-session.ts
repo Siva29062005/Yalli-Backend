@@ -55,11 +55,20 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
     if (accessToken) return Promise.resolve(true);
     const csrf = readCsrf();
     if (!csrf) return Promise.resolve(false);
-    restoring ??= requestApi<TokenResult>('/auth/refresh', {
-      method: 'POST',
-      headers: { 'X-Auth-Mode': 'cookie', 'X-CSRF-Token': csrf },
-      body: JSON.stringify({}),
-    })
+    const call = () =>
+      requestApi<TokenResult>('/auth/refresh', {
+        method: 'POST',
+        headers: { 'X-Auth-Mode': 'cookie', 'X-CSRF-Token': readCsrf() ?? csrf },
+        body: JSON.stringify({}),
+      });
+    // Tabs of one browser share the refresh cookie: take turns (Web Locks), so a second tab refreshes with the token
+    // the first one just received instead of replaying the old one. The server also tolerates a near-simultaneous
+    // replay for a few seconds, for browsers without Web Locks.
+    if (restoring) return restoring;
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    // request() resolves with the callback's resolved value (the DOM typing does not unwrap the promise).
+    const run = locks ? (locks.request(`${csrfKey}:refresh`, call) as Promise<unknown> as Promise<TokenResult>) : call();
+    restoring = run
       .then((result) => {
         accessToken = result.accessToken;
         rememberCsrf(result.csrfToken);
@@ -88,7 +97,9 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
     try {
       return await run(withAuth(options));
     } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      // Only a dead ACCESS TOKEN is worth a refresh. Any other 401 (a wrong password or authenticator code) is about
+      // this request: retrying it would submit the same guess twice (twice towards the MFA lockout).
+      if (!(error instanceof ApiError) || error.status !== 401 || error.code !== 'ACCESS_TOKEN_INVALID') throw error;
       // Access tokens are short-lived: try one silent refresh before ending the session.
       accessToken = null;
       if (await restore()) {
@@ -114,7 +125,8 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
     const result = await requestApi<LoginResult & { csrfToken?: string }>('/auth/login', {
       method: 'POST',
       headers: { 'X-Auth-Mode': 'cookie' },
-      body: JSON.stringify({ email, password, deviceLabel }),
+      // `remember` decides whether the server gives the refresh cookie an expiry (it never does for staff).
+      body: JSON.stringify({ email, password, deviceLabel, remember: persistent }),
     });
     accessToken = result.accessToken ?? null;
     rememberCsrf(result.csrfToken, persistent);
@@ -129,7 +141,7 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
     const result = await requestApi<TokenResult>('/auth/mfa/verify', {
       method: 'POST',
       headers: { 'X-Auth-Mode': 'cookie' },
-      body: JSON.stringify({ mfaToken, ...factor }),
+      body: JSON.stringify({ mfaToken, ...factor, remember: persistent }),
     });
     accessToken = result.accessToken;
     rememberCsrf(result.csrfToken, persistent);

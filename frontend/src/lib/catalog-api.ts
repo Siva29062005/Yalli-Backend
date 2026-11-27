@@ -158,12 +158,24 @@ function toSearch(query: ProductQuery): string {
   return s.toString();
 }
 
+/**
+ * On the SERVER only: proves to the API that a server-side render is asking (FRONTEND_SERVER_KEY, a server-only
+ * variable, never NEXT_PUBLIC_ and so never in a browser bundle). All shoppers' renders share this server's IP; the API
+ * gives these public reads their own budget instead of the per-IP limits. Constant per deployment, so the fetch cache
+ * still works.
+ */
+function frontendServerHeaders(): Record<string, string> {
+  if (typeof window !== 'undefined') return {};
+  const key = process.env.FRONTEND_SERVER_KEY?.trim();
+  return key ? { 'X-Frontend-Key': key } : {};
+}
+
 /** Fetches an API envelope, returning `data` and `meta`. Errors carry the HTTP status (404 → not found). */
 async function get<T>(path: string, revalidate = 30): Promise<{ data: T; meta: unknown }> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...frontendServerHeaders() },
       next: { revalidate },
       signal: AbortSignal.timeout(10_000),
     });

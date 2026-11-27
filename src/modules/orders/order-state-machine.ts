@@ -7,6 +7,8 @@ import type { OrderStatus } from '../../generated/prisma/client.js';
  *  - SHIPPED orders cannot be cancelled: they are returned after delivery;
  *  - PAYMENT_FAILED -> PAID is legal because one provider order allows several payment attempts, and a later attempt may succeed;
  *  - REFUND_PENDING may revert to the state it left (see Order.statusBeforeRefund) when a refund fails outright.
+ *  - a PARTIAL refund also returns the order to its fulfilment state (RETURNED -> DELIVERED while units remain), so it can
+ *    still ship or have other items returned; PARTIALLY_REFUNDED is only the closing state when nothing is left to do.
  */
 export const ORDER_TRANSITIONS: Readonly<
   Record<OrderStatus, readonly OrderStatus[]>

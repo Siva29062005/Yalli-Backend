@@ -39,10 +39,11 @@ export class OrderEventsConsumer implements OnModuleInit {
   }
 
   async handle(event: EventEnvelope): Promise<void> {
-    await this.dedupe.runOnce(CONSUMER, event.id, async () => {
+    await this.dedupe.runOnce(CONSUMER, event.id, async (tx) => {
       const raw = event.payload['orderId'];
       const orderId = typeof raw === 'string' ? raw : '';
-      const order = await this.prisma.order.findUnique({
+      // On the de-dupe transaction's connection, never a second one (pool rule).
+      const order = await tx.order.findUnique({
         where: { id: orderId },
         select: {
           orderNumber: true,

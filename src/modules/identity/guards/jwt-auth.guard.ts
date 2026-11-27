@@ -14,7 +14,12 @@ import { AuthorizationService } from '../../access/authorization.service.js';
 import { AccessTokenService } from '../jwt/access-token.service.js';
 import { SessionStateService } from '../services/session-state.service.js';
 
-const UNAUTHENTICATED = 'Authentication required';
+import { ErrorCode } from '../../../common/exceptions/error-codes.js';
+
+const UNAUTHENTICATED = {
+  message: 'Authentication required',
+  code: ErrorCode.AccessTokenInvalid,
+};
 
 /**
  * Global authentication. Routes are private unless marked @Public().
@@ -49,7 +54,12 @@ export class JwtAuthGuard implements CanActivate {
         : null;
     if (!match?.[1]) throw new UnauthorizedException(UNAUTHENTICATED);
 
-    const claims = await this.tokens.verify(match[1]);
+    let claims;
+    try {
+      claims = await this.tokens.verify(match[1]);
+    } catch {
+      throw new UnauthorizedException(UNAUTHENTICATED);
+    }
     if (!(await this.sessions.isActive(claims.sessionId, claims.userId)))
       throw new UnauthorizedException(UNAUTHENTICATED);
 

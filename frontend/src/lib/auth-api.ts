@@ -8,6 +8,8 @@ export interface RegisterInput {
   password: string;
   newsletter: boolean;
   acceptPrivacyPolicy: true;
+  /** Turnstile token; omitted when no captcha is configured. */
+  captchaToken?: string;
 }
 
 const post = (endpoint: string, body: unknown) =>
@@ -16,7 +18,8 @@ const post = (endpoint: string, body: unknown) =>
 export const registerAccount = (input: RegisterInput) => post('/auth/register', input);
 export const verifyEmail = (token: string) => post('/auth/verify-email', { token });
 export const resendVerification = (email: string) => post('/auth/resend-verification', { email });
-export const forgotPassword = (email: string) => post('/auth/forgot-password', { email });
+export const forgotPassword = (email: string, captchaToken?: string) =>
+  post('/auth/forgot-password', { email, ...(captchaToken ? { captchaToken } : {}) });
 export const resetPassword = (token: string, newPassword: string) =>
   post('/auth/reset-password', { token, newPassword });
 

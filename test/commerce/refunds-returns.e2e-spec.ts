@@ -212,6 +212,124 @@ describe('customer cancels a PAID order', () => {
   });
 });
 
+describe('staff cancels a PAID order: the refund needs a second approver', () => {
+  const staffCancel = (actor: Session, orderId: string) =>
+    ctx
+      .http()
+      .post(`/api/v1/admin/orders/${orderId}/cancel`)
+      .set(authed(actor))
+      .send({ reason: 'Customer phoned to cancel' });
+
+  it('an ORDER_MANAGER cancel raises a PENDING refund in their name; no money moves until finance approves', async () => {
+    const { order, payment, total } = await paidOrder(59_000, 2);
+    const om = await s.staff('ORDER_MANAGER');
+    const res = await staffCancel(om, order.id);
+    expect(res.status).toBe(200);
+    let db = await shop.dbOrder(order.id);
+    expect(db.status).toBe('REFUND_PENDING');
+    expect(db.cancelledAt).not.toBeNull();
+    expect(db.refunds).toHaveLength(1);
+    expect(db.refunds[0]).toMatchObject({
+      kind: 'ADMIN',
+      status: 'PENDING_APPROVAL',
+      amountMinor: total,
+      requestedById: om.userId,
+    });
+    expect(refunded(payment.id)).toBe(0); // nothing sent to the provider
+
+    // The canceller cannot approve their own refund (no permission, and four-eyes).
+    expect((await approve(om, db.refunds[0]!.id)).status).toBe(403);
+    const finance = await s.staff('FINANCE_MANAGER');
+    expect((await approve(finance, db.refunds[0]!.id)).status).toBe(200);
+    expect(refunded(payment.id)).toBe(total);
+    db = await shop.dbOrder(order.id);
+    expect(db.status).toBe('REFUNDED');
+    expect(db.refunds[0]).toMatchObject({
+      status: 'PROCESSED',
+      approvedById: finance.userId,
+    });
+  });
+
+  it('a customer cancel of the same kind of order is still refunded at once (system request, no person to approve)', async () => {
+    const { u, order, payment, total } = await paidOrder(59_000, 1);
+    await ctx
+      .http()
+      .post(`/api/v1/orders/${order.id}/cancel`)
+      .set(authed(u))
+      .send({ reason: 'Ordered by mistake' })
+      .expect(200);
+    expect(refunded(payment.id)).toBe(total);
+  });
+
+  it('the database refuses a person-requested refund that skips approval', async () => {
+    const { order } = await paidOrder(59_000, 1);
+    const om = await s.staff('ORDER_MANAGER');
+    await staffCancel(om, order.id).expect(200);
+    const r = (await shop.dbOrder(order.id)).refunds[0]!;
+    await expect(
+      ctx.prisma.refund.update({
+        where: { id: r.id },
+        data: { status: 'APPROVED' },
+      }),
+    ).rejects.toThrow(/refunds_human_approval_chk/);
+  });
+});
+
+describe('partial refunds never strand an order', () => {
+  it('a goodwill partial refund on a PAID order returns it to PAID, and it can still be fulfilled and delivered', async () => {
+    const { order } = await paidOrder(100_000);
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const finance = await s.staff('FINANCE_MANAGER');
+    const om = await s.staff('ORDER_MANAGER');
+    const req = await requestRefund(support, {
+      orderId: order.id,
+      amountMinor: 30_000,
+      reason: 'Goodwill: late dispatch',
+    });
+    await approve(finance, req.body.data.id).expect(200);
+    expect((await shop.dbOrder(order.id)).status).toBe('PAID');
+    expect((await payOf(order.id)).status).toBe('PARTIALLY_REFUNDED');
+    const step = (body: Record<string, unknown>) =>
+      ctx
+        .http()
+        .post(`/api/v1/admin/orders/${order.id}/fulfilment`)
+        .set(authed(om))
+        .send(body);
+    expect((await step({ status: 'PROCESSING' })).status).toBe(200);
+    expect(
+      (
+        await step({
+          status: 'SHIPPED',
+          trackingCarrier: 'DTDC',
+          trackingNumber: `DT${randomBytes(5).toString('hex')}`,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await step({ status: 'DELIVERED' })).status).toBe(200);
+    expect((await shop.dbOrder(order.id)).status).toBe('DELIVERED');
+  });
+
+  it('a goodwill partial refund while PROCESSING returns it to PROCESSING', async () => {
+    const { order } = await paidOrder(100_000);
+    const om = await s.staff('ORDER_MANAGER');
+    await ctx
+      .http()
+      .post(`/api/v1/admin/orders/${order.id}/fulfilment`)
+      .set(authed(om))
+      .send({ status: 'PROCESSING' })
+      .expect(200);
+    const req = await requestRefund(await s.staff('CUSTOMER_SUPPORT'), {
+      orderId: order.id,
+      amountMinor: 10_000,
+      reason: 'Goodwill: packaging',
+    });
+    await approve(await s.staff('FINANCE_MANAGER'), req.body.data.id).expect(
+      200,
+    );
+    expect((await shop.dbOrder(order.id)).status).toBe('PROCESSING');
+  });
+});
+
 describe('admin refunds: four-eyes approval', () => {
   it('support REQUESTS, finance APPROVES; the money moves only on approval; two partial refunds complete the order', async () => {
     const { order, payment } = await paidOrder(100_000);
@@ -233,7 +351,7 @@ describe('admin refunds: four-eyes approval', () => {
       'PROCESSED',
     );
     expect(refunded(payment.id)).toBe(30_000);
-    expect((await shop.dbOrder(order.id)).status).toBe('PARTIALLY_REFUNDED');
+    expect((await shop.dbOrder(order.id)).status).toBe('PAID'); // a partial refund never stops fulfilment
     expect((await payOf(order.id)).status).toBe('PARTIALLY_REFUNDED');
 
     const req2 = await requestRefund(support, {
@@ -545,7 +663,7 @@ describe('provider failures: a refund is never sent twice and never silently los
         (c) => c.method === 'POST' && c.path.endsWith(`/${payment.id}/refund`),
       ),
     ).toHaveLength(1);
-    expect((await shop.dbOrder(order.id)).status).toBe('PARTIALLY_REFUNDED');
+    expect((await shop.dbOrder(order.id)).status).toBe('PAID');
   });
 
   it('TIMEOUT BEFORE the provider acted: reconciliation proves there is no provider refund, then re-sends it ONCE', async () => {
@@ -648,7 +766,7 @@ describe('provider failures: a refund is never sent twice and never silently los
       (await ctx.prisma.refund.findUniqueOrThrow({ where: { id: refundId } }))
         .status,
     ).toBe('PROCESSED');
-    expect((await shop.dbOrder(order.id)).status).toBe('PARTIALLY_REFUNDED');
+    expect((await shop.dbOrder(order.id)).status).toBe('PAID');
     expect(
       await ctx.prisma.outboxEvent.count({
         where: { aggregateId: refundId, eventType: 'refund.processed' },
@@ -750,7 +868,7 @@ describe('returns', () => {
     const finance = await s.staff('FINANCE_MANAGER');
     expect((await approve(finance, received.body.data.id)).status).toBe(200);
     expect(refunded(payment.id)).toBe(60_000);
-    expect((await shop.dbOrder(order.id)).status).toBe('PARTIALLY_REFUNDED');
+    expect((await shop.dbOrder(order.id)).status).toBe('DELIVERED'); // one of two units returned: the other may still be
     expect(
       (
         await ctx.prisma.returnRequest.findUniqueOrThrow({
@@ -758,6 +876,100 @@ describe('returns', () => {
         })
       ).status,
     ).toBe('REFUNDED');
+  });
+
+  const returnAndRefund = async (
+    u: Session,
+    orderId: string,
+    itemId: string,
+    om: Session,
+    quantity = 1,
+  ) => {
+    const ret = await requestReturn(u, orderId, {
+      orderItemId: itemId,
+      quantity,
+      reason: 'WRONG_ITEM',
+      opened: false,
+    });
+    expect(ret.status).toBe(201);
+    await ctx
+      .http()
+      .post(`/api/v1/admin/returns/${ret.body.data.id}/decision`)
+      .set(authed(om))
+      .send({ decision: 'APPROVED' })
+      .expect(200);
+    const received = await ctx
+      .http()
+      .post(`/api/v1/admin/returns/${ret.body.data.id}/received`)
+      .set(authed(om))
+      .send({});
+    expect(received.status).toBe(200);
+    await approve(
+      await s.staff('FINANCE_MANAGER'),
+      received.body.data.id,
+    ).expect(200);
+  };
+
+  it('after one unit is returned and refunded, the remaining unit can still be returned; returning it all completes the refund', async () => {
+    const { u, order, payment, om, itemId } = await delivered();
+    await returnAndRefund(u, order.id, itemId, om);
+    expect((await shop.dbOrder(order.id)).status).toBe('DELIVERED');
+    await returnAndRefund(u, order.id, itemId, om);
+    expect(refunded(payment.id)).toBe(120_000);
+    expect((await shop.dbOrder(order.id)).status).toBe('REFUNDED');
+  });
+
+  it('when every unit is back but the delivery fee is kept, the order closes as PARTIALLY_REFUNDED', async () => {
+    const code = `FEE${randomBytes(3).toString('hex').toUpperCase()}`;
+    await ctx.prisma.shippingMethod.create({
+      data: {
+        code,
+        name: 'Paid delivery',
+        baseMinor: 5_000,
+        freeAboveMinor: null,
+        etaMinDays: 2,
+        etaMaxDays: 4,
+        states: [],
+      },
+    });
+    try {
+      const { variant } = await shop.fx.product({
+        priceMinor: 60_000,
+        stock: 5,
+      });
+      const cust = await shop.customer();
+      const order = await shop.order(
+        cust,
+        [{ variantId: variant.id, quantity: 1 }],
+        {
+          shippingMethodCode: code,
+        },
+      );
+      expect(order.totals.totalMinor).toBe(65_000);
+      await shop.paid(cust, order.id);
+      const om = await s.staff('ORDER_MANAGER');
+      for (const body of [
+        { status: 'PROCESSING' },
+        {
+          status: 'SHIPPED',
+          trackingCarrier: 'DTDC',
+          trackingNumber: `DT${randomBytes(5).toString('hex')}`,
+        },
+        { status: 'DELIVERED' },
+      ])
+        await ctx
+          .http()
+          .post(`/api/v1/admin/orders/${order.id}/fulfilment`)
+          .set(authed(om))
+          .send(body)
+          .expect(200);
+      const itemId = (await shop.dbOrder(order.id)).items[0]!.id;
+      await returnAndRefund(cust, order.id, itemId, om);
+      expect((await payOf(order.id)).refundedMinor).toBe(60_000); // the item, not the delivery fee
+      expect((await shop.dbOrder(order.id)).status).toBe('PARTIALLY_REFUNDED');
+    } finally {
+      await ctx.prisma.shippingMethod.deleteMany({ where: { code } });
+    }
   });
 
   it('an OPENED item is refunded but not put back on sale', async () => {

@@ -28,9 +28,5 @@ export function displayName(p: Pick<CustomerProfile, 'firstName' | 'lastName' | 
   return [p.firstName, p.lastName].filter(Boolean).join(' ') || p.email.split('@')[0];
 }
 
-/** Only same-site paths are allowed as post-login redirects (prevents open redirects). */
-export function safeNext(next: string | null | undefined, fallback = '/account/profile') {
-  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return fallback;
-  if (next.startsWith('/auth/') || next.startsWith('/admin')) return fallback;
-  return next;
-}
+/** Only same-site paths are allowed as post-login redirects (see safe-redirect.ts). */
+export { safeNext } from './safe-redirect';

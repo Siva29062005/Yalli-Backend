@@ -10,6 +10,7 @@ import { ErrorCode } from '../../../common/exceptions/error-codes.js';
 import { EphemeralStore } from '../../../infrastructure/cache/ephemeral-store.js';
 import { PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import type { AuthPrincipal } from '../../../common/auth/auth-principal.js';
+import { AuthorizationService } from '../../access/authorization.service.js';
 import { AuditAction } from '../../audit/audit-actions.js';
 import {
   AuditService,
@@ -37,7 +38,24 @@ export interface SessionTokens {
   refreshToken: string;
   refreshExpiresAt: Date;
   sessionId: string;
+  /** Persistent refresh cookie ("keep me signed in"); false = browser-session cookie. Always false for staff. */
+  persistent: boolean;
 }
+
+/** A browser tab lost a refresh race (another tab rotated the same token a moment earlier): access token only. */
+export interface GraceTokens {
+  kind: 'grace';
+  accessToken: string;
+  expiresIn: number;
+  sessionId: string;
+}
+
+/**
+ * Two tabs of one browser share the refresh cookie and can refresh at the same instant. Within this window a reused
+ * token gets an access token (never a new refresh token: the cookie jar already holds the successor). Outside it,
+ * or for API clients, reuse is treated as theft as before.
+ */
+export const REFRESH_REUSE_GRACE_MS = 10_000;
 
 export type LoginResult =
   | ({ kind: 'tokens' } & SessionTokens)
@@ -56,6 +74,7 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly absoluteDays: number;
   private readonly idleDays: number;
+  private readonly staffHours: number;
 
   constructor(
     config: ConfigService<Env, true>,
@@ -66,7 +85,9 @@ export class AuthService {
     private readonly store: EphemeralStore,
     private readonly notifications: NotificationPort,
     private readonly audit: AuditService,
+    private readonly authz: AuthorizationService,
   ) {
+    this.staffHours = config.get('STAFF_SESSION_MAX_HOURS', { infer: true });
     this.absoluteDays = config.get('REFRESH_ABSOLUTE_TTL_DAYS', {
       infer: true,
     });
@@ -157,7 +178,11 @@ export class AuthService {
       user.email,
       displayName(user.customer),
       ctx,
-      { mfaVerified: false, deviceLabel: dto.deviceLabel },
+      {
+        mfaVerified: false,
+        deviceLabel: dto.deviceLabel,
+        remember: dto.remember === true,
+      },
     );
     return { kind: 'tokens', ...tokens };
   }
@@ -229,8 +254,8 @@ export class AuthService {
     const raw = await this.store.get(mfaKey(hash));
     if (!raw)
       throw new UnauthorizedException({
-        message: 'Invalid or expired verification',
-        code: ErrorCode.Unauthorized,
+        message: 'This sign-in has expired. Please sign in again.',
+        code: ErrorCode.MfaChallengeExpired,
       });
     const { count } = await this.store.incr(
       `mfa:attempts:${hash}`,
@@ -239,8 +264,8 @@ export class AuthService {
     if (count > 5) {
       await this.store.del(mfaKey(hash));
       throw new UnauthorizedException({
-        message: 'Invalid or expired verification',
-        code: ErrorCode.Unauthorized,
+        message: 'Too many attempts for this sign-in. Please sign in again.',
+        code: ErrorCode.MfaChallengeExpired,
       });
     }
     return {
@@ -252,6 +277,7 @@ export class AuthService {
   async completeMfaLogin(
     userId: string,
     ctx: RequestContext,
+    remember = false,
   ): Promise<SessionTokens> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -263,7 +289,7 @@ export class AuthService {
       user.email,
       displayName(user.customer),
       ctx,
-      { mfaVerified: true },
+      { mfaVerified: true, remember },
     );
   }
 
@@ -274,16 +300,29 @@ export class AuthService {
     email: string,
     name: string,
     ctx: RequestContext,
-    opts: { mfaVerified: boolean; deviceLabel?: string | undefined },
+    opts: {
+      mfaVerified: boolean;
+      deviceLabel?: string | undefined;
+      remember?: boolean;
+    },
   ): Promise<SessionTokens> {
     const hash = deviceHash(ctx.userAgent);
+    // Staff sessions never persist past the browser session and end after STAFF_SESSION_MAX_HOURS, refreshed or not:
+    // a staff session left on a shared or restored browser must not stay usable for days.
+    const staff = await this.authz.hasStaffRole(userId);
+    const persistent = opts.remember === true && !staff;
     const [priorSessions, knownDevice] = await Promise.all([
       this.prisma.userSession.count({ where: { userId } }),
       this.prisma.userSession.count({ where: { userId, deviceHash: hash } }),
     ]);
 
     const now = new Date();
-    const sessionExpiry = addDays(now, this.absoluteDays);
+    const sessionExpiry = new Date(
+      Math.min(
+        addDays(now, this.absoluteDays).getTime(),
+        staff ? now.getTime() + this.staffHours * 3_600_000 : Infinity,
+      ),
+    );
     const refreshToken = generateToken();
     const refreshExpiresAt = new Date(
       Math.min(addDays(now, this.idleDays).getTime(), sessionExpiry.getTime()),
@@ -299,6 +338,7 @@ export class AuthService {
         expiresAt: sessionExpiry,
         mfaVerified: opts.mfaVerified,
         authenticatedAt: now,
+        persistent,
         refreshTokens: {
           create: {
             tokenHash: sha256Hex(refreshToken),
@@ -350,6 +390,7 @@ export class AuthService {
       refreshToken,
       refreshExpiresAt,
       sessionId: session.id,
+      persistent,
     };
   }
 
@@ -357,7 +398,11 @@ export class AuthService {
    * Rotates a refresh token. A token that was already used is evidence of theft (or a replayed copy): the whole
    * session is revoked, forcing re-authentication everywhere that session was used.
    */
-  async refresh(rawToken: string, ctx: RequestContext): Promise<SessionTokens> {
+  async refresh(
+    rawToken: string,
+    ctx: RequestContext,
+    opts: { browserGrace?: boolean } = {},
+  ): Promise<SessionTokens | GraceTokens> {
     const row = await this.prisma.refreshToken.findUnique({
       where: { tokenHash: sha256Hex(rawToken) },
       include: {
@@ -391,7 +436,46 @@ export class AuthService {
     const user = session.user;
     const now = new Date();
 
-    if (row.usedAt) return this.handleReuse(row.sessionId, user, ctx);
+    const reused = async (): Promise<GraceTokens> => {
+      if (opts.browserGrace) {
+        const again = await this.prisma.refreshToken.findUnique({
+          where: { id: row.id },
+          select: { usedAt: true },
+        });
+        const live =
+          !session.revokedAt &&
+          session.expiresAt > now &&
+          user.status === 'ACTIVE';
+        if (
+          live &&
+          again?.usedAt &&
+          now.getTime() - again.usedAt.getTime() < REFRESH_REUSE_GRACE_MS
+        ) {
+          await this.audit.record({
+            action: AuditAction.RefreshGraceReuse,
+            outcome: 'SUCCESS',
+            actorId: user.id,
+            ...ctx,
+            resourceType: 'session',
+            resourceId: session.id,
+          });
+          return {
+            kind: 'grace',
+            accessToken: await this.tokens.sign({
+              userId: user.id,
+              sessionId: session.id,
+              amr: session.mfaVerified ? ['pwd', 'otp'] : ['pwd'],
+              authTime: Math.floor(session.authenticatedAt.getTime() / 1000),
+            }),
+            expiresIn: this.tokens.ttlSeconds,
+            sessionId: session.id,
+          };
+        }
+      }
+      return this.handleReuse(row.sessionId, user, ctx);
+    };
+
+    if (row.usedAt) return reused();
     if (session.revokedAt || session.expiresAt <= now || row.expiresAt <= now)
       return reject('expired_or_revoked', user.id);
     if (user.status !== 'ACTIVE') return reject('user_inactive', user.id);
@@ -401,7 +485,7 @@ export class AuthService {
       where: { id: row.id, usedAt: null },
       data: { usedAt: now },
     });
-    if (claimed.count !== 1) return this.handleReuse(row.sessionId, user, ctx);
+    if (claimed.count !== 1) return reused();
 
     const next = generateToken();
     const refreshExpiresAt = new Date(
@@ -444,6 +528,7 @@ export class AuthService {
       refreshToken: next,
       refreshExpiresAt,
       sessionId: session.id,
+      persistent: session.persistent,
     };
   }
 

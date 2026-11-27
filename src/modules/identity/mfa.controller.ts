@@ -113,7 +113,11 @@ export class MfaController {
         code: ErrorCode.Unauthorized,
       });
     await challenge.consume(); // a challenge can be redeemed exactly once
-    const t = await this.auth.completeMfaLogin(challenge.userId, ctx);
+    const t = await this.auth.completeMfaLogin(
+      challenge.userId,
+      ctx,
+      dto.remember === true,
+    );
     const base = {
       mfaRequired: false,
       tokenType: 'Bearer',
@@ -127,6 +131,7 @@ export class MfaController {
             res,
             t.refreshToken,
             t.refreshExpiresAt,
+            t.persistent,
           ),
         }
       : { ...base, refreshToken: t.refreshToken };

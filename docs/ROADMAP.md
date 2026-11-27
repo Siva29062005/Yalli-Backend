@@ -54,9 +54,7 @@ Goal: a clean baseline so every later change is protected by one command.
 
 Exit: `npm run check` covers both apps and passes; the working tree is committed.
 
-**Status (2026-11-27): done except the commit.** Ratings go through `ProductRatings`; the test admin is opt-in; the
-frontend is in `npm run check`; `npm run test:browser` runs the browser scripts; the stale docs are fixed. The commit of the
-working tree is still to do (remote `main` is at `c33d1d9`).
+**Status (2026-11-27): done** (committed as `108d7a4`).
 
 ## Phase 9: launch-blocker fixes
 
@@ -98,6 +96,10 @@ the backend, a Playwright step for the frontend) and a line in a new `docs/secur
     - plain text stored HTML-encoded (fix before the catalogue import in Phase 12)
     - staff session cookies
     - client IP through the Next proxy
+
+**Status (2026-11-27): done.** All 18 items fixed with tests; record in `docs/security/phase-9-fixes.md` (with the
+residual risks: CSP keeps `'unsafe-inline'` for Next's inline scripts, the 10-second refresh grace window, staff cancel
+restocks before approval). Login captcha after repeated failures stays P1.
 
 Exit: all P0 "Frontend review" and "Security and bug review" items in `docs/PENDING.md` ticked; `npm run check` and the browser scripts pass;
 security review recorded.

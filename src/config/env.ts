@@ -44,6 +44,12 @@ export const envSchema = z
     CORS_ALLOWED_ORIGINS: origins,
     /** Number of reverse-proxy hops to trust for X-Forwarded-For (0 = none). */
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+    /**
+     * Shared secret of the storefront's SERVER (Next.js server-side rendering). Its public, read-only catalogue requests
+     * come from one IP for all shoppers, so they get their own large budget instead of the per-IP limits (per-shopper
+     * limits for page views belong at the edge: CloudFront/WAF). Never sent to browsers. Unset: no exemption.
+     */
+    FRONTEND_SERVER_KEY: z.string().min(32).max(256).optional(),
     SWAGGER_ENABLED: bool,
 
     // --- Authentication (Phase 3) ---------------------------------------------------------
@@ -68,6 +74,8 @@ export const envSchema = z
       .max(90)
       .default(30),
     REFRESH_IDLE_TTL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
+    /** Absolute lifetime of a STAFF session (any role besides CUSTOMER), however often it is refreshed. */
+    STAFF_SESSION_MAX_HOURS: z.coerce.number().int().min(1).max(72).default(12),
     /** 32 random bytes, base64. Encrypts TOTP secrets at rest (AES-256-GCM). */
     MFA_ENCRYPTION_KEY_B64: z.string().min(40),
     MFA_ENCRYPTION_KEY_ID: z
@@ -271,6 +279,14 @@ export const envSchema = z
           code: 'custom',
           path: ['COOKIE_SECURE'],
           message: 'must be true in production',
+        });
+      }
+      if (env.TRUST_PROXY_HOPS === 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['TRUST_PROXY_HOPS'],
+          message:
+            'production runs behind proxies (CloudFront + ALB = 2): with 0 every client shares the proxy IP and per-IP limits lock everyone out',
         });
       }
       if (env.CAPTCHA_PROVIDER === 'none') {

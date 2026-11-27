@@ -18,6 +18,7 @@ import {
   CustomerOrder,
   formatPhone,
   PAID_STATUSES,
+  payAttemptKey,
   payForOrder,
 } from "@/lib/checkout-api";
 
@@ -110,7 +111,7 @@ export function OrderConfirmation({ id }: { id: string }) {
     setBusy("pay");
     setNotice(null);
     try {
-      const r = await payForOrder(order.id, `pay-${order.id}`);
+      const r = await payForOrder(order.id, payAttemptKey(order.id));
       if (r.kind === "paid") setOrder(r.order);
       else if (r.kind === "pending") {
         polls.current = 0;
@@ -119,6 +120,7 @@ export function OrderConfirmation({ id }: { id: string }) {
       else setNotice("Payment was not completed. You can try again before the timer runs out.");
     } catch (e) {
       setNotice(checkoutErrorMessage(e));
+      void load(); // the order may have changed meanwhile (cancelled, expired, paid in another tab): show its real state
     } finally {
       setBusy(null);
     }

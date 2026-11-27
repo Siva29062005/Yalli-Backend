@@ -17,9 +17,16 @@ const fail = (status, message, code, details) => ({
   status, contentType: 'application/json', body: JSON.stringify({ success: false, message, error: { code, details } }),
 });
 
+// Stand-in for Cloudflare Turnstile (the test build uses Cloudflare's public test site key): every widget hands out a
+// new token, so the tests can check that a token is sent and refreshed after each attempt. No network call is made.
+const TURNSTILE_STUB = `window.turnstile = { n: 0, render(el, o) { const id = 'w' + (++this.n); setTimeout(() => o.callback('captcha-' + id), 0); return id; }, remove() {} };`;
+
 async function setup(context, overrides = {}) {
   const calls = [];
   let signedIn = false;
+  await context.route('https://challenges.cloudflare.com/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/javascript', body: TURNSTILE_STUB }),
+  );
   await context.route('**/api/v1/**', async (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname.replace('/api/v1', '');
@@ -37,7 +44,7 @@ async function setup(context, overrides = {}) {
       return route.fulfill(ok({ accessToken: 'at-2', csrfToken: 'csrf-1' }));
     }
     if (path === '/me') {
-      return route.fulfill(req.headers().authorization ? ok(me) : fail(401, 'Unauthorized', 'UNAUTHORIZED'));
+      return route.fulfill(req.headers().authorization ? ok(me) : fail(401, 'Authentication required', 'ACCESS_TOKEN_INVALID'));
     }
     if (path === '/auth/logout') {
       signedIn = false;
@@ -112,6 +119,22 @@ await test('open redirects are rejected', async (context) => {
   await page.waitForURL(`${BASE}/account/profile`);
 });
 
+await test('an expired sign-in challenge (and only that) goes back to the password step', async (context) => {
+  await setup(context, {
+    '/auth/login': () => ok({ mfaRequired: true, mfaToken: 'mfa-token-xxxxxxxxxxxxxxxx' }),
+    '/auth/mfa/verify': () => fail(401, 'This sign-in has expired. Please sign in again.', 'MFA_CHALLENGE_EXPIRED'),
+  });
+  const page = await context.newPage();
+  await page.goto(`${BASE}/auth/login`);
+  await page.fill('#email', 'priya.k@example.com');
+  await page.fill('#password', 'anything goes here');
+  await page.click('button[type=submit]');
+  await page.fill('#mfa-code', '123456');
+  await page.click('button[type=submit]');
+  await page.getByText('This sign-in has expired').waitFor();
+  await page.locator('#password').waitFor();
+});
+
 await test('MFA challenge, recovery code toggle and verification', async (context) => {
   const calls = await setup(context, {
     '/auth/login': () => ok({ mfaRequired: true, mfaToken: 'mfa-token-xxxxxxxxxxxxxxxx' }),
@@ -130,6 +153,12 @@ await test('MFA challenge, recovery code toggle and verification', async (contex
   await page.getByRole('button', { name: 'Use authenticator code' }).click();
   await page.fill('#mfa-code', '12ab');
   assert.equal(await page.inputValue('#mfa-code'), '12', 'non-digits are stripped');
+  // A wrong code stays on the code step (the challenge allows several tries) and is sent exactly once.
+  await page.fill('#mfa-code', '000000');
+  await page.click('button[type=submit]');
+  await page.getByText('The code is incorrect or expired').waitFor();
+  await page.locator('#mfa-code').waitFor();
+  assert.equal(calls.filter((c) => c.path === '/auth/mfa/verify').length, 1, 'a wrong code is not retried');
   await page.fill('#mfa-code', '123456');
   await page.click('button[type=submit]');
   await page.waitForURL(`${BASE}/account/profile`);
@@ -179,8 +208,18 @@ await test('registration validates locally, maps server field errors, then confi
   await page.fill('#password', 'blue mango sunrise 43');
   await page.click('button[type=submit]');
   await page.getByRole('heading', { name: 'Check your inbox.' }).waitFor();
-  const body = calls.filter((c) => c.path === '/auth/register').at(-1).body;
-  assert.deepEqual(Object.keys(body).sort(), ['acceptPrivacyPolicy', 'email', 'firstName', 'lastName', 'newsletter', 'password', 'phone']);
+  const sent = calls.filter((c) => c.path === '/auth/register');
+  const body = sent.at(-1).body;
+  // npm run test:browser builds with a captcha site key and sets EXPECT_CAPTCHA=1: then the token is mandatory.
+  const withCaptcha = process.env.EXPECT_CAPTCHA === '1' || 'captchaToken' in body;
+  assert.deepEqual(
+    Object.keys(body).sort(),
+    ['acceptPrivacyPolicy', ...(withCaptcha ? ['captchaToken'] : []), 'email', 'firstName', 'lastName', 'newsletter', 'password', 'phone'],
+  );
+  if (withCaptcha) {
+    assert.match(body.captchaToken, /^captcha-w\d+$/);
+    assert.notEqual(sent[0].body.captchaToken, body.captchaToken, 'each attempt sends a fresh, single-use captcha token');
+  }
 });
 
 await test('email verification link, expired link and short email paths', async (context) => {
@@ -190,8 +229,8 @@ await test('email verification link, expired link and short email paths', async 
   });
   const page = await context.newPage();
   await page.goto(`${BASE}/verify-email?token=good-token-aaaaaaaaaaaaaaaa`);
-  await page.waitForURL(/\/auth\/verify-email\?token=/);
   await page.getByRole('heading', { name: /all set/ }).waitFor();
+  assert.match(page.url(), /\/auth\/verify-email$/, 'the short path redirects, and the one-time token is removed from the address');
   await page.goto(`${BASE}/auth/verify-email?token=bad-token-aaaaaaaaaaaaaaaaa`);
   await page.getByRole('heading', { name: 'This link has expired' }).waitFor();
 });
@@ -203,7 +242,13 @@ await test('forgot and reset password', async (context) => {
   await page.fill('#email', 'priya.k@example.com');
   await page.click('button[type=submit]');
   await page.getByText(/reset link shortly/).waitFor();
+  const forgot = calls.find((c) => c.path === '/auth/forgot-password').body;
+  assert.equal(forgot.email, 'priya.k@example.com');
+  if (process.env.EXPECT_CAPTCHA === '1' || 'captchaToken' in forgot) assert.match(forgot.captchaToken, /^captcha-w\d+$/);
   await page.goto(`${BASE}/reset-password?token=reset-token-aaaaaaaaaaaaaa`);
+  await page.locator('#new-password').waitFor();
+  await page.waitForFunction(() => !location.search.includes('token='));
+  assert.match(page.url(), /\/auth\/reset-password$/, 'the reset token is removed from the address bar');
   await page.fill('#new-password', 'blue mango sunrise 42');
   await page.fill('#confirm-password', 'blue mango sunrise 41');
   await page.click('button[type=submit]');

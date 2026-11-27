@@ -15,15 +15,17 @@ export class MessageDeduplicator {
     messageId: string,
     work: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<boolean> {
-    try {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.processedMessage.create({ data: { consumer, messageId } });
-        await work(tx);
+    return this.prisma.$transaction(async (tx) => {
+      // INSERT … ON CONFLICT DO NOTHING: a duplicate is detected by the marker row alone. (Catching P2002 around the
+      // whole transaction also swallowed unique violations raised by the WORK, acknowledging a message that failed.)
+      // A concurrent copy of the same message waits on this row and then sees count 0.
+      const { count } = await tx.processedMessage.createMany({
+        data: [{ consumer, messageId }],
+        skipDuplicates: true,
       });
+      if (count === 0) return false; // already processed
+      await work(tx);
       return true;
-    } catch (err) {
-      if ((err as { code?: string }).code === 'P2002') return false; // already processed
-      throw err;
-    }
+    });
   }
 }

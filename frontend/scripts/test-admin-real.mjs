@@ -260,7 +260,7 @@ try {
   await cnPopup.waitForLoadState();
   const cnText = await cnPopup.locator('body').innerText();
   assert.match(cnText, /Credit note/);
-  assert.match(cnText, /Against invoice INV-/);
+  assert.match(cnText, /Against invoice INV\/\d{4}\/\d{6}/);
   assert.match(cnText, /Total credited\s+₹200\.00/);
   await cnPopup.close();
   step('approved refund got a GST credit note (CN/...) that finance can reprint');

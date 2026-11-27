@@ -85,13 +85,17 @@ export async function mergeGuestCart(): Promise<CartView | null> {
   const token = guestToken.get();
   if (!token) return null;
   try {
-    return await customerSession.request<CartView>('/cart/merge', {
+    const view = await customerSession.request<CartView>('/cart/merge', {
       method: 'POST',
       headers: { 'X-Cart-Token': token },
     });
-  } finally {
-    // Merged or unusable either way: the guest cart is gone after merge.
-    guestToken.clear();
+    guestToken.clear(); // merged: the server deleted the guest cart
+    return view;
+  } catch (e) {
+    // Unusable token (malformed or gone): forget it. Anything else (network, 429, 5xx) keeps it, so the guest's
+    // items are merged on the next attempt instead of being lost.
+    if (e instanceof ApiError && (e.status === 400 || e.status === 404)) guestToken.clear();
+    throw e;
   }
 }
 

@@ -49,6 +49,17 @@ export function sanitizeRichText(html: string): string {
   }).trim();
 }
 
-/** Plain text (for summaries, names): strips ALL markup. */
+const TEXT_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>' };
+
+/**
+ * Plain text (names, summaries, tags, alt text, reviews): strips ALL markup and returns real characters, so
+ * "Kitchen & Dining" stays "Kitchen & Dining" (not `&amp;`). sanitize-html decodes every input entity and re-encodes
+ * text with exactly `&amp;` `&lt;` `&gt;`, so decoding those three in one pass restores the text exactly. The result
+ * is never longer than the input (stripping and entity decoding only shorten), so column limits checked on the input
+ * still hold. It may contain a literal `<`: it is TEXT, and every consumer must escape it (React, `esc()` in invoices,
+ * email templates); never insert it as HTML.
+ */
 export const stripTags = (value: string): string =>
-  sanitize(value, { allowedTags: [], allowedAttributes: {} }).trim();
+  sanitize(value, { allowedTags: [], allowedAttributes: {} })
+    .replace(/&(amp|lt|gt);/g, (_, e: string) => TEXT_ENTITIES[e]!)
+    .trim();

@@ -39,13 +39,27 @@ export class AuthCookies {
     return this.parse(req)[this.names.csrf];
   }
 
-  /** Sets both cookies and returns the CSRF token for the response body. */
-  issue(res: Response, refreshToken: string, expiresAt: Date): string {
-    const csrf = generateToken(24);
+  /**
+   * Sets both cookies and returns the CSRF token for the response body. Not persistent (no "keep me signed in", and
+   * always for staff): no Expires, so the browser drops them when it closes; the server-side expiry still applies.
+   */
+  issue(
+    res: Response,
+    refreshToken: string,
+    expiresAt: Date,
+    persistent: boolean,
+    /** Keep the session's CSRF token on refresh: every tab of the browser holds a copy, and rotating it would sign
+     *  the other tabs out at their next refresh. A new token is made at sign-in. */
+    keepCsrf?: string,
+  ): string {
+    const csrf =
+      keepCsrf && /^[A-Za-z0-9_-]{16,128}$/.test(keepCsrf)
+        ? keepCsrf
+        : generateToken(24);
     const common = {
       secure: this.secure,
       sameSite: 'strict' as const,
-      expires: expiresAt,
+      ...(persistent ? { expires: expiresAt } : {}),
     };
     res.append(
       'Set-Cookie',

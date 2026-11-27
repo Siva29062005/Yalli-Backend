@@ -5,6 +5,7 @@ import { InvalidTransitionError } from '../orders/order-state-machine.js';
  * Internal payment states. Provider-specific states are mapped onto these in the adapter.
  * CAPTURED may be reached from FAILED / CANCELLED: the provider order can still be paid after an earlier failed attempt,
  * and a customer can pay just as our expiry job cancelled the order (a "late capture", which is refunded automatically).
+ * FAILED -> AUTHORIZED: a retry inside the provider's checkout (same provider order) after a failed attempt.
  */
 export const PAYMENT_TRANSITIONS: Readonly<
   Record<PaymentStatus, readonly PaymentStatus[]>
@@ -13,7 +14,7 @@ export const PAYMENT_TRANSITIONS: Readonly<
   PENDING: ['AUTHORIZED', 'CAPTURED', 'FAILED', 'CANCELLED'],
   AUTHORIZED: ['CAPTURED', 'FAILED', 'CANCELLED'],
   CAPTURED: ['REFUND_PENDING', 'PARTIALLY_REFUNDED', 'REFUNDED'],
-  FAILED: ['PENDING', 'CAPTURED', 'CANCELLED'],
+  FAILED: ['PENDING', 'AUTHORIZED', 'CAPTURED', 'CANCELLED'],
   CANCELLED: ['CAPTURED'],
   REFUND_PENDING: ['PARTIALLY_REFUNDED', 'REFUNDED', 'CAPTURED'],
   PARTIALLY_REFUNDED: ['REFUND_PENDING', 'REFUNDED'],

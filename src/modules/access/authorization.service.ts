@@ -66,6 +66,17 @@ export class AuthorizationService {
     return access;
   }
 
+  /**
+   * True when the user holds any role besides CUSTOMER. Read from the database, NOT the cache: it decides session
+   * lifetime at sign-in, so a role granted seconds ago must count.
+   */
+  async hasStaffRole(userId: string): Promise<boolean> {
+    const n = await this.prisma.userRole.count({
+      where: { userId, role: { name: { not: 'CUSTOMER' } } },
+    });
+    return n > 0;
+  }
+
   async invalidate(userId: string): Promise<void> {
     await this.store.del(key(userId));
   }

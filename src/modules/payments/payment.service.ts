@@ -23,6 +23,8 @@ import {
 import { InventoryService } from '../inventory/inventory.service.js';
 import { OrderLifecycleService } from '../orders/order-lifecycle.service.js';
 import { OrderViewService } from '../orders/order-view.service.js';
+import { takeSerial } from '../orders/document-counter.js';
+import { financialYear, invoiceNumber } from '../orders/tax-documents.js';
 import { OutboxService } from '../outbox/outbox.service.js';
 import { RefundService } from '../refunds/refund.service.js';
 import {
@@ -585,6 +587,7 @@ export class PaymentService {
         payment.currency,
       );
       await this.applyAndFinish(paymentId, captured, 'SYSTEM', undefined);
+      return; // one capture per order: any other authorization is left to lapse (the provider voids it)
     }
   }
 
@@ -643,11 +646,24 @@ export class PaymentService {
         return this.onCaptured(tx, order, payment, facts, source, record);
       case 'authorized':
         if (MONEY_HELD_STATUSES.includes(payment.status)) return 'duplicate';
-        if (payment.status === 'AUTHORIZED') return 'duplicate';
-        if (payment.status === 'PENDING' || payment.status === 'CREATED') {
+        // Still authorized but not captured (an earlier capture call failed): report it again so the caller retries
+        // the capture. Treating it as a duplicate left the money uncaptured until the expiry job cancelled the order.
+        if (payment.status === 'AUTHORIZED') return 'authorized';
+        // PENDING/CREATED: first authorization. FAILED: the customer retried inside the provider's checkout on the same
+        // provider order after a failed attempt, and the order is still payable (PAYMENT_FAILED); accept it.
+        if (
+          payment.status === 'PENDING' ||
+          payment.status === 'CREATED' ||
+          (payment.status === 'FAILED' &&
+            (PAYABLE as readonly string[]).includes(order.status))
+        ) {
           await tx.payment.update({
             where: { id: paymentId },
-            data: { status: 'AUTHORIZED' },
+            data: {
+              status: 'AUTHORIZED',
+              failureCode: null,
+              failureReason: null,
+            },
           });
           await record('payment.authorized', payment.status, 'AUTHORIZED', {});
           return 'authorized';
@@ -730,7 +746,7 @@ export class PaymentService {
         await record('payment.duplicate_capture', payment.status, null, {
           otherPaymentId: payment.providerPaymentId,
         });
-        await this.audit.record({
+        await this.audit.recordInTx(tx, {
           action: AuditAction.PaymentAmountMismatch,
           outcome: 'FAILURE',
           resourceType: 'payment',
@@ -753,7 +769,7 @@ export class PaymentService {
         expectedMinor: payment.amountMinor,
         currency: facts.currency,
       });
-      await this.audit.record({
+      await this.audit.recordInTx(tx, {
         action: AuditAction.PaymentAmountMismatch,
         outcome: 'FAILURE',
         resourceType: 'payment',
@@ -810,6 +826,12 @@ export class PaymentService {
     ) {
       const stock = await this.commitStockForPaidOrder(tx, order);
       if (stock === 'ok') {
+        // The GST invoice number is taken in the SAME transaction as PAID: gapless per financial year (India time).
+        const fy = financialYear(now);
+        const invoice = invoiceNumber(
+          fy.short,
+          await takeSerial(tx, `invoice:${fy.label}`),
+        );
         await this.lifecycle.transition(
           tx,
           order.id,
@@ -817,7 +839,7 @@ export class PaymentService {
           { type: source === 'WEBHOOK' ? 'PROVIDER' : 'SYSTEM' },
           {
             reason: `payment captured (${source.toLowerCase()})`,
-            extras: { paidAt: now },
+            extras: { paidAt: now, invoiceNumber: invoice },
             event: {
               type: 'order.paid',
               payload: { totalMinor: order.totalMinor },
@@ -846,7 +868,7 @@ export class PaymentService {
         autoApprove: true,
         idempotencyKey: `late-capture:${payment.id}`,
       });
-      await this.audit.record({
+      await this.audit.recordInTx(tx, {
         action: AuditAction.PaymentCaptured,
         outcome: 'SUCCESS',
         resourceType: 'payment',

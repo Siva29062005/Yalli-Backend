@@ -18,6 +18,7 @@ import {
   checkoutErrorMessage,
   formatPhone,
   idempotencyKeys,
+  payAttemptKey,
   payForOrder,
   Quote,
   SavedAddress,
@@ -125,7 +126,7 @@ export default function CheckoutPage() {
     void reloadCart();
     let outcome = "pending";
     try {
-      const r = await payForOrder(orderId, `pay-${orderId}`);
+      const r = await payForOrder(orderId, payAttemptKey(orderId));
       outcome = r.kind;
       if (r.kind === "failed") sessionStorage.setItem(`yalli_pay_err_${orderId}`, r.message);
     } catch (e) {

@@ -628,6 +628,55 @@ describe('failures, retries and out-of-order delivery', () => {
     });
   });
 
+  it('a capture that fails once is retried by reconciliation (the order is not left to expire)', async () => {
+    const { order, init } = await pending();
+    ctx.razorpay.failNext.push({
+      match: '/capture',
+      mode: 'timeout-no-effect',
+    });
+    const auth = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    const res = await shop.webhook(
+      ctx.razorpay.paymentWebhook('payment.authorized', auth),
+    );
+    expect(res.status).toBe(200);
+    expect(ctx.razorpay.payments.get(auth.id)!.status).toBe('authorized'); // the capture call failed
+    expect(await status(order.id)).toBe('PAYMENT_PENDING');
+
+    await ctx.prisma.payment.updateMany({
+      where: { orderId: order.id },
+      data: { updatedAt: new Date(Date.now() - 10 * 60_000) },
+    });
+    await ctx.worker.reconcilePayments();
+    expect(ctx.razorpay.payments.get(auth.id)!.status).toBe('captured');
+    expect(await status(order.id)).toBe('PAID');
+  });
+
+  it('a retry inside the checkout after a FAILED attempt (same provider order) is authorized, captured and paid', async () => {
+    const { order, init } = await pending();
+    const failed = ctx.razorpay.pay(init.providerOrderId, 'failed');
+    await shop.webhook(ctx.razorpay.paymentWebhook('payment.failed', failed));
+    expect(await status(order.id)).toBe('PAYMENT_FAILED');
+    expect((await shop.dbOrder(order.id)).payments[0]!.status).toBe('FAILED');
+
+    const retry = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    const res = await shop.webhook(
+      ctx.razorpay.paymentWebhook('payment.authorized', retry),
+    );
+    expect(res.body.data.outcome).toBe('authorized');
+    expect(ctx.razorpay.payments.get(retry.id)!.status).toBe('captured');
+    expect(await status(order.id)).toBe('PAID');
+  });
+
+  it('captures only ONE of two authorizations on the same provider order', async () => {
+    const { order, init } = await pending();
+    const a = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    const b = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    await shop.webhook(ctx.razorpay.paymentWebhook('payment.authorized', a));
+    const states = [a, b].map((p) => ctx.razorpay.payments.get(p.id)!.status);
+    expect(states.filter((x) => x === 'captured')).toHaveLength(1);
+    expect(await status(order.id)).toBe('PAID');
+  });
+
   it('never captures an authorization for an unexpected amount', async () => {
     const { order, init } = await pending(59_000);
     const odd = ctx.razorpay.pay(init.providerOrderId, 'authorized', {

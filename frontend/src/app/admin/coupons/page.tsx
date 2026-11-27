@@ -137,13 +137,19 @@ export default function AdminCouponsPage() {
 }
 
 function CouponForm({ coupon, onClose, onSaved }: { coupon: Coupon | null; onClose: () => void; onSaved: (message: string) => void }) {
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
   const isNew = coupon === null;
+  // The category list needs products.read, which a finance role may not have: the form still works without it
+  // (whole-cart coupons; a category coupon keeps the categories it has).
+  const canReadCategories = can('products.read');
   const detail = useAdminQuery(() => (coupon ? adminGet<CouponDetail>(`/admin/coupons/${coupon.id}`) : Promise.resolve(null)), [coupon?.id]);
-  const categories = useAdminQuery(() => adminGet<CategoryOption[]>('/admin/categories'), []);
+  const categories = useAdminQuery(
+    () => (canReadCategories ? adminGet<CategoryOption[]>('/admin/categories') : Promise.resolve(null)),
+    [canReadCategories],
+  );
   if (!isNew && !detail.data) return <section className={`${adminCard} p-6 text-sm`}>{detail.error ? <Alert kind="error">{detail.error}</Alert> : 'Loading…'}</section>;
-  if (!categories.data) return <section className={`${adminCard} p-6 text-sm`}>{categories.error ? <Alert kind="error">{categories.error}</Alert> : 'Loading…'}</section>;
-  return <CouponFields coupon={coupon} detail={detail.data} categories={categories.data} run={withStepUp} onClose={onClose} onSaved={onSaved} />;
+  if (canReadCategories && !categories.data && !categories.error) return <section className={`${adminCard} p-6 text-sm`}>Loading…</section>;
+  return <CouponFields coupon={coupon} detail={detail.data} categories={categories.data ?? null} run={withStepUp} onClose={onClose} onSaved={onSaved} />;
 }
 
 function CouponFields({
@@ -156,7 +162,8 @@ function CouponFields({
 }: {
   coupon: Coupon | null;
   detail: CouponDetail | null;
-  categories: CategoryOption[];
+  /** null: this account may not list categories (no products.read). */
+  categories: CategoryOption[] | null;
   run: <T>(call: () => Promise<T>) => Promise<T>;
   onClose: () => void;
   onSaved: (message: string) => void;
@@ -294,8 +301,15 @@ function CouponFields({
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">Applies to</legend>
           <label className="flex items-center gap-2 text-sm"><input type="radio" checked={scope === 'ALL_ITEMS'} onChange={() => setScope('ALL_ITEMS')} /> Everything in the cart</label>
-          <label className="flex items-center gap-2 text-sm"><input type="radio" checked={scope === 'CATEGORIES'} onChange={() => setScope('CATEGORIES')} /> Only selected categories</label>
-          {scope === 'CATEGORIES' && (
+          <label className="flex items-center gap-2 text-sm"><input type="radio" checked={scope === 'CATEGORIES'} disabled={categories === null && scope !== 'CATEGORIES'} onChange={() => setScope('CATEGORIES')} /> Only selected categories</label>
+          {categories === null && (
+            <p className="pl-6 text-xs text-[#4A5550]">
+              {scope === 'CATEGORIES'
+                ? 'This coupon keeps its current categories: changing them needs product access.'
+                : 'Category coupons need product access; ask a product manager to set the categories.'}
+            </p>
+          )}
+          {scope === 'CATEGORIES' && categories !== null && (
             <div className="grid gap-2 pl-6 sm:grid-cols-2">
               {categories.map((c) => (
                 <label key={c.id} className="flex items-center gap-2 text-sm">

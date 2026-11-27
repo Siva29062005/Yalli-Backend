@@ -4,6 +4,7 @@ import {
   creditNoteLines,
   creditNoteNumber,
   financialYear,
+  invoiceNumber,
   invoiceLines,
   type TaxedItem,
   type TaxLine,
@@ -228,7 +229,17 @@ describe('numbering', () => {
   it('formats serials within the 16-character limit', () => {
     expect(creditNoteNumber('2627', 1)).toBe('CN/2627/000001');
     expect(creditNoteNumber('2627', 1)).toHaveLength(14);
-    expect(creditNoteNumber('2627', 123_456_789)).toBe('CN/2627/123456789');
+    expect(creditNoteNumber('2627', 99_999_999)).toBe('CN/2627/99999999');
+    expect(creditNoteNumber('2627', 99_999_999)).toHaveLength(16);
+    expect(() => creditNoteNumber('2627', 100_000_000)).toThrow(RangeError); // would be 17 characters
     expect(() => creditNoteNumber('2627', 0)).toThrow(RangeError);
+  });
+  it('formats invoice numbers within the 16-character GST limit', () => {
+    expect(invoiceNumber('2627', 1)).toBe('INV/2627/000001');
+    expect(invoiceNumber('2627', 9_999_999)).toBe('INV/2627/9999999');
+    expect(invoiceNumber('2627', 9_999_999)).toHaveLength(16);
+    expect(() => invoiceNumber('2627', 10_000_000)).toThrow(RangeError);
+    expect(() => invoiceNumber('2627', 0)).toThrow(RangeError);
+    expect(() => invoiceNumber('27', 1)).toThrow(RangeError);
   });
 });

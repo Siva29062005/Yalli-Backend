@@ -61,7 +61,12 @@ export class AuthController {
   ) {}
 
   /** Sends tokens in the body (API/mobile) or, with `X-Auth-Mode: cookie`, the refresh token as an HttpOnly cookie. */
-  private tokenResponse(req: Request, res: Response, t: SessionTokens) {
+  private tokenResponse(
+    req: Request,
+    res: Response,
+    t: SessionTokens,
+    keepCsrf?: string,
+  ) {
     const base = {
       mfaRequired: false,
       tokenType: 'Bearer',
@@ -71,7 +76,13 @@ export class AuthController {
     if (this.cookies.isCookieMode(req))
       return {
         ...base,
-        csrfToken: this.cookies.issue(res, t.refreshToken, t.refreshExpiresAt),
+        csrfToken: this.cookies.issue(
+          res,
+          t.refreshToken,
+          t.refreshExpiresAt,
+          t.persistent,
+          keepCsrf,
+        ),
       };
     return { ...base, refreshToken: t.refreshToken };
   }
@@ -181,11 +192,21 @@ export class AuthController {
         code: ErrorCode.Unauthorized,
       });
     try {
-      return this.tokenResponse(
-        req,
-        res,
-        await this.auth.refresh(raw, requestContext(req)),
-      );
+      const cookieMode = this.cookies.isCookieMode(req);
+      const r = await this.auth.refresh(raw, requestContext(req), {
+        browserGrace: cookieMode,
+      });
+      // The CSRF header was already checked against the cookie (CsrfGuard), so this is the session's own token.
+      const csrf = cookieMode ? this.cookies.readCsrf(req) : undefined;
+      if ('kind' in r)
+        return {
+          mfaRequired: false,
+          tokenType: 'Bearer',
+          accessToken: r.accessToken,
+          expiresIn: r.expiresIn,
+          csrfToken: csrf,
+        };
+      return this.tokenResponse(req, res, r, csrf);
     } catch (err) {
       if (this.cookies.isCookieMode(req)) this.cookies.clear(res); // a dead token should not be retried forever
       throw err;

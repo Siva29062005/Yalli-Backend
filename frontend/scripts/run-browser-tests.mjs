@@ -93,7 +93,14 @@ async function waitFor(url, child, timeoutMs = 60_000) {
 
 const [mockPort, webPort, deadWebPort, deadApiPort] = await Promise.all([freePort(), freePort(), freePort(), freePort()]);
 const mockApi = `http://127.0.0.1:${mockPort}/api/v1`;
-const buildEnv = { NEXT_DIST_DIR: DIST, API_INTERNAL_URL: mockApi, NEXT_PUBLIC_BUSINESS_WEBSITE_URL: SITE_URL };
+// Cloudflare's public always-pass TEST site key: the captcha widget renders, and test-auth.mjs replaces Cloudflare's
+// script with a local stub (no network call).
+const buildEnv = {
+  NEXT_DIST_DIR: DIST,
+  API_INTERNAL_URL: mockApi,
+  NEXT_PUBLIC_BUSINESS_WEBSITE_URL: SITE_URL,
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+};
 
 const mock = start('mock API', process.execPath, ['scripts/test-catalog.mjs', '--mock-api', String(mockPort)], {});
 await waitFor(`${mockApi}/catalog/products`, mock);
@@ -130,6 +137,7 @@ const env = {
   SITE_URL,
   PLAYWRIGHT_MODULE: playwright,
   SCREENSHOT_DIR: shots,
+  EXPECT_CAPTCHA: '1',
   ...(deadFrontendUrl ? { DEAD_API_FRONTEND_URL: deadFrontendUrl } : {}),
 };
 const results = [];

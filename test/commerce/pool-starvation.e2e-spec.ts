@@ -129,6 +129,66 @@ describe('no flow needs a second connection while it holds one', () => {
       expect((await shop.dbOrder(order.id)).status).toBe('PAID');
   }, 120_000);
 
+  it('late captures on cancelled orders and amount mismatches (audited in the transaction): 9 in parallel each', async () => {
+    const { variant } = await shop.fx.product({
+      priceMinor: 40_000,
+      stock: 100,
+    });
+    const us = await customers(2 * N, variant.id);
+    const orders = [];
+    for (const u of us)
+      orders.push({ u, order: (await shop.place(u)).body.data });
+    const inits = [];
+    for (const { u, order } of orders)
+      inits.push(await shop.startPayment(u, order.id));
+    // First half: the customer cancels, THEN the payment arrives (late capture -> automatic refund).
+    for (const { u, order } of orders.slice(0, N))
+      await ctx
+        .http()
+        .post(`/api/v1/orders/${order.id}/cancel`)
+        .set(authed(u))
+        .send({})
+        .expect(200);
+    const late = inits
+      .slice(0, N)
+      .map((i) =>
+        ctx.razorpay.paymentWebhook(
+          'payment.captured',
+          ctx.razorpay.pay(i.providerOrderId, 'captured'),
+        ),
+      );
+    // Second half: the provider reports a different amount (mismatch -> never paid, audited).
+    const odd = inits
+      .slice(N)
+      .map((i) =>
+        ctx.razorpay.paymentWebhook(
+          'payment.captured',
+          ctx.razorpay.pay(i.providerOrderId, 'captured', { amount: 1_000 }),
+        ),
+      );
+    const rs = await Promise.all([...late, ...odd].map((h) => shop.webhook(h)));
+    no5xx(rs, 'late captures and mismatches');
+    for (const { order } of orders.slice(0, N))
+      expect((await shop.dbOrder(order.id)).status).toBe('CANCELLED');
+    for (const { order } of orders.slice(N))
+      expect((await shop.dbOrder(order.id)).status).not.toBe('PAID');
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: {
+          action: { in: ['payment.captured', 'payment.amount_mismatch'] },
+          resourceId: {
+            in: (
+              await ctx.prisma.payment.findMany({
+                where: { orderId: { in: orders.map((o) => o.order.id) } },
+                select: { id: true },
+              })
+            ).map((p) => p.id),
+          },
+        },
+      }),
+    ).toBeGreaterThanOrEqual(2 * N);
+  }, 180_000);
+
   it('fulfilment, tracking, cancel-after-payment and refunds: 9 in parallel each', async () => {
     const { variant } = await shop.fx.product({
       priceMinor: 40_000,
