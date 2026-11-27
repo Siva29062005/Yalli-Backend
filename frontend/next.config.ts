@@ -54,6 +54,13 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
+  // The production container (frontend/Dockerfile) runs the self-contained server in .next/standalone. Only for that
+  // build: `next start`, used by the tests and local runs, does not work with standalone output.
+  // The tracing root is this folder (the build runs here), so server.js sits at the top of .next/standalone both in the
+  // Docker build (frontend/ is the whole context) and locally (where the repository root has its own lockfile).
+  ...(process.env.NEXT_OUTPUT_STANDALONE === '1'
+    ? { output: 'standalone' as const, outputFileTracingRoot: process.cwd() }
+    : {}),
   ...(browserTestDir ? { distDir: browserTestDir, typescript: { tsconfigPath: 'tsconfig.browser-tests.json' } } : {}),
   // Links in backend emails use these short paths; query strings (tokens) are preserved.
   async redirects() {

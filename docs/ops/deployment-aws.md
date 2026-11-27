@@ -1,9 +1,19 @@
 # Deployment on AWS (plan and checklist — nothing here has been applied; there is no AWS access yet)
 
 ## Target
-CloudFront (caches the catalogue) → ALB (TLS, WAF) → ECS Fargate API (≥2 tasks, private subnets) → RDS PostgreSQL 17
-(Multi-AZ, encrypted, private) · ElastiCache Redis (auth + TLS) · Amazon MQ for RabbitMQ · S3 (product images; the app must
-get an S3 `ObjectStorage` implementation — the local-disk one is refused in production) · SES + MSG91 · Secrets Manager.
+CloudFront (caches the catalogue) → ALB (TLS, WAF) → ECS Fargate in private subnets:
+- **api** (≥2 tasks): the root `Dockerfile` (`runtime` target), `node dist/main.js`, `BACKGROUND_JOBS_ENABLED=false`;
+- **worker** (≥1 task, no load balancer): the SAME image with the command `node dist/worker.js` (outbox relay,
+  reservation sweeper, payment/refund reconciliation, event consumers; safe on several tasks);
+- **frontend** (≥2 tasks): `frontend/Dockerfile` (Next standalone, `node server.js`, port 3000); one image per
+  environment because `NEXT_PUBLIC_*` and `API_INTERNAL_URL` are baked in at build time;
+- **migrate** (one-off task): the root `Dockerfile` `migrate` target, the only task with the migrator URL.
+
+Data: RDS PostgreSQL 17 (Multi-AZ, encrypted, private, PITR) · ElastiCache Redis (auth + TLS) · Amazon MQ for RabbitMQ ·
+S3 for product images (`STORAGE_DRIVER=s3`, `S3_BUCKET`, optional `S3_PREFIX`/`S3_KMS_KEY_ID`; a PRIVATE bucket with
+block public access and versioning; objects are written with SSE and `If-None-Match`, so a key is never overwritten;
+browsers get images through `/media/<key>` or CloudFront with origin access control, `MEDIA_BASE_URL`) · SES + MSG91 ·
+Secrets Manager. Uploaded images are re-encoded with sharp (EXIF/GPS removed, at most 2400 px).
 
 ## What production refuses to start without (env validation)
 HTTPS-only CORS origins, `DATABASE_SSL=true`, Turnstile captcha + secret, breached-password check, Secure cookies, a real
@@ -11,7 +21,9 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
 `EVENT_BUS_DRIVER=rabbitmq`, no Swagger, no pretty logs.
 
 ## Checklist
-1. Secrets in Secrets Manager (never in the image or repo); task role has SES send + secret read only.
+1. Secrets in Secrets Manager (never in the image or repo). Task roles, least privilege: api and worker get SES send,
+   `s3:PutObject`/`GetObject`/`DeleteObject` on `arn:aws:s3:::<bucket>/<prefix>*` (and `kms:GenerateDataKey`/`Decrypt`
+   on the key when `S3_KMS_KEY_ID` is set) and read of their own secrets; frontend reads only `FRONTEND_SERVER_KEY`.
 2. Roles: create `yalli_migrator`, `yalli_app`, `yalli_reporting` (docs/ops/database-roles.md). The API task gets `DATABASE_URL`
    (app) and `REPORTING_DATABASE_URL`; only the migration job gets the migrator URL.
 3. Migrations run as a one-off task BEFORE the new image rolls out; keep them additive (expand → deploy → contract).
@@ -26,18 +38,36 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
    The single `frontend-server` budget is shared by every frontend replica; a WAF rate-based rule per client IP at
    CloudFront is therefore a LAUNCH REQUIREMENT, otherwise one visitor requesting many uncached pages can use it up.
    Deploy the backend before the frontend (the browser refreshes only on the backend's `ACCESS_TOKEN_INVALID`).
-4b. Frontend build: set `NEXT_PUBLIC_BUSINESS_WEBSITE_URL` (https), `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and the business
-   details; runtime: `API_INTERNAL_URL`, `FRONTEND_SERVER_KEY`. The CSP (next.config.ts) allows Razorpay and Turnstile;
+4b. Frontend build (build arguments, see `frontend/Dockerfile`): `API_INTERNAL_URL` (the API's internal address, also
+   used at runtime for server-side rendering), `NEXT_PUBLIC_BUSINESS_WEBSITE_URL` (https), `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
+   and the business details; runtime secret: `FRONTEND_SERVER_KEY`. Run `npm run check:launch` against the same values. The CSP (next.config.ts) allows Razorpay and Turnstile;
    test a real Razorpay checkout on staging, because the CSP only allows `*.razorpay.com`.
 5. Health: liveness `/health/live`, readiness `/health/ready`. Graceful shutdown is enabled.
-6. Exactly one background worker is not required: jobs use `SKIP LOCKED`/conditional updates and are safe on every instance.
+6. Background jobs run in the worker service (`node dist/worker.js`); the API tasks set `BACKGROUND_JOBS_ENABLED=false`
+   so a traffic spike does not slow the sweeper and a sweeper run does not take API connections. Jobs use `SKIP LOCKED` /
+   conditional updates, so more than one worker task is safe.
+6b. Redis outage: every Redis command is bounded (2 s) and a failure answers **503** (sessions, rate limits and challenges
+   fail closed); alarm on it (log line "Redis commands are failing").
 7. Razorpay: live keys, webhook → `https://<domain>/api/v1/webhooks/razorpay`, events payment.* and refund.*.
 8. SES: verify the sender domain (SPF/DKIM/DMARC), request production access. MSG91: DLT sender + approved OTP template.
-9. WAF managed rules + rate rule in front; CloudWatch alarms on 5xx, p99 latency, DB connections, outbox backlog, DLQ depth.
+9. WAF managed rules + rate rule in front; CloudWatch alarms:
+   - ALB 5xx (target and ELB) above 1% of requests for 5 minutes; p99 target response time above 2 s;
+   - ECS running task count below desired (api, worker, frontend);
+   - RDS: CPU > 80%, free storage < 20%, connections > 80% of max, replica lag;
+   - outbox backlog (`outbox_events` not published after 5 minutes; a metric from the worker log) and the RabbitMQ DLQ
+     depth > 0; ElastiCache evictions and CPU;
+   - the log lines "Redis commands are failing", "A cancel refund was processed for an order that had shipped",
+     "PAYMENT AMOUNT MISMATCH" (metric filters).
 10. Backups, PITR and the restore drill (docs/ops/backup-restore.md); rotate keys (docs/ops/key-rotation.md).
-11. No CI by the owner's decision (2026-11-19): run `npm run check` (backend and frontend) locally before every deploy; the
-    deploy script planned in Phase 13 of `docs/ROADMAP.md` refuses to run without it.
+11. No CI by the owner's decision (2026-11-19): deploy with `./scripts/deploy.sh <staging|production>` from a machine with
+    Docker, the AWS CLI, jq and trivy. It refuses uncommitted changes (and, for production, anything but `main` and an
+    unconfirmed run), runs `npm run check` and the launch check, builds the three images (tagged with the commit), scans
+    them (HIGH/CRITICAL stop it), pushes to ECR, runs the migration task and requires exit code 0, then registers new
+    task revisions and waits until the services are stable. Configuration: `deploy/<environment>.env` (git-ignored, see
+    `deploy/example.env`). **Unverified until staging exists: rehearse with `--dry-run`.**
 
 ## Rollback
-Previous image + its schema: because migrations are additive, the previous image runs on the new schema. A destructive
+Previous image + its schema: because migrations are additive, the previous image runs on the new schema. Check out the
+previous commit and run `./scripts/deploy.sh <env> --skip-check` (that commit already passed the gate; the script
+rebuilds, scans and pushes its images, and its migrations are already applied). A destructive
 migration needs a snapshot first and a tested restore.

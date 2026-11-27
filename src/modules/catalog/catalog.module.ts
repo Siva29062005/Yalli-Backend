@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Env } from '../../config/env.js';
 import { InventoryModule } from '../inventory/inventory.module.js';
 import { CatalogAdminController } from './catalog-admin.controller.js';
 import { CatalogAdminService } from './catalog-admin.service.js';
@@ -8,7 +10,11 @@ import { MediaController } from './media.controller.js';
 import { ProductRatings } from './product-ratings.js';
 import { CatalogImportController } from './import/catalog-import.controller.js';
 import { CatalogImportService } from './import/catalog-import.service.js';
-import { LocalDiskStorage, ObjectStorage } from './media/object-storage.js';
+import {
+  LocalDiskStorage,
+  ObjectStorage,
+  S3Storage,
+} from './media/object-storage.js';
 
 @Module({
   imports: [InventoryModule],
@@ -23,7 +29,14 @@ import { LocalDiskStorage, ObjectStorage } from './media/object-storage.js';
     CatalogAdminService,
     CatalogImportService,
     ProductRatings,
-    { provide: ObjectStorage, useClass: LocalDiskStorage },
+    {
+      provide: ObjectStorage,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) =>
+        config.get('STORAGE_DRIVER', { infer: true }) === 's3'
+          ? new S3Storage(config)
+          : new LocalDiskStorage(config),
+    },
   ],
   exports: [CatalogQueryService, CatalogImportService, ProductRatings],
 })

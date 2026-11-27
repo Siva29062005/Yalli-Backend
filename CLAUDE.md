@@ -8,6 +8,7 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 - `npm run check` — the quality gate: prettier, oxlint (type-aware), tsc, unit tests (root Vitest also runs `frontend/src` specs), e2e tests, build, then `check:frontend` (eslint with `--max-warnings 0`, `next build`, frontend tsc). Must pass before finishing any task.
 - `npm run test:browser` — every fake-backend Playwright script in one go (mock API + a test build in `frontend/.next-browser-tests` on free ports); needs `PLAYWRIGHT_MODULE` unless Playwright is installed in `frontend/`. `--only a,b`, `--skip-build`.
 - `npm run convert:opencart` / `npm run import:images` / `npm run check:launch` — Phase 12 migration tooling (after `npm run build`; see docs/ops/catalogue-migration.md).
+- `npm run start:worker` — the background worker (production process); `./scripts/deploy.sh <env> --dry-run` — rehearse a deploy.
 - `npm run create:test-admin` — dev-only extra SUPER_ADMIN; needs `NODE_ENV=development` + `ALLOW_TEST_ADMIN=1`; the MFA secret goes to an owner-only temp file, never the terminal.
 - `npm test` / `npm run test:e2e` — Vitest (unit `*.spec.ts`, e2e `*.e2e-spec.ts`). Mocks are `vi.fn()`, not `jest.fn()`.
 - `npm run seed` / `docker compose --profile tools run --rm seed` — sync roles+permissions, create first SUPER_ADMIN from `BOOTSTRAP_ADMIN_*` (idempotent).
@@ -96,6 +97,13 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 - Images from OpenCart: `npm run import:images` reads a LOCAL folder (`image-paths.ts` refuses `..`, absolute paths and links out of it) and uploads through `CatalogAdminService.uploadImage`. Never fetch image URLs (SSRF).
 - GSTIN: `common/india/gst.ts` (`checkGstin`: shape, check character, state code; GST state codes live there). The backend refuses an invalid `SELLER_GSTIN` or one from another state than `SELLER_STATE`. `npm run check:launch` (`common/launch-config.ts`) compares both apps' business settings; it names settings, never their values (tested). State names are compared without case.
 - Home page: the hero is the owner's banner (`NEXT_PUBLIC_HOME_HERO_IMAGE`, a file in `frontend/public/`) or a real product photo (`ProductImage fit="contain"`), never a stock photo; no product appears twice; the "on sale" row shows only while something is on sale. `ProductImage` passes `preload` (Next 16 deprecates `priority`).
+
+## Phase 13 conventions (infrastructure; plan in docs/ops/deployment-aws.md)
+- Images: every upload is re-encoded (`catalog/media/image-processing.ts`, sharp): metadata dropped, ≤2400 px, bombs refused. Test fixtures must be REAL images (make them with sharp), not magic bytes.
+- Storage: `STORAGE_DRIVER=local|s3` (`S3Storage`: private bucket, SSE, `If-None-Match` so keys are never overwritten, keys validated like on disk). Production refuses local.
+- Processes: API `node dist/main.js` (`BACKGROUND_JOBS_ENABLED=false` in production), worker `node dist/worker.js` (same image, jobs always on), migrations as the `migrate` target; frontend `frontend/Dockerfile` (standalone only when `NEXT_OUTPUT_STANDALONE=1`; `next start` stays for tests).
+- Redis failures answer 503 (`EphemeralStoreUnavailable`); callers that treat a cache as optional catch it themselves.
+- Deploys: `./scripts/deploy.sh <staging|production> [--dry-run] [--skip-check]` (no CI): config in git-ignored `deploy/<env>.env` (see `deploy/example.env`), never secrets.
 
 ## Frontend (`frontend/`)
 - Next.js 16.4 / React 19.3 / Tailwind 4.3.5 / zustand. This Next version has breaking changes: read `frontend/node_modules/next/dist/docs/` before writing Next code (see `frontend/AGENTS.md`).

@@ -31,6 +31,7 @@ import type {
   UpdateVariantDto,
   VariantDto,
 } from './dto/catalog.schemas.js';
+import { ImageRejected, reencodeImage } from './media/image-processing.js';
 import { detectImageType, MAX_IMAGE_BYTES } from './media/image-validation.js';
 import { ObjectStorage } from './media/object-storage.js';
 
@@ -638,15 +639,28 @@ export class CatalogAdminService {
         code: ErrorCode.Conflict,
       });
 
+    // Re-encoded before storing: no EXIF/GPS (staff photos taken on phones) or hidden payload is ever published.
+    let clean: Buffer;
+    try {
+      clean = await reencodeImage(file.buffer, type);
+    } catch (err) {
+      if (err instanceof ImageRejected)
+        throw new BadRequestException({
+          message:
+            'The image could not be read (damaged, or too large in pixels)',
+          code: ErrorCode.UnsupportedMediaType,
+        });
+      throw err;
+    }
     const storageKey = `${randomUUID()}.${type.ext}`; // never derived from the client's filename
-    await this.storage.put(storageKey, file.buffer, type.mime);
+    await this.storage.put(storageKey, clean, type.mime);
     const image = await this.prisma.productImage.create({
       data: {
         productId,
         variantId: meta.variantId ?? null,
         storageKey,
         mimeType: type.mime,
-        sizeBytes: file.size,
+        sizeBytes: clean.length,
         altText: meta.altText ? stripTags(meta.altText) : null,
         position: count,
       },
@@ -658,13 +672,13 @@ export class CatalogAdminService {
       ...ctx,
       resourceType: 'product',
       resourceId: productId,
-      metadata: { imageId: image.id, mime: type.mime, bytes: file.size },
+      metadata: { imageId: image.id, mime: type.mime, bytes: clean.length },
     });
     return {
       id: image.id,
       url: this.query.imageUrl(storageKey),
       mimeType: type.mime,
-      sizeBytes: file.size,
+      sizeBytes: clean.length,
       altText: image.altText,
       position: image.position,
     };

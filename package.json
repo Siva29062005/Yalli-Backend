@@ -12,6 +12,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
+    "start:worker": "node dist/worker.js",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint": "oxlint --type-aware src/ test/",
@@ -35,6 +36,7 @@
     "rotate:mfa-key": "node dist/cli/rotate-mfa-key.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1178.0",
     "@aws-sdk/client-sesv2": "^3.1170.0",
     "@nestjs/common": "^12.5.0",
     "@nestjs/config": "^12.1.1",
@@ -59,6 +61,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "sanitize-html": "^2.18.2",
+    "sharp": "^0.35.5",
     "zod": "^4.6.7"
   },
   "devDependencies": {

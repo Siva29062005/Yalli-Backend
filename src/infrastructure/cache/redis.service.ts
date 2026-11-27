@@ -16,6 +16,8 @@ export class RedisService implements OnModuleDestroy {
     this.client = new Redis(config.get('REDIS_URL', { infer: true }), {
       maxRetriesPerRequest: 2,
       connectTimeout: 5_000,
+      // a command waits at most this long (also while reconnecting): an outage answers 503 fast instead of hanging
+      commandTimeout: 2_000,
       enableReadyCheck: true,
       lazyConnect: false,
     });
@@ -23,6 +25,21 @@ export class RedisService implements OnModuleDestroy {
     this.client.on('error', (e: Error) =>
       this.logger.warn(`Redis error: ${e.name}`),
     );
+  }
+
+  /** Counted for monitoring (logged at most once a minute so an outage does not flood the log). */
+  private failures = 0;
+  private lastReport = 0;
+  markFailure(): void {
+    this.failures += 1;
+    const now = Date.now();
+    if (now - this.lastReport > 60_000) {
+      this.logger.error(
+        { failures: this.failures },
+        'Redis commands are failing: requests answer 503',
+      );
+      this.lastReport = now;
+    }
   }
 
   async ping(): Promise<void> {

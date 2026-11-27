@@ -117,7 +117,18 @@ export const envSchema = z
       .default('true')
       .transform((v) => v === 'true'),
     /** Local image storage (development only; production requires an object store). */
-    STORAGE_DRIVER: z.enum(['local']).default('local'),
+    STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+    /** S3 (STORAGE_DRIVER=s3): a PRIVATE bucket; optional key prefix ("media/") and KMS key (else SSE-S3). */
+    S3_BUCKET: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/)
+      .optional(),
+    S3_PREFIX: z
+      .string()
+      .regex(/^([A-Za-z0-9_-]+\/)*$/, 'folders ending in "/", e.g. media/')
+      .max(100)
+      .optional(),
+    S3_KMS_KEY_ID: z.string().min(1).max(2048).optional(),
     UPLOADS_DIR: z.string().min(1).default('./storage/uploads'),
     MEDIA_BASE_URL: z.url().default('http://localhost:3000/media'),
 
@@ -161,6 +172,12 @@ export const envSchema = z
       .default(30_000),
   })
   .superRefine((env, ctx) => {
+    if (env.STORAGE_DRIVER === 's3' && !env.S3_BUCKET)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['S3_BUCKET'],
+        message: 'required with STORAGE_DRIVER=s3',
+      });
     // The GSTIN is printed on every tax invoice: a typo (check character) or a state that does not match
     // SELLER_STATE (which decides CGST+SGST vs IGST) must never reach a customer.
     if (env.SELLER_GSTIN) {

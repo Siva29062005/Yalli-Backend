@@ -102,8 +102,8 @@ Follow-ups found while wiring (P1 unless noted):
 - [x] (2026-11-27, Phase 10) Brand pages (`/brands`, `/brands/[slug]`, 404 for unknown) and a specials page (`/specials`), in the header, footer and sitemap.
 - [ ] 301 redirects from the OpenCart URLs (`index.php?route=product/product&product_id=…`, category and information
       routes) to the new slugs, generated from the import mapping; without them search rankings are lost at cut-over.
-- [ ] The frontend has no production container (`output: 'standalone'` is not set) and no hosting plan in
-      `docs/ops/deployment-aws.md`.
+- [x] (2026-11-27, Phase 13) Frontend production container: `frontend/Dockerfile` (Next standalone, non-root, baked
+      `NEXT_PUBLIC_*`/`API_INTERNAL_URL`), hosting plan in `docs/ops/deployment-aws.md` (api, worker, frontend, migrate).
 - [x] (2026-11-27) Stale docs fixed: `production-readiness.md` describes the same-origin proxy, `deployment-aws.md`
       item 11 no longer mentions GitHub Actions, the README status and links are current.
 
@@ -149,6 +149,15 @@ Follow-ups found while wiring (P1 unless noted):
 - [ ] Turnstile captcha and HIBP. So far they have only been tested through fakes.
 
 ### Deployment and operations (needs AWS access)
+- [x] (2026-11-27, Phase 13) S3 image storage (`STORAGE_DRIVER=s3`, private bucket, SSE, no overwrite) and the local
+      deploy script `scripts/deploy.sh` (gates: clean tree, `npm run check`, launch check, trivy scan; migration task;
+      rollout). Both UNVERIFIED until staging exists.
+- [ ] **Needs AWS access (Phase 13):** create staging (VPC, ALB+WAF, CloudFront, ECS services api/worker/frontend/migrate,
+      RDS, ElastiCache, Amazon MQ, S3, Secrets Manager, CloudWatch alarms from `deployment-aws.md` item 9), then
+      `./scripts/deploy.sh staging --dry-run` and a real deploy; build the two Docker images once locally first.
+- [ ] **Needs provider accounts (Phase 13):** Razorpay test keys end to end (webhook to staging), SES domain
+      (SPF/DKIM/DMARC), MSG91 DLT template, Turnstile keys, HIBP; then the exit test (register with email+SMS, pay, ship,
+      return, refund + credit note) and the DR drill on staging.
 - [ ] AWS deployment, the S3 image storage adapter (production refuses local disk storage), WAF and alarms.
 - [ ] Production CORS, CSP, cookie and HTTPS settings for the real domain, including the frontend-to-backend proxy.
 - [ ] The user runs `./scripts/verify-docker.sh` (Phase 6 and 7 checks) and `./scripts/dr-drill.sh`.
@@ -357,9 +366,11 @@ Catalogue and content
 
 ### Security
 - [ ] Captcha after repeated login failures.
-- [ ] Re-encode uploaded images (e.g. with `sharp`) to strip EXIF/GPS data before staff upload phone photos.
+- [x] (2026-11-27, Phase 13) Re-encode uploaded images (`media/image-processing.ts`, sharp): EXIF/GPS and every other
+      metadata dropped after applying the orientation, at most 2400 px, decompression bombs and damaged files refused.
 - [x] (2026-11-19) Moved to P0 ("Two tabs end the session") after the frontend review.
-- [ ] During a Redis outage, the per-request session check is not mapped to a 503. Map it, and monitor Redis.
+- [x] (2026-11-27, Phase 13) During a Redis outage every Redis command is bounded (2 s) and answers 503
+      (`EphemeralStoreUnavailable`, fails closed); a rate-limited error log for the alarm.
 - [ ] Check that the PIN code matches the state on addresses.
 
 ### Commerce and operations
@@ -384,7 +395,8 @@ Catalogue and content
 - [x] Sitemap and SEO (2026-11-20): `robots.txt`, a dynamic `sitemap.xml` (static pages, categories, every published product; survives an API outage), canonical links, Open Graph defaults, Product structured data (INR price from the server, stock, rating only when reviews exist), WebSite search data, `noindex` for search/filter/paged listings, and `X-Robots-Tag: noindex` on account, cart, checkout, auth, order, compare and admin pages.
 - [ ] **Owner input for SEO:** set `NEXT_PUBLIC_BUSINESS_WEBSITE_URL` (e.g. https://yalli.in) when building for production. Without it no canonical links or sitemap URLs are emitted (a wrong host is worse than none). Also submit the sitemap in Google Search Console / Bing Webmaster Tools after launch.
 - [ ] SEO later: a default social-share image (Open Graph/Twitter), an Organization logo, per-category descriptions, and `hreflang` only if you add languages.
-- [ ] Run the reservation sweeper as its own worker in production (today it runs in-process every 30 s).
+- [x] (2026-11-27, Phase 13) Background jobs run in their own worker (`node dist/worker.js`, same image); API tasks
+      set `BACKGROUND_JOBS_ENABLED=false`.
 
 ---
 

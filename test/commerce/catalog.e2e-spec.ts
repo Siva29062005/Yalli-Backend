@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import sharp from 'sharp';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,10 +25,13 @@ afterAll(() => ctx.close());
 
 const list = (query: Record<string, string | number>) =>
   ctx.http().get('/api/v1/catalog/products').query(query);
-const PNG = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  randomBytes(200),
-]);
+/** A real (decodable) PNG carrying EXIF data: uploads are re-encoded, so it must be a genuine image. */
+const PNG = await sharp({
+  create: { width: 4, height: 3, channels: 3, background: '#3a7' },
+})
+  .png()
+  .withExif({ IFD0: { Make: 'PhoneCo', Copyright: 'secret-gps-owner' } })
+  .toBuffer();
 
 describe('public catalogue visibility', () => {
   it('shows only published, live products with an active variant; drafts/archived/deleted are invisible everywhere', async () => {
@@ -867,7 +871,13 @@ describe('image upload security', () => {
       "default-src 'none'",
     );
     expect(served.headers['cross-origin-resource-policy']).toBe('cross-origin');
-    expect(Buffer.compare(served.body as Buffer, PNG)).toBe(0);
+    // re-encoded: still a PNG of the same picture, but without the EXIF data the upload carried
+    const servedMeta = await sharp(served.body as Buffer).metadata();
+    expect(servedMeta).toMatchObject({ format: 'png', width: 4, height: 3 });
+    expect(servedMeta.exif).toBeUndefined();
+    expect(
+      (served.body as Buffer).includes(Buffer.from('secret-gps-owner')),
+    ).toBe(false);
     const pub = await ctx
       .http()
       .get(`/api/v1/catalog/products/${product.slug}`);
@@ -894,6 +904,15 @@ describe('image upload security', () => {
       Buffer.concat([Buffer.from('MZ'), randomBytes(100)]),
       'setup.jpg',
       'image/jpeg',
+    ],
+    [
+      'PNG signature on random bytes (not a decodable image)',
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        randomBytes(200),
+      ]),
+      'fake.png',
+      'image/png',
     ],
     [
       'PHP web shell',

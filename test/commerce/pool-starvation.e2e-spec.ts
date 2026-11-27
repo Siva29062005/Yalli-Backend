@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import sharp from 'sharp';
 import { vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import {
@@ -345,11 +346,11 @@ describe('no flow needs a second connection while it holds one', () => {
     // 9 image moves on one product at once (each renumbers the gallery in one transaction)
     const pm = await s.staff('PRODUCT_MANAGER');
     const { product } = await shop.fx.product();
-    const png = Buffer.from(
-      '89504e470d0a1a0a0000000d4948445200000001000000010806000000' +
-        '1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082',
-      'hex',
-    );
+    const png = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#123' },
+    })
+      .png()
+      .toBuffer(); // a real image: uploads are re-encoded
     const ids: string[] = [];
     for (let i = 0; i < 3; i++)
       ids.push(

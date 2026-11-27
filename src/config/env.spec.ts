@@ -37,6 +37,31 @@ describe('validateEnv', () => {
     ).toThrow(/REFRESH_IDLE_TTL_DAYS/);
   });
 
+  it('S3 storage needs a bucket name; the prefix is folders ending in "/"', () => {
+    expect(() => validateEnv({ ...base, STORAGE_DRIVER: 's3' })).toThrow(
+      /S3_BUCKET/,
+    );
+    expect(
+      validateEnv({
+        ...base,
+        STORAGE_DRIVER: 's3',
+        S3_BUCKET: 'yalli-media',
+        S3_PREFIX: 'media/',
+      }).S3_BUCKET,
+    ).toBe('yalli-media');
+    expect(() =>
+      validateEnv({ ...base, STORAGE_DRIVER: 's3', S3_BUCKET: 'Bad_Bucket' }),
+    ).toThrow(/S3_BUCKET/);
+    expect(() =>
+      validateEnv({
+        ...base,
+        STORAGE_DRIVER: 's3',
+        S3_BUCKET: 'yalli-media',
+        S3_PREFIX: '../x',
+      }),
+    ).toThrow(/S3_PREFIX/);
+  });
+
   it('validates payment settings: lengths, windows and the GSTIN format', () => {
     expect(() => validateEnv({ ...base, SELLER_GSTIN: 'not-a-gstin' })).toThrow(
       /SELLER_GSTIN/,

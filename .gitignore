@@ -20,3 +20,7 @@ docker-compose.override.yml
 
 # Design handoff archive (30 MB); keep it outside git
 Figma Design.zip
+
+# deploy configuration per environment (scripts/deploy.sh); only the example is committed
+deploy/*.env
+!deploy/example.env

@@ -264,6 +264,12 @@ Goal: a staging environment on AWS that is identical to production except for te
 Exit: staging is reachable over HTTPS; a test customer can register (email and SMS received), pay with Razorpay test
 mode, get the order shipped, return it, and receive a refund and credit note; the DR drill passes.
 
+**Status (2026-11-27): code done, AWS and providers open.** Built: the S3 storage adapter, image re-encoding with sharp,
+the worker entrypoint (`node dist/worker.js`), Redis outages answering 503, the frontend standalone container
+(`frontend/Dockerfile`), `scripts/deploy.sh` (dry-run tested) and the alarm list in `docs/ops/deployment-aws.md`. Open:
+everything that needs AWS access or provider accounts (the hosting, the test-mode providers, the exit test, the DR
+drill on staging); none of the AWS-facing code has run against AWS yet.
+
 ## Phase 14: pre-launch verification on staging
 
 Goal: evidence, not assumptions, that the store is ready.

@@ -1,0 +1,9 @@
+node_modules
+.next
+.next-browser-tests
+screenshots
+.env
+.env.*
+!.env.example
+*.md
+scripts
