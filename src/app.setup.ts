@@ -29,6 +29,18 @@ export function configureApp(app: NestExpressApplication): void {
   app.use(requestIdMiddleware);
   app.set('trust proxy', config.get('TRUST_PROXY_HOPS', { infer: true }));
   app.set('etag', false);
+  // Nothing the API answers may be kept by a browser or a shared cache (CloudFront) unless a route says otherwise
+  // (the public catalogue and media set their own Cache-Control): sessions, tokens, MFA secrets, personal data.
+  app.use(
+    (
+      _req: unknown,
+      res: { setHeader(k: string, v: string): void },
+      next: () => void,
+    ) => {
+      res.setHeader('Cache-Control', 'no-store');
+      next();
+    },
+  );
 
   // JSON API only: lock everything down (no HTML, frames, or sniffing).
   app.use(
@@ -68,8 +80,16 @@ export function configureApp(app: NestExpressApplication): void {
     maxAge: 600,
   });
 
-  // Small body limits; rawBody is retained for webhook signature verification (Phase 5).
-  app.useBodyParser('json', { limit: bodyLimit });
+  // Small body limits; rawBody is retained for webhook signature verification (Phase 5). Browsers send CSP violation
+  // reports as application/csp-report or application/reports+json (neither can be sent cross-site without a preflight).
+  app.useBodyParser('json', {
+    limit: bodyLimit,
+    type: [
+      'application/json',
+      'application/csp-report',
+      'application/reports+json',
+    ],
+  });
   app.useBodyParser('urlencoded', { limit: bodyLimit, extended: false });
 
   app.setGlobalPrefix(API_PREFIX, { exclude: UNPREFIXED_ROUTES });

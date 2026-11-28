@@ -33,6 +33,7 @@
     "convert:opencart": "node dist/cli/convert-opencart.js",
     "import:images": "node dist/cli/import-images.js",
     "check:launch": "node dist/cli/check-launch-config.js",
+    "verify:site": "node dist/cli/verify-site.js",
     "rotate:mfa-key": "node dist/cli/rotate-mfa-key.js"
   },
   "dependencies": {
@@ -90,5 +91,8 @@
     "typescript": "^6.0.3",
     "vite": "^8.3.8",
     "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "effect": "3.22.4"
   }
 }

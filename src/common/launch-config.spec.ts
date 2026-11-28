@@ -77,6 +77,11 @@ describe('launch configuration check', () => {
     );
     expect(r.warnings.join('\n')).toMatch(/SELLER_LEGAL_NAME is the default/);
   });
+  it('blocks a report-only CSP build (staging only)', () => {
+    const r = checkLaunchConfig(backend, { ...frontend, CSP_REPORT_ONLY: '1' });
+    expect(r.errors).toEqual([expect.stringContaining('CSP_REPORT_ONLY')]);
+  });
+
   it('reads .env files', () => {
     expect(
       parseEnvFile('# c\nA=1\nexport B="two words"\n  C = \'x\'\nbad line\n'),

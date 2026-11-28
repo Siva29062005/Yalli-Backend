@@ -159,6 +159,13 @@ Follow-ups found while wiring (P1 unless noted):
       stay under 5 MB (palette PNGs), 25 MP cap and one image at a time; S3 retry after a lost answer; production refuses
       a localhost/http MEDIA_BASE_URL; image deletion no longer fails after the row is gone; the image import dry run
       decodes and a product is uploaded all-or-nothing; API tasks no longer consume events; Redis reply errors stay 500.
+- [x] (2026-11-28) Phase 14 tooling and local evidence: `verify:site`, storefront load scenario, CSP reports and the
+      report-only switch, launch checklist (`docs/ops/launch-checklist.md`), record in
+      `docs/security/phase-14-verification.md`.
+- [ ] **Phase 14 on staging:** work through `docs/ops/launch-checklist.md` (load at 3× peak, ZAP baseline, container
+      scan, CSP report-only then enforced, keyboard and screen-reader pass, real phones, Lighthouse) and get it signed.
+      Owner input: the expected peak (busiest day of the old store). Rebuild the Docker images (`verify-docker.sh`): the
+      RDS CA bundle step is new and has not been built yet.
 - [ ] **Needs AWS access (Phase 13):** create staging (VPC, ALB+WAF, CloudFront, ECS services api/worker/frontend/migrate,
       RDS, ElastiCache, Amazon MQ, S3, Secrets Manager, CloudWatch alarms from `deployment-aws.md` item 9), then
       `./scripts/deploy.sh staging --dry-run` and a real deploy; build the two Docker images once locally first.
@@ -289,7 +296,7 @@ Identity and access
 - [x] (2026-11-27) Granting a non-customer role (`assignRole`) signs the person out everywhere.
 - [ ] Enabling MFA (`confirm`) leaves older password-only sessions alive. Revoke the other sessions, as password change
       and role revoke already do.
-- [ ] Turnstile verification does not check the `action` and `hostname` in Cloudflare's answer (`captcha.adapters.ts`):
+- [x] (2026-11-28, Phase 14) Turnstile verification does not check the `action` and `hostname` in Cloudflare's answer (`captcha.adapters.ts`):
       a token solved for one form or host is accepted on another. Pass the expected action and compare both.
 - [ ] An authorization whose capture the provider keeps rejecting keeps its order from expiring until the provider voids
       it (days). Cap it: after the payment window plus a margin, cancel and let the authorization lapse.
@@ -302,12 +309,12 @@ Identity and access
 - [ ] Admin and storefront share one refresh cookie (`yalli_rt`): signing in on one signs the other out.
 
 Platform
-- [ ] No `Cache-Control: no-store` on authenticated or token-bearing responses (login, refresh, MFA enrolment secret,
+- [x] (2026-11-28, Phase 14: global default in `app.setup.ts`) No `Cache-Control: no-store` on authenticated or token-bearing responses (login, refresh, MFA enrolment secret,
       recovery codes, `/me`, export). Add a global default before CloudFront sits in front of the API.
 - [ ] Dev compose `app` and `seed` load the whole `.env`, so the container receives `DATABASE_MIGRATION_URL`, the
       migrator and the Postgres superuser passwords (against "the app never receives the migrator URL"). Pass an
       explicit variable list.
-- [ ] Production env validation does not refuse: `FRONTEND_BASE_URL` left at `http://localhost:3001` (emailed reset
+- [x] (2026-11-28, Phase 14: all four refused; the RDS CA bundle is in the images) Production env validation does not refuse: `FRONTEND_BASE_URL` left at `http://localhost:3001` (emailed reset
       links), a missing `REPORTING_DATABASE_URL` (reports fall back to the app role), non-TLS `redis://` / `amqp://`.
       RDS needs its CA bundle (`NODE_EXTRA_CA_CERTS`) because `rejectUnauthorized` is on; do not turn verification off.
 - [ ] The immutability REVOKEs in migrations run only `IF EXISTS (yalli_app)`; on RDS a role created later, or a broad
@@ -317,7 +324,7 @@ Platform
       errors can carry argument values in the message (unverified).
 - [ ] Dev: `.env.example` and `setup-dev-env.sh` still use `localhost:5173` for CORS and `FRONTEND_BASE_URL`; the
       frontend runs on 3001 and the CSRF Origin check needs the storefront origin listed (also in production; document it).
-- [ ] `effect` (via the Prisma CLI, a dev dependency) has a ReDoS advisory (GHSA-7589-6fvf-x4pw); not reachable from
+- [x] (2026-11-28, Phase 14: override `effect@3.22.4`, `npm audit` clean) `effect` (via the Prisma CLI, a dev dependency) has a ReDoS advisory (GHSA-7589-6fvf-x4pw); not reachable from
       requests. Add an npm override to ≥ 3.22.1 or wait for Prisma.
 
 Catalogue and content
@@ -331,7 +338,8 @@ Catalogue and content
 - [x] (2026-11-27) 18 confirmed findings fixed (contact form limits and length, brand counts, contact data in export and
       erasure, multi-tab sign-out, locked filters on /specials and /brands, cart load race, review paging, checkout
       refusals and quote race, price boxes, category banner). Record: `docs/security/phase-9-fixes.md`, last section.
-- [ ] Measure the cost of the root layout's server category fetch on uncached renders (Phase 14 load check).
+- [ ] Measure the cost of the root layout's server category fetch on uncached renders (Phase 14 load check). Local
+      baseline done 2026-11-28 (`--scenario storefront`: 711 req/s, p99 47 ms); repeat on staging at 3× peak.
 
 ### Frontend review 2026-11-19: features with a backend but no UI
 - [x] (2026-11-27, Phase 10) Customers: change password and sign out everywhere (`/account/security`), phone
@@ -356,8 +364,8 @@ Catalogue and content
       14 smaller findings fixed. Record: `docs/architecture/phase-11-admin.md`, last section.
 - [ ] Privacy notice: say that sign-in and security events (with IP addresses) are kept in the audit log, and for how
       long (owner input; the audit viewer reads them).
-- [ ] No Content-Security-Policy on the frontend; "stock held for 30 minutes" is hard-coded instead of
-      `PAYMENT_WINDOW_MINUTES`.
+- [ ] "Stock held for about 30 minutes" is written into the help, returns and terms pages instead of following
+      `PAYMENT_WINDOW_MINUTES` (the CSP part of this item was done in Phase 9 and reports violations since Phase 14).
 
 ### Frontend quality gate
 - [x] (2026-11-27) `npm run check` ends with `check:frontend`: lint with no warnings allowed, build, type-check. The

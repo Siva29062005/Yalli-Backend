@@ -336,6 +336,57 @@ export const envSchema = z
           message: 'a real captcha provider is required in production',
         });
       }
+      // Cloudflare's dummy secrets pass every token (and skip the action/hostname check)
+      if (
+        env.TURNSTILE_SECRET &&
+        /^[123]x0{31}AA$/.test(env.TURNSTILE_SECRET)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['TURNSTILE_SECRET'],
+          message:
+            "is one of Cloudflare's test secrets; production (and staging) need the site's real secret",
+        });
+      }
+      // links in emails (verification, password reset, orders) go to this address
+      if (
+        !env.FRONTEND_BASE_URL.startsWith('https://') ||
+        /localhost|127\.0\.0\.1/.test(env.FRONTEND_BASE_URL)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['FRONTEND_BASE_URL'],
+          message:
+            'must be the public https storefront address (emailed links)',
+        });
+      }
+      // reports must log in as the read-only, column-limited role, not fall back to the app role
+      if (!env.REPORTING_DATABASE_URL) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['REPORTING_DATABASE_URL'],
+          message:
+            'required in production (the read-only yalli_reporting role)',
+        });
+      }
+      // ElastiCache and Amazon MQ are reached over TLS only
+      if (!env.REDIS_URL.startsWith('rediss://')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['REDIS_URL'],
+          message: 'must use TLS (rediss://) in production',
+        });
+      }
+      if (
+        env.EVENT_BUS_DRIVER === 'rabbitmq' &&
+        !env.RABBITMQ_URL.startsWith('amqps://')
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['RABBITMQ_URL'],
+          message: 'must use TLS (amqps://) in production',
+        });
+      }
       if (!env.HIBP_ENABLED) {
         ctx.addIssue({
           code: 'custom',

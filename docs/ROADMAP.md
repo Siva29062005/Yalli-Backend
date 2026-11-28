@@ -295,6 +295,14 @@ Goal: evidence, not assumptions, that the store is ready.
 
 Exit: a signed launch checklist in `docs/ops/` with each item's evidence.
 
+**Status (2026-11-28): tooling and local evidence done, staging runs open.** Built: `npm run verify:site` (read-only
+checks of a deployed site, run by `deploy.sh` after each deploy/rollback), a storefront load scenario with `--rate` and
+`--max-p99`, CSP violation reporting (`POST /api/v1/csp-reports`) with a report-only build switch for the first staging
+builds, and `docs/ops/launch-checklist.md`. Tightened: `no-store` on API answers, Turnstile action and hostname checks,
+production refuses localhost/http email links, a missing reporting role and Redis/RabbitMQ without TLS, the RDS CA
+bundle in the images, HSTS on the storefront, dependency audit clean. Record: `docs/security/phase-14-verification.md`.
+Open: everything in the checklist that needs staging, real phones, provider accounts or owner input.
+
 ## Phase 15: go-live
 
 Goal: replace OpenCart without losing orders, customers' trust or search ranking.

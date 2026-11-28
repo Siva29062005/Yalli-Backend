@@ -1,12 +1,20 @@
 #!/usr/bin/env node
 // Load and abuse scenarios against a RUNNING instance (never point this at production).
 //   node scripts/load/run.mjs --url http://127.0.0.1:3000 --scenario catalog [--duration 15] [--connections 30] [--spoof-ip]
+//                             [--rate <requests per second>] [--max-p99 <ms>]
 //
 // Scenarios
 //   health       GET /health/live                        baseline for the HTTP stack
 //   catalog      GET /api/v1/catalog/products?q=...      the heaviest public query (each request searches a different term)
 //   login-flood  POST /api/v1/auth/login, wrong password  the Argon2 denial-of-service defence: cost must stay bounded by the limits
 //   register     POST /api/v1/auth/register               abuse of account creation
+//   storefront   GET pages of the Next.js storefront      --url is the FRONTEND: home, catalogue, search, help pages.
+//                                                         Searches make every render uncached, so this measures the
+//                                                         server render plus its API reads (the root layout's category
+//                                                         fetch) and the shared frontend-server budget (X-Frontend-Key)
+//
+// --rate fixes the request rate (e.g. 3x the expected peak) instead of "as fast as possible"; --max-p99 fails the run
+// when the 99th percentile latency is above that many milliseconds.
 //
 // --spoof-ip sends a different X-Forwarded-For per request. It only has an effect when the target runs with TRUST_PROXY_HOPS=1
 // (a test environment); without it every request comes from one address, which is exactly what you want for login-flood
@@ -26,6 +34,8 @@ const scenario = opt('scenario', 'health');
 const duration = Number(opt('duration', 15));
 const connections = Number(opt('connections', 30));
 const spoof = args.includes('--spoof-ip');
+const rate = opt('rate') ? Number(opt('rate')) : undefined;
+const maxP99 = opt('max-p99') ? Number(opt('max-p99')) : undefined;
 
 const rnd = () => randomBytes(4).toString('hex');
 const ip = () =>
@@ -57,6 +67,21 @@ const scenarios = {
       }),
     },
   ],
+  storefront: () => {
+    const pages = ['/', '/catalog', '/specials', '/brands', '/help', '/shipping'];
+    let i = 0;
+    return [
+      {
+        method: 'GET',
+        setupRequest: (r) => {
+          i += 1;
+          // every third request is a search: never cached, always a full server render
+          const path = i % 3 === 0 ? `/catalog?q=${rnd()}` : pages[i % pages.length];
+          return { ...r, path };
+        },
+      },
+    ];
+  },
   register: () => [
     {
       method: 'POST',
@@ -103,7 +128,13 @@ const requests = scenarios[scenario]().map((r) => ({
     : {}),
 }));
 
-const result = await autocannon({ url, connections, duration, requests });
+const result = await autocannon({
+  url,
+  connections,
+  duration,
+  requests,
+  ...(rate ? { overallRate: rate } : {}),
+});
 const codes = Object.fromEntries(
   Object.entries(result.statusCodeStats).map(([k, v]) => [k, v.count]),
 );
@@ -127,12 +158,19 @@ console.log(
       networkErrors: result.errors,
       timeouts: result.timeouts,
       serverErrors,
+      ...(maxP99 ? { maxP99, p99Ok: result.latency.p99 <= maxP99 } : {}),
     },
     null,
     2,
   ),
 );
-// A load test passes only if the service never answered with a 5xx and never dropped a connection.
+// A load test passes only if the service never answered with a 5xx, never dropped a connection and (with --max-p99)
+// stayed under the latency budget.
 process.exit(
-  serverErrors === 0 && result.errors === 0 && result.timeouts === 0 ? 0 : 1,
+  serverErrors === 0 &&
+    result.errors === 0 &&
+    result.timeouts === 0 &&
+    (!maxP99 || result.latency.p99 <= maxP99)
+    ? 0
+    : 1,
 );

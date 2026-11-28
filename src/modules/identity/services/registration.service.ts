@@ -44,7 +44,7 @@ export class RegistrationService {
    * (no account enumeration). An existing owner gets an "already registered" email instead of a verification link.
    */
   async register(dto: RegisterDto, ctx: RequestContext): Promise<void> {
-    if (!(await this.captcha.verify(dto.captchaToken, ctx.ip))) {
+    if (!(await this.captcha.verify(dto.captchaToken, ctx.ip, 'register'))) {
       throw apiError(400, 'CAPTCHA_FAILED', 'Captcha verification failed');
     }
 

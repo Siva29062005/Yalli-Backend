@@ -54,6 +54,10 @@ export function checkLaunchConfig(backend: Env, frontend: Env): LaunchCheck {
       warnings.push(
         `frontend: NEXT_PUBLIC_BUSINESS_${k} is not set (left out of the pages)`,
       );
+  if (v(frontend, 'CSP_REPORT_ONLY') === '1')
+    errors.push(
+      'frontend: CSP_REPORT_ONLY=1 (the Content-Security-Policy would block nothing): staging only',
+    );
   if (!v(frontend, 'NEXT_PUBLIC_TURNSTILE_SITE_KEY'))
     errors.push(
       'frontend: NEXT_PUBLIC_TURNSTILE_SITE_KEY is not set (no captcha on sign-up and contact forms)',

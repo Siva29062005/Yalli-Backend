@@ -107,7 +107,7 @@ export class ContactService {
   }
 
   async submit(input: ContactInput, ip: string | null): Promise<void> {
-    if (!(await this.captcha.verify(input.captchaToken, ip)))
+    if (!(await this.captcha.verify(input.captchaToken, ip, 'contact')))
       throw new BadRequestException({
         message: 'Please complete the security check and try again',
         code: 'CAPTCHA_FAILED',

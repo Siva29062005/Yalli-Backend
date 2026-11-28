@@ -120,6 +120,15 @@ wait_rolled_out() {
   die "$service did not finish rolling out within 15 minutes"
 }
 
+# Read-only check of the live site (headers, CSP, caching, error bodies, CORS, robots): SITE_URL in the deploy config.
+verify_site() {
+  if [[ -z "${SITE_URL:-}" ]]; then echo "  SITE_URL is not set in $CONFIG: check the site by hand (npm run verify:site)"; return 0; fi
+  if [[ $DRY_RUN == 1 ]]; then echo "  [dry-run] node dist/cli/verify-site.js --url $SITE_URL"; return 0; fi
+  [[ -f dist/cli/verify-site.js ]] || npm run build >/dev/null || die "could not build the site check"
+  node dist/cli/verify-site.js --url "$SITE_URL" \
+    || die "the site check failed (above). The new revisions are live: fix forward, or ./scripts/deploy.sh $ENVIRONMENT --rollback <previous commit>"
+}
+
 if [[ -n "$ROLLBACK" ]]; then
   say "2. Find the earlier task revisions of $SHA"
   # The newest ACTIVE revision of a family whose container `name` runs exactly `image`.
@@ -149,6 +158,8 @@ if [[ -n "$ROLLBACK" ]]; then
     aws_ ecs update-service --cluster "$ECS_CLUSTER" --service "$service" --task-definition "$def" >/dev/null
   done
   for p in "${PLAN[@]+"${PLAN[@]}"}"; do IFS='|' read -r service def <<< "$p"; wait_rolled_out "$service" "$def"; done
+  say "4. Check the site"
+  verify_site
   say "Rolled $ENVIRONMENT back to $SHA"
   exit 0
 fi
@@ -196,6 +207,9 @@ build_scan_push "$MIGRATE_IMAGE" "$ECR_REPO_API" "${SHA}-migrate" --target migra
 BUILD_ARGS=()
 while IFS= read -r -d '' kv; do BUILD_ARGS+=(--build-arg "$kv"); done < <(node dist/cli/frontend-build-args.js "$FRONTEND_BUILD_ENV")
 [[ ${#BUILD_ARGS[@]} -gt 0 ]] || die "no build arguments found in $FRONTEND_BUILD_ENV"
+if [[ "$ENVIRONMENT" == production ]] && printf '%s\n' "${BUILD_ARGS[@]}" | grep -qx 'CSP_REPORT_ONLY=1'; then
+  die "CSP_REPORT_ONLY=1 is for staging only: production enforces the Content-Security-Policy"
+fi
 build_scan_push "$FRONTEND_IMAGE" "$ECR_REPO_FRONTEND" "${SHA}-${ENVIRONMENT}" "${BUILD_ARGS[@]}" frontend
 
 # A new revision of `family` with ONLY container `name` switched to `image`. Prints the new ARN; fails loudly.
@@ -262,5 +276,8 @@ else
   for p in "${ROLLOUT[@]}"; do IFS='|' read -r service def <<< "$p"; wait_rolled_out "$service" "$def"; done
 fi
 
+say "7. Check the site"
+verify_site
+
 say "Deployed $SHA to $ENVIRONMENT"
-echo "  Next: smoke test /health/ready and a page. To go back: ./scripts/deploy.sh $ENVIRONMENT --rollback <previous commit>"
+echo "  Next: a test order on the site. To go back: ./scripts/deploy.sh $ENVIRONMENT --rollback <previous commit>"

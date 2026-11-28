@@ -1,10 +1,17 @@
 /** External capabilities are behind ports so providers can be swapped (and faked in tests). */
 
+/** The form a captcha was solved for (the widget's `action`, checked by the server). */
+export type CaptchaAction = 'register' | 'forgot_password' | 'contact';
+
 export abstract class CaptchaVerifier {
-  /** Must fail CLOSED: any error or ambiguity => false. */
+  /**
+   * Must fail CLOSED: any error or ambiguity => false. A token solved for another form (`action`) or on another site
+   * (hostname) is refused.
+   */
   abstract verify(
     token: string | undefined,
     ip: string | null,
+    action: CaptchaAction,
   ): Promise<boolean>;
 }
 

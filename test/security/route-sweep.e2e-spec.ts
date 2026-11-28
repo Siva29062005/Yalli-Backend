@@ -72,6 +72,8 @@ const PUBLIC_ROUTES = new Set([
   'DELETE /api/v1/cart/coupon',
   // contact form (rate-limited, captcha)
   'POST /api/v1/contact',
+  // CSP violation reports from browsers (rate-limited, nothing stored, sanitised log line)
+  'POST /api/v1/csp-reports',
 ]);
 const key = (r: { method: string; path: string }) =>
   `${r.method.toUpperCase()} ${r.path}`;

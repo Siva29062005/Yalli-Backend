@@ -41,10 +41,19 @@ const csp = [
   "frame-ancestors 'none'",
   "worker-src 'self' blob:",
   ...(httpsSite ? ['upgrade-insecure-requests'] : []),
+  // Browsers report every blocked load to the API (POST /api/v1/csp-reports: sanitised log line "CSP violation").
+  'report-uri /api/v1/csp-reports',
 ].join('; ');
 
+// CSP_REPORT_ONLY=1 at build time sends the same policy as Content-Security-Policy-Report-Only: nothing is blocked,
+// every violation is reported. For the first staging builds only (docs/ops/deployment-aws.md); production enforces.
+const cspReportOnly = process.env.CSP_REPORT_ONLY === '1';
+
 const securityHeaders = [
-  { key: 'Content-Security-Policy', value: csp },
+  { key: cspReportOnly ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy', value: csp },
+  // HTTPS only from the first visit on (the API sends the same header). No `preload`: that is a separate, hard to
+  // undo decision for the owner.
+  ...(httpsSite ? [{ key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' }] : []),
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

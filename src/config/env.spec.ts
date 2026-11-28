@@ -140,6 +140,60 @@ describe('validateEnv', () => {
   });
 
   describe('production guards', () => {
+    // every production rule satisfied at once: the guards do not contradict each other
+    const complete = {
+      ...base,
+      DATABASE_URL: 'postgresql://app:pw@db.internal:5432/yalli',
+      REPORTING_DATABASE_URL: 'postgresql://rep:pw@db.internal:5432/yalli',
+      REDIS_URL: 'rediss://:pw@cache.internal:6379',
+      RABBITMQ_URL: 'amqps://u:pw@mq.internal:5671',
+      NODE_ENV: 'production',
+      CORS_ALLOWED_ORIGINS: 'https://yalli.in',
+      DATABASE_SSL: 'true',
+      COOKIE_SECURE: 'true',
+      TRUST_PROXY_HOPS: '2',
+      CAPTCHA_PROVIDER: 'turnstile',
+      TURNSTILE_SECRET: '0x4AAAAAAAreal-secret-value',
+      HIBP_ENABLED: 'true',
+      NOTIFICATIONS_DRIVER: 'ses_msg91',
+      SES_FROM_ADDRESS: 'shop@yalli.in',
+      MSG91_AUTH_KEY: 'msg91-auth-key-value',
+      MSG91_OTP_TEMPLATE_ID: 'tmpl-1',
+      MEDIA_BASE_URL: 'https://yalli.in/media',
+      STORAGE_DRIVER: 's3',
+      S3_BUCKET: 'yalli-media',
+      RAZORPAY_KEY_ID: 'rzp_live_abcdef12',
+      RAZORPAY_KEY_SECRET: 'secret_secret_secret_1',
+      RAZORPAY_WEBHOOK_SECRET: 'webhook_secret_secret_1',
+      SELLER_GSTIN: '33ABCDE1234F1Z7',
+      EVENT_BUS_DRIVER: 'rabbitmq',
+      FRONTEND_BASE_URL: 'https://yalli.in',
+    };
+    it('accepts a complete production configuration', () => {
+      expect(validateEnv(complete).NODE_ENV).toBe('production');
+    });
+    it.each([
+      ['FRONTEND_BASE_URL', 'http://localhost:3001'],
+      ['FRONTEND_BASE_URL', 'http://yalli.in'],
+      ['REPORTING_DATABASE_URL', undefined],
+      ['REDIS_URL', 'redis://:pw@cache.internal:6379'],
+      ['RABBITMQ_URL', 'amqp://u:pw@mq.internal:5672'],
+      ['TURNSTILE_SECRET', '1x0000000000000000000000000000000AA'],
+    ])('refuses %s=%s in production', (key, value) => {
+      expect(() => validateEnv({ ...complete, [key]: value })).toThrow(
+        new RegExp(key),
+      );
+    });
+    it('allows the development defaults outside production', () => {
+      expect(() =>
+        validateEnv({
+          ...base,
+          CAPTCHA_PROVIDER: 'turnstile',
+          TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
+        }),
+      ).not.toThrow();
+    });
+
     const prod = {
       ...base,
       NODE_ENV: 'production',

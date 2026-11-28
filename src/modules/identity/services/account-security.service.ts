@@ -200,7 +200,7 @@ export class AccountSecurityService {
     token: string | undefined,
     ip: string | null,
   ): Promise<void> {
-    if (!(await this.captcha.verify(token, ip)))
+    if (!(await this.captcha.verify(token, ip, 'forgot_password')))
       throw apiError(400, 'CAPTCHA_FAILED', 'Captcha verification failed');
   }
 

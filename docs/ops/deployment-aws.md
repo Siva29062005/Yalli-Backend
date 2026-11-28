@@ -24,9 +24,14 @@ browsers get images through `/media/<key>` or CloudFront with origin access cont
 Secrets Manager. Uploaded images are re-encoded with sharp (EXIF/GPS removed, at most 2400 px).
 
 ## What production refuses to start without (env validation)
-HTTPS-only CORS origins, `DATABASE_SSL=true`, Turnstile captcha + secret, breached-password check, Secure cookies, a real
-notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage, Razorpay keys + webhook secret, `SELLER_GSTIN`,
-`EVENT_BUS_DRIVER=rabbitmq`, no Swagger, no pretty logs.
+HTTPS-only CORS origins, `DATABASE_SSL=true`, Turnstile captcha + a real secret (Cloudflare's test secrets are refused,
+also on staging: create a Turnstile site with the staging hostname), breached-password check, Secure cookies, a real
+notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage, an https `MEDIA_BASE_URL` and
+`FRONTEND_BASE_URL` (not localhost), `REPORTING_DATABASE_URL`, `rediss://` and `amqps://` (TLS), Razorpay keys + webhook
+secret, `SELLER_GSTIN`, `EVENT_BUS_DRIVER=rabbitmq`, no Swagger, no pretty logs.
+
+Database TLS: the app verifies the RDS certificate; the images carry Amazon's RDS CA bundle (pinned by checksum in the
+root `Dockerfile`, `NODE_EXTRA_CA_CERTS`). The migrator URL adds `?sslmode=verify-full&sslrootcert=/etc/ssl/certs/rds-global-bundle.pem`.
 
 ## Checklist
 1. Secrets in Secrets Manager (never in the image or repo). Task roles, least privilege: api and worker get SES send,
@@ -51,7 +56,11 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
 4b. Frontend build (build arguments, see `frontend/Dockerfile`): `API_INTERNAL_URL` (the API's internal address, also
    used at runtime for server-side rendering), `NEXT_PUBLIC_BUSINESS_WEBSITE_URL` (https), `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
    and the business details; runtime secret: `FRONTEND_SERVER_KEY`. Run `npm run check:launch` against the same values. The CSP (next.config.ts) allows Razorpay and Turnstile;
-   test a real Razorpay checkout on staging, because the CSP only allows `*.razorpay.com`.
+   test a real Razorpay checkout on staging, because the CSP only allows `*.razorpay.com`. Roll the CSP out in two steps:
+   build staging once with `CSP_REPORT_ONLY=1` (in the frontend env file: nothing is blocked, everything is reported to
+   `/api/v1/csp-reports`, log line "CSP violation"), run a full checkout, sign-up and contact form, confirm there are
+   no violation lines, then rebuild without it. Production refuses report-only (launch check and `deploy.sh`). On https
+   builds the storefront also sends HSTS (two years, subdomains, no preload).
 5. Health: liveness `/health/live`, readiness `/health/ready`. Graceful shutdown is enabled.
 6. Background jobs AND the event consumers run in the worker service (`node dist/worker.js`); the API tasks set
    `BACKGROUND_JOBS_ENABLED=false` (they only publish) so a traffic spike does not slow the sweeper and a sweeper run
@@ -68,7 +77,8 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
    - outbox backlog (`outbox_events` not published after 5 minutes; a metric from the worker log) and the RabbitMQ DLQ
      depth > 0; ElastiCache evictions and CPU;
    - the log lines "Redis commands are failing", "A cancel refund was processed for an order that had shipped",
-     "PAYMENT AMOUNT MISMATCH" (metric filters).
+     "PAYMENT AMOUNT MISMATCH" (metric filters), and a sudden rise of "CSP violation" (the report endpoint is anonymous,
+     so alarm on a rate, not on one line).
 10. Backups, PITR and the restore drill (docs/ops/backup-restore.md); rotate keys (docs/ops/key-rotation.md).
 11. No CI by the owner's decision (2026-11-19): deploy with `./scripts/deploy.sh <staging|production>` from a machine with
     Docker, the AWS CLI, jq, node and trivy. It refuses uncommitted changes (for production also a commit that is not on
@@ -77,7 +87,9 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
     revisions before changing anything (a failed registration stops it), runs the migration task and requires its
     `migrate` container to exit 0, then updates the services and verifies each one is really on its new revision (a
     rollout the circuit breaker reverted is a failure). Configuration: `deploy/<environment>.env` (git-ignored, a plain
-    KEY=value file, see `deploy/example.env`). **Unverified against AWS: `--dry-run` runs only the local steps.**
+    KEY=value file, see `deploy/example.env`). With `SITE_URL` set it ends with `npm run verify:site` (read-only checks of
+    the live site) after a deploy or a rollback. **Unverified against AWS: `--dry-run` runs only the local steps.**
+12. Before launch: work through `docs/ops/launch-checklist.md` (Phase 14) and get it signed.
 
 ## Rollback
 Previous image + its schema: because migrations are additive, the previous image runs on the new schema.

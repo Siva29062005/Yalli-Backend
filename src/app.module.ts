@@ -27,6 +27,7 @@ import { CartModule } from './modules/cart/cart.module.js';
 import { CommerceModule } from './modules/orders/commerce.module.js';
 import { ShippingModule } from './modules/shipping/shipping.module.js';
 import { ContactModule } from './modules/contact/contact.module.js';
+import { CspReportsModule } from './modules/csp-reports/csp-reports.module.js';
 import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { OutboxModule } from './modules/outbox/outbox.module.js';
 import { IdempotencyModule } from './modules/idempotency/idempotency.module.js';
@@ -117,6 +118,7 @@ export const LOG_REDACT_PATHS = [
     CommerceModule,
     ReviewsModule,
     ContactModule,
+    CspReportsModule,
     HealthModule,
   ],
   providers: [
