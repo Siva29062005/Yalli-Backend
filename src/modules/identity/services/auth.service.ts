@@ -177,7 +177,8 @@ export class AuthService {
       },
     });
 
-    if (user.mfaEnabled) return this.startMfaChallenge(user.id, ctx);
+    if (user.mfaEnabled)
+      return this.startMfaChallenge(user.id, user.passwordChangedAt, ctx);
 
     const tokens = await this.createSession(
       user.id,
@@ -242,12 +243,14 @@ export class AuthService {
 
   private async startMfaChallenge(
     userId: string,
+    passwordChangedAt: Date,
     ctx: RequestContext,
   ): Promise<LoginResult> {
     const mfaToken = generateToken();
+    // `pw`: the password the challenge was earned with. A password reset or change kills every pending challenge.
     await this.store.set(
       mfaKey(sha256Hex(mfaToken)),
-      JSON.stringify({ userId, ip: ctx.ip }),
+      JSON.stringify({ userId, ip: ctx.ip, pw: passwordChangedAt.getTime() }),
       MFA_CHALLENGE_TTL,
     );
     return { kind: 'mfa', mfaToken, expiresIn: MFA_CHALLENGE_TTL };
@@ -275,8 +278,20 @@ export class AuthService {
         code: ErrorCode.MfaChallengeExpired,
       });
     }
+    const challenge = JSON.parse(raw) as { userId: string; pw?: number };
+    const user = await this.prisma.user.findUnique({
+      where: { id: challenge.userId },
+      select: { passwordChangedAt: true },
+    });
+    if (user?.passwordChangedAt.getTime() !== challenge.pw) {
+      await this.store.del(mfaKey(hash), `mfa:attempts:${hash}`);
+      throw new UnauthorizedException({
+        message: 'This sign-in has expired. Please sign in again.',
+        code: ErrorCode.MfaChallengeExpired,
+      });
+    }
     return {
-      userId: (JSON.parse(raw) as { userId: string }).userId,
+      userId: challenge.userId,
       consume: () => this.store.del(mfaKey(hash), `mfa:attempts:${hash}`),
     };
   }

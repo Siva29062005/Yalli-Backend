@@ -289,9 +289,14 @@ try {
   await page.getByText('Delhivery · TRK-A-777').waitFor();
   step('paid -> packing -> shipped with tracking, via the real state machine');
   await page.getByLabel('Add tracking update').selectOption('OUT_FOR_DELIVERY');
-  const earlier = new Date(Date.now() - 2 * 3600_000);
   const pad = (n) => String(n).padStart(2, '0');
-  await page.getByLabel('When it happened (optional)').fill(`${earlier.getFullYear()}-${pad(earlier.getMonth() + 1)}-${pad(earlier.getDate())}T${pad(earlier.getHours())}:${pad(earlier.getMinutes())}`);
+  const local = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  // a time before the shipment is refused (no backdated delivery), the form stays open with the reason
+  await page.getByLabel('When it happened (optional)').fill(local(new Date(Date.now() - 2 * 3600_000)));
+  await page.getByRole('button', { name: 'Add update' }).click();
+  await page.getByText(/cannot be earlier than the shipment/i).waitFor();
+  // the current minute (the field has minute precision; the server compares at the same precision)
+  await page.getByLabel('When it happened (optional)').fill(local(new Date()));
   await page.getByRole('button', { name: 'Add update' }).click();
   await page.getByText('Tracking update added.').waitFor();
   await page.getByText(/out for delivery/).waitFor();

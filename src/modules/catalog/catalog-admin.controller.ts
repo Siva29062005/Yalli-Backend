@@ -234,7 +234,8 @@ export class CatalogAdminController {
 
   @Delete('variants/:id')
   @HttpCode(200)
-  @RequirePermissions(Permission.ProductsUpdate)
+  // deleting is deleting (products.delete), as for whole products: an editor (products.update) cannot remove a variant
+  @RequirePermissions(Permission.ProductsDelete)
   async deleteVariant(
     @CurrentPrincipal() a: AuthPrincipal,
     @Param('id', { schema: uuidParam }) id: string,

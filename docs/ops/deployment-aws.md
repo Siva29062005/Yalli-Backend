@@ -32,7 +32,9 @@ HTTPS-only CORS origins, `DATABASE_SSL=true`, Turnstile captcha + a real secret 
 also on staging: create a Turnstile site with the staging hostname), breached-password check, Secure cookies, a real
 notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage, an https `MEDIA_BASE_URL` and
 `FRONTEND_BASE_URL` (not localhost), `REPORTING_DATABASE_URL`, `rediss://` and `amqps://` (TLS), Razorpay keys + webhook
-secret, `SELLER_GSTIN`, `EVENT_BUS_DRIVER=rabbitmq`, no Swagger, no pretty logs.
+secret, `SELLER_GSTIN`, `EVENT_BUS_DRIVER=rabbitmq`, no Swagger, no pretty logs, no `DATABASE_MIGRATION_URL` in the
+app's environment, and a database login that could UPDATE/DELETE the append-only tables (checked at start-up, repair in
+`docs/ops/database-roles.md`).
 
 Database TLS: the app verifies the RDS certificate; the images carry Amazon's RDS CA bundle (pinned by checksum in the
 root `Dockerfile`, `NODE_EXTRA_CA_CERTS`). Prisma's migration engine has its own TLS (it ignores that variable, does not

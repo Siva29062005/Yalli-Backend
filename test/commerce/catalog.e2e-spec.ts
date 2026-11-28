@@ -8,6 +8,7 @@ import {
   Scenario,
   authed,
   createTestApp,
+  type Session,
   type TestContext,
   freshIp,
 } from '../support/test-app.js';
@@ -217,6 +218,15 @@ describe('listing: filters, sorting, pagination', () => {
     ).toEqual(['Child Item', 'Parent Item']);
     expect(names(await list({ category: child.slug }))).toEqual(['Child Item']);
     expect(names(await list({ brand: brand.slug }))).toEqual(['Child Item']);
+    // a published product whose only variant is switched off is not on the page, so it is not counted either
+    const hidden = await fx.product({
+      name: 'Hidden Item',
+      categoryIds: [parent.id],
+    });
+    await ctx.prisma.productVariant.update({
+      where: { id: hidden.variant.id },
+      data: { isActive: false },
+    });
     const tree = (
       await ctx.http().get('/api/v1/catalog/categories').expect(200)
     ).body.data as {
@@ -225,7 +235,7 @@ describe('listing: filters, sorting, pagination', () => {
       children: { slug: string; productCount: number }[];
     }[];
     const node = tree.find((t) => t.slug === parent.slug)!;
-    expect(node.productCount).toBe(2);
+    expect(node.productCount).toBe(2); // not 3: the hidden item is left out like on the listing
     expect(node.children).toEqual([
       expect.objectContaining({ slug: child.slug, productCount: 1 }),
     ]);
@@ -542,6 +552,26 @@ describe('admin catalogue management', () => {
           .send({ priceMinor: 40_000 })
       ).status,
     ).toBe(400);
+  });
+
+  it('deleting a variant needs products.delete: an editor (PRODUCT_MANAGER) is refused, an ADMIN may', async () => {
+    const pm = await s.staff('PRODUCT_MANAGER');
+    const admin = await s.staff('ADMIN');
+    const { variant } = await fx.product({ priceMinor: 10_000 });
+    const del = (actor: Session) =>
+      ctx
+        .http()
+        .delete(`/api/v1/admin/variants/${variant.id}`)
+        .set(authed(actor));
+    expect((await del(pm)).status).toBe(403);
+    expect(
+      (
+        await ctx.prisma.productVariant.findUniqueOrThrow({
+          where: { id: variant.id },
+        })
+      ).deletedAt,
+    ).toBeNull();
+    expect((await del(admin)).status).toBe(200);
   });
 
   it('roles without catalogue permissions are refused (ORDER_MANAGER cannot create, customer cannot read admin views)', async () => {

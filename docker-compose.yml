@@ -72,6 +72,12 @@ services:
     env_file: .env
     command: ["node", "dist/cli/seed.js"]
     environment:
+      # .env also holds the migrator and superuser credentials (for migrate and postgres): never give them to the app.
+      DATABASE_MIGRATION_URL: ""
+      POSTGRES_SUPERUSER_PASSWORD: ""
+      POSTGRES_MIGRATOR_PASSWORD: ""
+      POSTGRES_APP_PASSWORD: ""
+      POSTGRES_REPORTING_PASSWORD: ""
       NODE_ENV: development
       LOG_PRETTY: "false"
       DATABASE_URL: postgresql://yalli_app:${POSTGRES_APP_PASSWORD}@postgres:5432/yalli
@@ -100,6 +106,12 @@ services:
       # Local smoke test of the production IMAGE. NODE_ENV stays "development" on purpose: the real
       # production guards (https CORS origins, TLS to the database) would - correctly - refuse to
       # start against this plain-TCP local Postgres. Production deploys run with NODE_ENV=production.
+      # .env also holds the migrator and superuser credentials (for migrate and postgres): never give them to the app.
+      DATABASE_MIGRATION_URL: ""
+      POSTGRES_SUPERUSER_PASSWORD: ""
+      POSTGRES_MIGRATOR_PASSWORD: ""
+      POSTGRES_APP_PASSWORD: ""
+      POSTGRES_REPORTING_PASSWORD: ""
       NODE_ENV: development
       LOG_PRETTY: "false"
       DATABASE_URL: postgresql://yalli_app:${POSTGRES_APP_PASSWORD}@postgres:5432/yalli

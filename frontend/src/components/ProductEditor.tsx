@@ -421,7 +421,7 @@ function VariantFields({ draft, onChange, isNew }: { draft: VariantDraft; onChan
 }
 
 function VariantRow({ variant, onChanged }: { variant: Variant; onChanged: () => void }) {
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
   const [draft, setDraft] = useState(() => draftFrom(variant));
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -469,7 +469,7 @@ function VariantRow({ variant, onChanged }: { variant: Variant; onChanged: () =>
         </div>
         <div className="flex gap-2">
           <button type="button" className={adminGhostButton} onClick={() => setOpen((o) => !o)}>{open ? 'Close' : 'Edit'}</button>
-          <button type="button" className={adminDangerButton} disabled={busy} onClick={() => void remove()}>Delete</button>
+          {can('products.delete') && <button type="button" className={adminDangerButton} disabled={busy} onClick={() => void remove()}>Delete</button>}
         </div>
       </div>
       {error && <Alert kind="error">{error}</Alert>}

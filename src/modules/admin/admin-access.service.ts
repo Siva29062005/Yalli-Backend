@@ -315,10 +315,55 @@ export class AdminAccessService {
         code: ErrorCode.Conflict,
       });
     }
-    await this.prisma.user.update({
-      where: { id: target.id },
-      data: { status },
-    });
+    // Serializable, like revokeRole: two SUPER_ADMINs suspending each other at the same moment cannot both succeed and
+    // leave no active SUPER_ADMIN (and no way back in). The acting person must still be active themselves.
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          const me = await tx.user.findUnique({
+            where: { id: actor.userId },
+            select: { status: true },
+          });
+          if (me?.status !== 'ACTIVE')
+            throw new ForbiddenException(
+              'You do not have permission to perform this action',
+            );
+          if (status === 'SUSPENDED') {
+            const otherActiveSuperAdmins = await tx.userRole.count({
+              where: {
+                role: { name: RoleName.SuperAdmin },
+                userId: { not: target.id },
+                user: { status: 'ACTIVE' },
+              },
+            });
+            const targetIsSuperAdmin =
+              (await tx.userRole.count({
+                where: {
+                  userId: target.id,
+                  role: { name: RoleName.SuperAdmin },
+                },
+              })) > 0;
+            if (targetIsSuperAdmin && otherActiveSuperAdmins === 0)
+              throw new ConflictException({
+                message: 'The last active SUPER_ADMIN cannot be suspended',
+                code: ErrorCode.Conflict,
+              });
+          }
+          await tx.user.update({
+            where: { id: target.id },
+            data: { status },
+          });
+        },
+        { isolationLevel: 'Serializable' },
+      );
+    } catch (err) {
+      if (isSerializationConflict(err))
+        throw new ConflictException({
+          message: 'Another change was in progress. Please retry.',
+          code: ErrorCode.Conflict,
+        });
+      throw err;
+    }
     await this.authz.invalidate(target.id);
     if (status === 'SUSPENDED')
       await this.sessions.revokeAllForUser(target.id, 'SUSPENDED');

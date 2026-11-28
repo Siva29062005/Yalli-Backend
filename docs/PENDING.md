@@ -290,64 +290,64 @@ Money and orders
 - [x] (2026-11-27, Phase 10: quote unpurchasable, place refused with ORDER_TOTAL_TOO_LOW) Orders totalling 0 (or under ₹1) can be placed (a FIXED coupon larger than the cart, free shipping) but
       `payments_amount_chk` (> 0) makes `POST /payments` a 500 while stock and the coupon stay held. Refuse at checkout
       (minimum payable ₹1) or cap fixed coupons.
-- [ ] Releasing refund capacity locks REFUND/PAYMENT before ORDER (`refund.service.ts` reject/finishFailed → `recompute`):
+- [x] (2026-11-28, Phase 16: every refund transaction locks the ORDER first) Releasing refund capacity locks REFUND/PAYMENT before ORDER (`refund.service.ts` reject/finishFailed → `recompute`):
       deadlock (40P01) against `requestInTx` / `applyProviderPayment` on the same order. Lock the order first.
-- [ ] Refund webhook marks the event id processed before the work (`payment.service.ts`): a failure is acknowledged and
+- [x] (2026-11-28, Phase 16: one transaction for event id + work; a mismatch is reported once and left to a person, runbook) Refund webhook marks the event id processed before the work (`payment.service.ts`): a failure is acknowledged and
       only the reconcile poll catches it. On an amount mismatch the captured money is not auto-refunded and the payment is
       re-reconciled and re-audited every pass for 48 h.
 - [x] (2026-11-27, Phase 9) `captureIfAuthorized` captures every authorized candidate (no break); a second capture is only audited.
-- [ ] Creating a refund request is not audited (`commerce.controllers.ts`, `void ctx`).
+- [x] (2026-11-28, Phase 16: `refund.requested`, once per request) Creating a refund request is not audited (`commerce.controllers.ts`, `void ctx`).
 - [x] (2026-11-27, Phase 9) Outbox: `run-once.ts` treated any P2002 from the work as "already processed" (now ON
       CONFLICT DO NOTHING); `order-events.consumer.ts` read through `this.prisma` inside the de-dupe transaction (now `tx`).
-- [ ] Outbox relay: the comment says it stops at the first failure but the loop continues (event ordering).
-- [ ] Staff can backdate delivery (`occurredAt` has only a future bound, `shipping.service.ts`), closing the customer's
+- [x] (2026-11-28, Phase 16: only the oldest unpublished event of each aggregate is claimed; index migration) Outbox relay: the comment says it stops at the first failure but the loop continues (event ordering).
+- [x] (2026-11-28, Phase 16) Staff can backdate delivery (`occurredAt` has only a future bound, `shipping.service.ts`), closing the customer's
       return window or putting delivery before shipping. Require `occurredAt >= shippedAt` and the previous event.
-- [ ] Shipping methods (fee, free-above, active) are editable with `shipments.manage` (ORDER_MANAGER); deactivating all
+- [x] (2026-11-28, Phase 16: changes to fee, free-above and active need pricing.update; the console hides them) Shipping methods (fee, free-above, active) are editable with `shipments.manage` (ORDER_MANAGER); deactivating all
       methods makes delivery free. Require `pricing.update` for fee fields.
-- [ ] Restock always goes to the default warehouse although reservations can come from any (`inventory.service.ts`).
+- [x] (2026-11-27, Phase 11: back to the warehouse it was reserved from) Restock always goes to the default warehouse although reservations can come from any (`inventory.service.ts`).
 
 Identity and access
-- [ ] Per-account MFA limit is a fixed 15-minute window of 10 that resets (`mfa.service.ts`): with a known password,
+- [x] (2026-11-28, Phase 16: daily cap of 30 on top, the owner is emailed `MFA_LOCKED`) Per-account MFA limit is a fixed 15-minute window of 10 that resets (`mfa.service.ts`): with a known password,
       about 960 guesses a day (~8% success a month), and the owner is not told. Add a daily cap / escalating lockout and
       email the owner on `MfaLocked` (correct password + wrong codes = password compromised).
 - [x] (2026-11-27) Granting a non-customer role (`assignRole`) signs the person out everywhere.
-- [ ] Enabling MFA (`confirm`) leaves older password-only sessions alive. Revoke the other sessions, as password change
+- [x] (2026-11-28, Phase 16) Enabling MFA (`confirm`) leaves older password-only sessions alive. Revoke the other sessions, as password change
       and role revoke already do.
 - [x] (2026-11-28, Phase 14) Turnstile verification does not check the `action` and `hostname` in Cloudflare's answer (`captcha.adapters.ts`):
       a token solved for one form or host is accepted on another. Pass the expected action and compare both.
-- [ ] An authorization whose capture the provider keeps rejecting keeps its order from expiring until the provider voids
+- [x] (2026-11-28, Phase 16: cancelled an hour after the payment window) An authorization whose capture the provider keeps rejecting keeps its order from expiring until the provider voids
       it (days). Cap it: after the payment window plus a margin, cancel and let the authorization lapse.
-- [ ] Two SUPER_ADMINs can suspend each other at once (`admin-access.service.ts` `setStatus`, no transaction or
+- [x] (2026-11-28, Phase 16: serializable, last active SUPER_ADMIN kept, the actor must be active) Two SUPER_ADMINs can suspend each other at once (`admin-access.service.ts` `setStatus`, no transaction or
       last-holder check), leaving none and no bootstrap path. Serialise it like `revokeRole`.
-- [ ] Account deletion keeps `ip`, `userAgent` and `deviceLabel` in `user_sessions`, against the privacy page; scrub them.
-- [ ] Re-auth for export/delete calls `verifyTotp` directly (skips the account MFA counter); a password change leaves an
+- [x] (2026-11-28, Phase 16) Account deletion keeps `ip`, `userAgent` and `deviceLabel` in `user_sessions`, against the privacy page; scrub them.
+- [x] (2026-11-28, Phase 16: all five) Re-auth for export/delete calls `verifyTotp` directly (skips the account MFA counter); a password change leaves an
       outstanding reset link usable; reset works on a suspended account; a pending login challenge survives a password
       reset; `@RequirePermissions()` with no names would mean "any signed-in user" (reject at boot).
-- [ ] Admin and storefront share one refresh cookie (`yalli_rt`): signing in on one signs the other out.
+- [x] (2026-11-28, Phase 16: the console uses `X-Auth-Mode: cookie-admin` and its own `yalli_rt_admin`/`yalli_csrf_admin`) Admin and storefront share one refresh cookie (`yalli_rt`): signing in on one signs the other out.
 
 Platform
 - [x] (2026-11-28, Phase 14: global default in `app.setup.ts`) No `Cache-Control: no-store` on authenticated or token-bearing responses (login, refresh, MFA enrolment secret,
       recovery codes, `/me`, export). Add a global default before CloudFront sits in front of the API.
-- [ ] Dev compose `app` and `seed` load the whole `.env`, so the container receives `DATABASE_MIGRATION_URL`, the
+- [x] (2026-11-28, Phase 16: the migrator/superuser values are emptied for both; production refuses a DATABASE_MIGRATION_URL) Dev compose `app` and `seed` load the whole `.env`, so the container receives `DATABASE_MIGRATION_URL`, the
       migrator and the Postgres superuser passwords (against "the app never receives the migrator URL"). Pass an
       explicit variable list.
 - [x] (2026-11-28, Phase 14: all four refused; the RDS CA bundle is in the images) Production env validation does not refuse: `FRONTEND_BASE_URL` left at `http://localhost:3001` (emailed reset
       links), a missing `REPORTING_DATABASE_URL` (reports fall back to the app role), non-TLS `redis://` / `amqp://`.
       RDS needs its CA bundle (`NODE_EXTRA_CA_CERTS`) because `rejectUnauthorized` is on; do not turn verification off.
-- [ ] The immutability REVOKEs in migrations run only `IF EXISTS (yalli_app)`; on RDS a role created later, or a broad
+- [x] (2026-11-28, Phase 16: start-up privilege check, production refuses; repair SQL in database-roles.md) The immutability REVOKEs in migrations run only `IF EXISTS (yalli_app)`; on RDS a role created later, or a broad
       `GRANT … ON ALL TABLES`, gives back UPDATE/DELETE. Document the role SQL in `database-roles.md` or make it
       unconditional.
-- [ ] Log redaction path `*.code` probably also hides `err.code` (P2002, ECONNREFUSED) in error logs; Prisma validation
+- [x] (2026-11-28, Phase 16: precise paths; Prisma validation errors logged without their text) Log redaction path `*.code` probably also hides `err.code` (P2002, ECONNREFUSED) in error logs; Prisma validation
       errors can carry argument values in the message (unverified).
-- [ ] Dev: `.env.example` and `setup-dev-env.sh` still use `localhost:5173` for CORS and `FRONTEND_BASE_URL`; the
+- [x] (2026-11-28, Phase 16: 3001; an existing .env keeps its value, change it by hand) Dev: `.env.example` and `setup-dev-env.sh` still use `localhost:5173` for CORS and `FRONTEND_BASE_URL`; the
       frontend runs on 3001 and the CSRF Origin check needs the storefront origin listed (also in production; document it).
 - [x] (2026-11-28, Phase 14: override `effect@3.22.4`, `npm audit` clean) `effect` (via the Prisma CLI, a dev dependency) has a ReDoS advisory (GHSA-7589-6fvf-x4pw); not reachable from
       requests. Add an npm override to ≥ 3.22.1 or wait for Prisma.
 
 Catalogue and content
 - [x] (2026-11-27, Phase 9) Cart merge can exceed 50 lines (count read once, `cart.service.ts`); checkout has no line cap.
-- [ ] "Verified purchase" stays after the item was returned and refunded (`hasReceivedProduct`).
-- [ ] `DELETE /admin/variants/:id` needs `products.update`, not `products.delete`; category counts include products
+- [x] (2026-11-28, Phase 16: net of REFUNDED returns, for writing and for the badge) "Verified purchase" stays after the item was returned and refunded (`hasReceivedProduct`).
+- [x] (2026-11-28, Phase 16: products.delete; category counts need an active variant) `DELETE /admin/variants/:id` needs `products.update`, not `products.delete`; category counts include products
       with no active variant. (Fixed 2026-11-27, Phase 11: the import CLI now checks products.publish for `--publish`
       and inventory.adjust for stock, like the console.)
 

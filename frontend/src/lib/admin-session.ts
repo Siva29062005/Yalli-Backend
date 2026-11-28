@@ -7,6 +7,7 @@ const session = createTokenSession({
   csrfKey: 'yalli_admin_csrf',
   deviceLabel: 'Yalli staff workspace',
   expiredEvent: 'admin-session-expired',
+  authMode: 'cookie-admin',
 });
 
 export interface AdminIdentity {

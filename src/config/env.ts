@@ -470,6 +470,16 @@ export const envSchema = z
 export type Env = z.infer<typeof envSchema>;
 
 export function validateEnv(raw: Record<string, unknown>): Env {
+  // The app logs in with DML rights only: in production it must never even RECEIVE the migrator's credentials
+  // (development keeps them in .env for the Prisma CLI).
+  if (
+    raw['NODE_ENV'] === 'production' &&
+    typeof raw['DATABASE_MIGRATION_URL'] === 'string' &&
+    raw['DATABASE_MIGRATION_URL'] !== ''
+  )
+    throw new Error(
+      'Invalid environment configuration:\n  - DATABASE_MIGRATION_URL: must not be given to the application (only the migration task)',
+    );
   const result = envSchema.safeParse(raw);
   if (!result.success) {
     // Report variable names + rule messages only; never the offending values.

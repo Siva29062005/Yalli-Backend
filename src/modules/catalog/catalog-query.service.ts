@@ -356,6 +356,8 @@ export class CatalogQueryService {
         FROM closure c
         JOIN product_categories pc ON pc.category_id = c.descendant
         JOIN products p ON p.id = pc.product_id AND p.status = 'PUBLISHED' AND p.deleted_at IS NULL
+          -- same visibility as the listing (and the brand counts): at least one active variant
+          AND EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id AND pv.is_active AND pv.deleted_at IS NULL)
         GROUP BY c.ancestor`,
     ]);
     const countOf = new Map(counts.map((c) => [c.id, c.n]));

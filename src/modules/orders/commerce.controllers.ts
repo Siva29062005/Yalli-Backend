@@ -816,7 +816,21 @@ export class AdminRefundsController {
     );
     setIdempotent(res, r.replayed);
     res.status(r.status);
-    void ctx;
+    // a replay of the same request is not a new request: audited once, after the transaction (never inside it)
+    if (!r.replayed && r.status === 201)
+      await this.audit.record({
+        action: AuditAction.RefundRequested,
+        outcome: 'SUCCESS',
+        actorId: a.userId,
+        ...ctx,
+        resourceType: 'refund',
+        resourceId: r.body.id,
+        metadata: {
+          orderId: dto.orderId,
+          kind: dto.kind,
+          amountMinor: r.body.amountMinor,
+        },
+      });
     return r.body;
   }
 

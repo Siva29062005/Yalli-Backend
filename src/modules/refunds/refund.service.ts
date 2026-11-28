@@ -317,6 +317,8 @@ export class RefundService {
     const refund = await this.prisma.$transaction(async (tx) => {
       const r = await tx.refund.findUnique({ where: { id: refundId } });
       if (!r) throw new NotFoundException('Refund not found');
+      // Lock order ORDER -> PAYMENT in every refund transaction (requestInTx, the payment webhook): never the reverse.
+      await this.lifecycle.lock(tx, r.orderId);
       const moved = await tx.refund.updateMany({
         where: { id: refundId, status: 'PENDING_APPROVAL' },
         data: {
@@ -392,61 +394,79 @@ export class RefundService {
     }
   }
 
-  /** Marks a refund finished by the provider (immediate response, webhook or reconciliation). Idempotent. */
+  /** Marks a refund finished by the provider (immediate response or reconciliation). Idempotent. */
   async applyProviderRefund(
     pr: ProviderRefund,
   ): Promise<'processed' | 'failed' | 'pending' | 'unknown'> {
-    let mismatchRefundId: string | undefined;
-    const result = await this.prisma.$transaction(async (tx) => {
-      const refund = await tx.refund.findFirst({
-        where: {
-          OR: [
-            { providerRefundId: pr.id },
-            { receipt: pr.receipt ?? '__none__' },
-          ],
-        },
-      });
-      if (!refund) return 'unknown';
-      if (pr.amountMinor !== refund.amountMinor) {
-        this.logger.error(
-          {
-            refundId: refund.id,
-            expected: refund.amountMinor,
-            got: pr.amountMinor,
-          },
-          'Provider refund amount mismatch',
-        );
-        mismatchRefundId = refund.id; // audited AFTER the transaction (never take a second connection inside one)
-        return 'unknown';
-      }
-      if (!refund.providerRefundId)
-        await tx.refund.update({
-          where: { id: refund.id },
-          data: { providerRefundId: pr.id },
-        });
-      if (pr.status === 'processed') {
-        await this.finishProcessed(tx, refund); // idempotent: a repeat is a no-op
-        return 'processed';
-      }
-      if (pr.status === 'failed') {
-        await this.finishFailed(
-          tx,
-          refund,
-          'The payment provider reported the refund as failed',
-        );
-        return 'failed';
-      }
-      return 'pending';
-    });
-    if (mismatchRefundId)
-      await this.audit.record({
-        action: AuditAction.RefundFailed,
-        outcome: 'FAILURE',
-        resourceType: 'refund',
-        resourceId: mismatchRefundId,
-        metadata: { reason: 'amount_mismatch' },
-      });
+    const { result, mismatchRefundId } = await this.prisma.$transaction((tx) =>
+      this.applyProviderRefundInTx(tx, pr),
+    );
+    await this.auditMismatch(mismatchRefundId);
     return result;
+  }
+
+  /**
+   * The same inside the caller's transaction (the refund webhook records its event id in it). A provider amount that
+   * differs from ours is NOT applied; the caller audits it AFTER the transaction (`auditMismatch`).
+   */
+  async applyProviderRefundInTx(
+    tx: Tx,
+    pr: ProviderRefund,
+  ): Promise<{
+    result: 'processed' | 'failed' | 'pending' | 'unknown';
+    mismatchRefundId?: string;
+  }> {
+    const refund = await tx.refund.findFirst({
+      where: {
+        OR: [
+          { providerRefundId: pr.id },
+          { receipt: pr.receipt ?? '__none__' },
+        ],
+      },
+    });
+    if (!refund) return { result: 'unknown' };
+    await this.lifecycle.lock(tx, refund.orderId); // ORDER first, before the refund and payment rows
+    if (pr.amountMinor !== refund.amountMinor) {
+      this.logger.error(
+        {
+          refundId: refund.id,
+          expected: refund.amountMinor,
+          got: pr.amountMinor,
+        },
+        'Provider refund amount mismatch',
+      );
+      return { result: 'unknown', mismatchRefundId: refund.id };
+    }
+    if (!refund.providerRefundId)
+      await tx.refund.update({
+        where: { id: refund.id },
+        data: { providerRefundId: pr.id },
+      });
+    if (pr.status === 'processed') {
+      await this.finishProcessed(tx, refund); // idempotent: a repeat is a no-op
+      return { result: 'processed' };
+    }
+    if (pr.status === 'failed') {
+      await this.finishFailed(
+        tx,
+        refund,
+        'The payment provider reported the refund as failed',
+      );
+      return { result: 'failed' };
+    }
+    return { result: 'pending' };
+  }
+
+  /** Audits a provider refund amount mismatch (outside any transaction: never a second connection inside one). */
+  async auditMismatch(refundId: string | undefined): Promise<void> {
+    if (!refundId) return;
+    await this.audit.record({
+      action: AuditAction.RefundFailed,
+      outcome: 'FAILURE',
+      resourceType: 'refund',
+      resourceId: refundId,
+      metadata: { reason: 'amount_mismatch' },
+    });
   }
 
   private async fail(refundId: string, reason: string): Promise<void> {
@@ -454,11 +474,13 @@ export class RefundService {
       const refund = await tx.refund.findUniqueOrThrow({
         where: { id: refundId },
       });
+      await this.lifecycle.lock(tx, refund.orderId);
       await this.finishFailed(tx, refund, reason);
     });
   }
 
   private async finishProcessed(tx: Tx, refund: Refund): Promise<boolean> {
+    await this.lifecycle.lock(tx, refund.orderId); // re-entrant: callers normally hold it already
     const done = await tx.refund.updateMany({
       where: { id: refund.id, status: { in: ['PROCESSING', 'APPROVED'] } },
       data: { status: 'PROCESSED', processedAt: new Date() },
@@ -500,6 +522,7 @@ export class RefundService {
     refund: Refund,
     reason: string,
   ): Promise<void> {
+    await this.lifecycle.lock(tx, refund.orderId); // re-entrant: callers normally hold it already
     const done = await tx.refund.updateMany({
       where: { id: refund.id, status: { in: ['PROCESSING', 'APPROVED'] } },
       data: { status: 'FAILED', failureReason: reason.slice(0, 300) },

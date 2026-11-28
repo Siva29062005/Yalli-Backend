@@ -11,6 +11,14 @@ hand: fix the cause; the next reconcile pass applies the payment (amount and cur
 401 = signature mismatch → the webhook secret differs (see key-rotation). 5xx/503 = we could not ask Razorpay (their outage or
 our egress): Razorpay retries; no data is lost; the reconcile worker backs it up.
 
+## "PAYMENT AMOUNT MISMATCH" (alarm)
+Razorpay reports a payment for another amount than the order (or another currency). The order is NOT marked paid; the
+payment gets `failure_code = AMOUNT_MISMATCH` and is reported ONCE (audit `payment.amount_mismatch`, one log line), then
+left alone by the reconcile worker; the unpaid order expires as usual (stock back on the shelf). If Razorpay shows the
+money as CAPTURED, refund it there in full (Razorpay dashboard → the payment → Refund), and note it in the order's
+history; an authorization that was never captured lapses by itself. It is never refunded automatically: that would
+bypass the refund rules (capacity, two people).
+
 ## Refund stuck (APPROVED / PROCESSING for > 10 min)
 The worker resolves it by looking the refund up at Razorpay by receipt before it ever resends. If the order shows
 `REFUND_PENDING` with a FAILED refund after a **cancellation**, the provider rejected the automatic refund (often: insufficient

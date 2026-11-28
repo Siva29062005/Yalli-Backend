@@ -61,6 +61,12 @@ function matchTotpStep(
 /** Wrong second-factor attempts allowed per account per window, across all logins and devices. */
 export const MFA_FAIL_LIMIT = 10;
 export const MFA_FAIL_WINDOW_SECONDS = 15 * 60;
+/**
+ * A daily cap on top: the 15-minute window alone allowed about 960 guesses a day (an 8% chance a month with a known
+ * password). With 30 a day the chance is under 0.1% a month.
+ */
+export const MFA_DAILY_FAIL_LIMIT = 30;
+export const MFA_DAILY_FAIL_WINDOW_SECONDS = 24 * 3600;
 
 @Injectable()
 export class MfaService {
@@ -206,6 +212,13 @@ export class MfaService {
         data: { mfaEnabled: true },
       }),
     ]);
+    // Sessions opened with the password alone predate the second factor: sign every OTHER device out (as a password
+    // change does), so a thief who already had a session does not keep it.
+    await this.sessions.revokeAllForUser(
+      user.id,
+      'MFA_ENABLED',
+      principal.sessionId,
+    );
     await this.audit.record({
       action: AuditAction.MfaEnabled,
       outcome: 'SUCCESS',
@@ -281,23 +294,39 @@ export class MfaService {
     // must not become an unlimited number of code guesses. Every attempt is counted atomically BEFORE it is checked and the
     // counter is cleared only by a success, so concurrent guesses cannot slip past the limit.
     const failKey = `mfa:fail:${userId}`;
-    const { count, ttlSeconds } = await this.store.incr(
-      failKey,
-      MFA_FAIL_WINDOW_SECONDS,
-    );
-    if (count > MFA_FAIL_LIMIT) {
-      if (count === MFA_FAIL_LIMIT + 1)
+    const dayKey = `mfa:fail:day:${userId}`;
+    const [win, day] = await Promise.all([
+      this.store.incr(failKey, MFA_FAIL_WINDOW_SECONDS),
+      this.store.incr(dayKey, MFA_DAILY_FAIL_WINDOW_SECONDS),
+    ]);
+    const overWindow = win.count > MFA_FAIL_LIMIT;
+    const overDay = day.count > MFA_DAILY_FAIL_LIMIT;
+    if (overWindow || overDay) {
+      // the first refusal of each lock: audited, and the owner is told (correct password + wrong codes = the password
+      // is probably known to someone else)
+      if (
+        (overWindow && win.count === MFA_FAIL_LIMIT + 1) ||
+        (overDay && day.count === MFA_DAILY_FAIL_LIMIT + 1)
+      ) {
         await this.audit.record({
           action: AuditAction.MfaLocked,
           outcome: 'DENIED',
           actorId: userId,
           ...ctx,
+          metadata: { scope: overDay ? 'day' : 'window' },
         });
+        await this.alertOwner(userId);
+      }
       throw apiError(
         429,
         ErrorCode.TooManyRequests,
         'Too many incorrect codes. Please try again later.',
-        { retryAfterSeconds: ttlSeconds },
+        {
+          retryAfterSeconds: Math.max(
+            overWindow ? win.ttlSeconds : 0,
+            overDay ? day.ttlSeconds : 0,
+          ),
+        },
       );
     }
     const ok = factor.code
@@ -305,7 +334,8 @@ export class MfaService {
       : factor.recoveryCode
         ? await this.verifyRecoveryCode(userId, factor.recoveryCode, ctx)
         : false;
-    if (ok) await this.store.del(failKey);
+    if (ok)
+      await this.store.del(failKey); // the daily count stays: it is a cap on guesses per day, not per streak
     else
       await this.audit.record({
         action: AuditAction.MfaChallengeFailed,
@@ -314,6 +344,27 @@ export class MfaService {
         ...ctx,
       });
     return ok;
+  }
+
+  /** Best-effort security email (never throws): an account-security alert must not break the sign-in answer. */
+  private async alertOwner(userId: string): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          email: true,
+          customer: { select: { firstName: true, lastName: true } },
+        },
+      });
+      if (!user) return;
+      await this.notifications.send({
+        type: 'MFA_LOCKED',
+        email: user.email,
+        name: displayName(user.customer),
+      });
+    } catch (err) {
+      this.logger.error({ err: (err as Error).name }, 'MFA lock alert failed');
+    }
   }
 
   // ------------------------------------------------------------------------------- management

@@ -182,6 +182,36 @@ describe('change password', () => {
     expect((await s.login(a.email, NEW_PASSWORD)).status).toBe(200);
   });
 
+  it('changing the password kills a reset link sent earlier', async () => {
+    const a = await s.session();
+    await forgot(a.email).expect(202);
+    const token = await resetToken(a.email);
+    await ctx
+      .http()
+      .post('/api/v1/auth/change-password')
+      .set(authed(a))
+      .send({ currentPassword: a.password, newPassword: NEW_PASSWORD })
+      .expect(200);
+    expect((await reset(token, 'Third-Strong-Passphrase-99')).status).toBe(400);
+    expect((await s.login(a.email, NEW_PASSWORD)).status).toBe(200);
+  });
+
+  it('a reset link issued before the account was suspended does not work', async () => {
+    const a = await s.session();
+    await forgot(a.email).expect(202);
+    const token = await resetToken(a.email);
+    await ctx.prisma.user.update({
+      where: { id: a.userId },
+      data: { status: 'SUSPENDED' },
+    });
+    expect((await reset(token, NEW_PASSWORD)).status).toBe(400);
+    const row = await ctx.prisma.user.findUniqueOrThrow({
+      where: { id: a.userId },
+    });
+    expect(row.status).toBe('SUSPENDED');
+    expect(await ctx.passwords.verify(row.passwordHash, a.password)).toBe(true);
+  });
+
   it('applies the password policy and requires authentication', async () => {
     const a = await s.session();
     expect(
@@ -323,6 +353,22 @@ describe('multi-factor authentication (TOTP)', () => {
     expect(JSON.stringify(codes)).not.toContain(ok.body.data.recoveryCodes[0]);
   });
 
+  it('turning MFA on signs every OTHER device out (sessions opened with the password alone)', async () => {
+    const a = await s.session();
+    const ip = freshIp();
+    const other = await s.login(a.email, a.password, ip);
+    const otherToken = other.body.data.accessToken as string;
+    const me = (accessToken: string, from: string) =>
+      ctx
+        .http()
+        .get('/api/v1/me')
+        .set(authed({ accessToken, ip: from }));
+    expect((await me(otherToken, ip)).status).toBe(200);
+    await s.enableMfa(a);
+    expect((await me(otherToken, ip)).status).toBe(401);
+    expect((await me(a.accessToken, a.ip)).status).toBe(200); // the device that turned it on stays signed in
+  });
+
   it('login then needs a second factor: no tokens are issued by the password step alone', async () => {
     const a = await s.session();
     const { secret } = await s.enableMfa(a);
@@ -455,6 +501,80 @@ describe('multi-factor authentication (TOTP)', () => {
     const ok = await attempt(await challenge(), totp(secret, 0));
     expect(ok.status).toBe(200);
     expect(ok.body.data.accessToken).toBeTruthy();
+  });
+
+  it('a daily cap holds across 15-minute windows, and the owner is emailed when a lock starts', async () => {
+    const a = await s.session();
+    const { secret } = await s.enableMfa(a);
+    const attempt = async (code: string) =>
+      ctx
+        .http()
+        .post('/api/v1/auth/mfa/verify')
+        .set('X-Forwarded-For', freshIp())
+        .send({
+          mfaToken: (await s.login(a.email, a.password, freshIp())).body.data
+            .mfaToken as string,
+          code,
+        });
+    // 30 failures earlier today (simulated: the 15-minute windows have passed)
+    await ctx.store.incr(`mfa:fail:day:${a.userId}`, 24 * 3600);
+    for (let i = 1; i < 30; i++)
+      await ctx.store.incr(`mfa:fail:day:${a.userId}`, 24 * 3600);
+    const locked = await attempt(totp(secret, 0)); // the right code, but the day is used up
+    expect(locked.status).toBe(429);
+    expect(locked.body.error.details?.retryAfterSeconds ?? 1).toBeGreaterThan(
+      0,
+    );
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'auth.mfa.locked', actorId: a.userId },
+      }),
+    ).toBe(1);
+    await waitFor(() => ctx.notifier.last('MFA_LOCKED', a.email));
+    // further refusals do not email again
+    expect((await attempt('000001')).status).toBe(429);
+    expect(
+      ctx.notifier.sent.filter(
+        (m) => m.type === 'MFA_LOCKED' && 'email' in m && m.email === a.email,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('a pending sign-in challenge dies when the password is reset (a thief with the old password loses it)', async () => {
+    const a = await s.session();
+    const { secret } = await s.enableMfa(a);
+    const challenge = (await s.login(a.email, a.password, freshIp())).body.data
+      .mfaToken as string;
+    await forgot(a.email).expect(202);
+    await reset(await resetToken(a.email), NEW_PASSWORD).expect(200);
+    const late = await ctx
+      .http()
+      .post('/api/v1/auth/mfa/verify')
+      .set('X-Forwarded-For', freshIp())
+      .send({ mfaToken: challenge, code: totp(secret, 0) });
+    expect(late.status).toBe(401);
+    expect(late.body.error.code).toBe('MFA_CHALLENGE_EXPIRED');
+  });
+
+  it('export and deletion codes count against the same per-account limit as sign-in', async () => {
+    const a = await s.session();
+    await s.enableMfa(a);
+    await ctx.store.del(`mfa:fail:${a.userId}`);
+    const res = await ctx
+      .http()
+      .post('/api/v1/me/export')
+      .set(authed(a))
+      .send({ password: a.password, code: '000001' });
+    expect(res.status).toBe(401);
+    expect(await ctx.store.get(`mfa:fail:${a.userId}`)).toBe('1');
+    // a wrong PASSWORD does not touch the code counter
+    await ctx
+      .http()
+      .post('/api/v1/me/export')
+      .set(authed(a))
+      .send({ password: 'wrong-password-123', code: '000001' })
+      .expect(401);
+    expect(await ctx.store.get(`mfa:fail:${a.userId}`)).toBe('1');
   });
 
   it('a successful second factor clears the failure counter', async () => {

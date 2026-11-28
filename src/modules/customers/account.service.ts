@@ -64,9 +64,13 @@ export class AccountService {
       where: { id: principal.userId },
     });
     const ok = await this.passwords.verify(user.passwordHash, password);
+    // The code goes through the same per-ACCOUNT counter as sign-in (and its lock): export and deletion must not be
+    // a side door for unlimited code guesses. It is only checked once the password is right.
     const second =
       !user.mfaEnabled ||
-      (code !== undefined && (await this.mfa.verifyTotp(user.id, code)));
+      (ok &&
+        code !== undefined &&
+        (await this.mfa.verifySecondFactor(user.id, { code }, ctx)));
     if (!ok || !second) {
       await this.audit.record({
         action: AuditAction.LoginFailure,
@@ -282,6 +286,12 @@ export class AccountService {
       this.prisma.mfaMethod.deleteMany({ where: { userId: user.id } }),
       this.prisma.mfaRecoveryCode.deleteMany({ where: { userId: user.id } }),
       this.prisma.verificationToken.deleteMany({ where: { userId: user.id } }),
+      // Session rows stay (revoked, for security history) but without the device and network details the privacy
+      // page promises to erase.
+      this.prisma.userSession.updateMany({
+        where: { userId: user.id },
+        data: { ip: null, userAgent: null, deviceLabel: null },
+      }),
       // Contact-form messages are keyed by the address they were sent from (the form is public).
       this.prisma.contactMessage.deleteMany({ where: { email: user.email } }),
     ]);

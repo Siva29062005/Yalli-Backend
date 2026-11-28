@@ -34,6 +34,7 @@ export type NotificationMessage =
       ip: string | null;
     }
   | { type: 'SESSION_THEFT_SUSPECTED'; email: string; name: string }
+  | { type: 'MFA_LOCKED'; email: string; name: string }
   | { type: 'MFA_ENABLED' | 'MFA_DISABLED'; email: string; name: string }
   | {
       type: 'ORDER_CONFIRMED';

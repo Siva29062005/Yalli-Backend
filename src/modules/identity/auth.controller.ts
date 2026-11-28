@@ -77,6 +77,7 @@ export class AuthController {
       return {
         ...base,
         csrfToken: this.cookies.issue(
+          req,
           res,
           t.refreshToken,
           t.refreshExpiresAt,
@@ -215,7 +216,7 @@ export class AuthController {
         };
       return this.tokenResponse(req, res, r, csrf);
     } catch (err) {
-      if (this.cookies.isCookieMode(req)) this.cookies.clear(res); // a dead token should not be retried forever
+      if (this.cookies.isCookieMode(req)) this.cookies.clear(req, res); // a dead token should not be retried forever
       throw err;
     }
   }
@@ -230,7 +231,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<null> {
     await this.auth.logout(principal, requestContext(req));
-    this.cookies.clear(res);
+    this.cookies.clear(req, res);
     return null;
   }
 
@@ -244,7 +245,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const revoked = await this.auth.logoutAll(principal, requestContext(req));
-    this.cookies.clear(res);
+    this.cookies.clear(req, res);
     return { sessionsRevoked: revoked };
   }
 

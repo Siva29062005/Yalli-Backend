@@ -1,3 +1,4 @@
+import { AMOUNT_MISMATCH } from '../payments/payment.service.js';
 import {
   Injectable,
   Logger,
@@ -23,6 +24,9 @@ import { UNPAID_CANCELLABLE } from './order-state-machine.js';
  *  - Re-check open payments (missed / delayed webhooks) and detect payments made after an order was cancelled.
  *  - Finish refunds stuck in APPROVED/PROCESSING.
  */
+/** How long after the payment window an authorization that could not be captured keeps its order open. */
+export const AUTHORIZATION_GRACE_MS = 60 * 60_000;
+
 @Injectable()
 export class CommerceWorker
   implements OnApplicationBootstrap, OnApplicationShutdown
@@ -85,11 +89,29 @@ export class CommerceWorker
         const verdict = await this.payments.reconcileOrderPayment(id); // throws if the provider cannot be asked
         if (
           verdict === 'captured' ||
-          verdict === 'authorized' ||
           verdict === 'refunded_late' ||
           verdict === 'refunded_out_of_stock'
         )
           continue;
+        // An authorization still waits for its capture (retried each pass). If the provider keeps refusing the capture,
+        // the order must not stay open (and its stock held) until the provider voids it days later: an hour after the
+        // payment window it is cancelled like any unpaid order, and the uncaptured authorization lapses at the provider.
+        if (verdict === 'authorized') {
+          const order = await this.prisma.order.findUnique({
+            where: { id },
+            select: { paymentExpiresAt: true },
+          });
+          if (
+            !order ||
+            order.paymentExpiresAt.getTime() >
+              Date.now() - AUTHORIZATION_GRACE_MS
+          )
+            continue;
+          this.logger.warn(
+            { orderId: id },
+            'Authorization never captured: order cancelled, the authorization lapses at the provider',
+          );
+        }
         await this.prisma.$transaction(async (tx) => {
           const order = await this.lifecycle.lock(tx, id);
           if (
@@ -124,6 +146,8 @@ export class CommerceWorker
       where: {
         providerOrderId: { not: null },
         status: { in: ['PENDING', 'AUTHORIZED', 'FAILED', 'CANCELLED'] },
+        // a payment for another amount is reported once, then left to a person (never re-reconciled every pass)
+        OR: [{ failureCode: null }, { failureCode: { not: AMOUNT_MISMATCH } }],
         createdAt: { gt: since },
         updatedAt: { lt: stale },
       },

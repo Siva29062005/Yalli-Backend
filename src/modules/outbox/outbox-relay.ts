@@ -64,13 +64,20 @@ export class OutboxRelay
       const claimed = await this.prisma.$queryRaw<Row[]>`
         UPDATE outbox_events SET next_attempt_at = now() + make_interval(secs => ${LEASE_SECONDS})
         WHERE id IN (
-          SELECT id FROM outbox_events
-          WHERE published_at IS NULL AND next_attempt_at <= now()
-          ORDER BY created_at LIMIT ${BATCH}
-          FOR UPDATE SKIP LOCKED)
+          SELECT o.id FROM outbox_events o
+          WHERE o.published_at IS NULL AND o.next_attempt_at <= now()
+            -- only the oldest unpublished event of its aggregate: a failed (backing-off) event holds back the later
+            -- events of the SAME aggregate until it is published, and nothing else
+            AND NOT EXISTS (
+              SELECT 1 FROM outbox_events e
+              WHERE e.aggregate_type = o.aggregate_type AND e.aggregate_id = o.aggregate_id
+                AND e.published_at IS NULL AND (e.created_at, e.id) < (o.created_at, o.id))
+          ORDER BY o.created_at LIMIT ${BATCH}
+          FOR UPDATE OF o SKIP LOCKED)
         RETURNING id, aggregate_type, aggregate_id, event_type, event_version, payload, correlation_id, created_at, attempts`;
       let published = 0;
-      // Publish in creation order; stop at the first failure so per-aggregate ordering is preserved on retry.
+      // Each claimed event is the head of a different aggregate: a failure backs off that aggregate only (the claim
+      // query keeps its later events back), so the loop carries on with the others.
       for (const row of claimed.sort(
         (a, b) => a.created_at.getTime() - b.created_at.getTime(),
       )) {

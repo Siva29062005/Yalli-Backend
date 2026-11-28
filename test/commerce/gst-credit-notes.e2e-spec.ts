@@ -24,11 +24,11 @@ afterAll(() => ctx.close());
 // Shipping methods are global state.
 beforeEach(async () => {
   await ctx.prisma.shippingMethod.deleteMany();
-  const om = await s.staff('ORDER_MANAGER');
+  const admin = await s.staff('ADMIN'); // delivery fees need pricing.update
   await ctx
     .http()
     .post('/api/v1/admin/shipping-methods')
-    .set(authed(om))
+    .set(authed(admin))
     .send({
       code: 'STANDARD',
       name: 'Standard',

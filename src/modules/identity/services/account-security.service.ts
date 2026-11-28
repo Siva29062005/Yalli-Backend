@@ -217,6 +217,9 @@ export class AccountSecurityService {
     });
     if (user?.emailNormalized !== peek.target)
       throw apiError(400, ErrorCode.BadRequest, INVALID_TOKEN);
+    // A link issued before the account was suspended (or deleted) is dead: a reset must not be a way back in.
+    if (user.status !== 'ACTIVE' && user.status !== 'PENDING_VERIFICATION')
+      throw apiError(400, ErrorCode.BadRequest, INVALID_TOKEN);
 
     // Validate the new password BEFORE consuming the token, so a weak choice does not burn the user's link.
     await this.assertAcceptablePassword(newPassword, {
@@ -293,12 +296,16 @@ export class AccountSecurityService {
         passwordChangedAt: new Date(),
       },
     });
-    // Sensitive credential change: every OTHER device is signed out.
+    // Sensitive credential change: every OTHER device is signed out, and a reset link sent earlier is dead (it would
+    // let whoever holds that email set the password back).
     await this.sessions.revokeAllForUser(
       user.id,
       'PASSWORD_CHANGED',
       principal.sessionId,
     );
+    await this.prisma.verificationToken.deleteMany({
+      where: { userId: user.id, purpose: 'PASSWORD_RESET', usedAt: null },
+    });
     await this.audit.record({
       action: AuditAction.PasswordChanged,
       outcome: 'SUCCESS',

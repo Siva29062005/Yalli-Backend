@@ -186,6 +186,17 @@ describe('validateEnv', () => {
         new RegExp(key),
       );
     });
+    it('refuses to start in production when it was given the migrator URL', () => {
+      expect(() =>
+        validateEnv({
+          ...complete,
+          DATABASE_MIGRATION_URL: 'postgresql://m:secret@db:5432/yalli',
+        }),
+      ).toThrow(/DATABASE_MIGRATION_URL: must not be given/);
+      expect(() =>
+        validateEnv({ ...complete, DATABASE_MIGRATION_URL: '' }),
+      ).not.toThrow();
+    });
     it('allows the development defaults outside production', () => {
       expect(() =>
         validateEnv({

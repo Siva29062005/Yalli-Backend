@@ -104,6 +104,7 @@ export class ReviewsService implements ProductRatingSource, OnModuleInit {
           title: true,
           body: true,
           createdAt: true,
+          userId: true,
           user: {
             select: {
               customer: { select: { firstName: true, lastName: true } },
@@ -113,13 +114,18 @@ export class ReviewsService implements ProductRatingSource, OnModuleInit {
       }),
       this.prisma.productReview.count({ where }),
     ]);
+    // Every review was written after a delivery; the badge says whether the reviewer still has it (not if every unit
+    // went back for a refund).
+    const kept = await this.orders.customersWhoKept(id, [
+      ...new Set(rows.map((r) => r.userId)),
+    ]);
     return paginated(
       rows.map((r) => ({
         id: r.id,
         rating: r.rating,
         title: r.title,
         body: r.body,
-        verifiedPurchase: true,
+        verifiedPurchase: kept.has(r.userId),
         reviewer: displayName(
           r.user.customer?.firstName ?? '',
           r.user.customer?.lastName ?? '',

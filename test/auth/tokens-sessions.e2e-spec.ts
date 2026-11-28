@@ -405,6 +405,71 @@ describe('cookie mode (browser) and CSRF', () => {
     );
   });
 
+  it('the staff console has its own cookie pair: signing in there never replaces the storefront session (and back)', async () => {
+    const shop = await cookieLogin();
+    // the same browser signs in to the console (cookie-admin): different cookie names
+    const { email, password, ip } = await s.verifiedUser();
+    const console = await ctx
+      .http()
+      .post('/api/v1/auth/login')
+      .set({ 'X-Forwarded-For': ip, 'X-Auth-Mode': 'cookie-admin' })
+      .send({ email, password });
+    expect(console.status).toBe(200);
+    const set = console.headers['set-cookie'] as unknown as string[];
+    expect(set.some((c) => c.startsWith('yalli_rt_admin='))).toBe(true);
+    expect(set.some((c) => c.startsWith('yalli_csrf_admin='))).toBe(true);
+    expect(set.some((c) => c.startsWith('yalli_rt='))).toBe(false); // the shop cookie is untouched
+    const adminRt = set
+      .find((c) => c.startsWith('yalli_rt_admin='))!
+      .split(';')[0]!
+      .split('=')[1]!;
+    const adminCsrf = console.body.data.csrfToken as string;
+    const jar = `yalli_rt=${shop.refresh}; yalli_csrf=${shop.csrf}; yalli_rt_admin=${adminRt}; yalli_csrf_admin=${adminCsrf}`;
+    // each app refreshes its OWN session from the shared cookie jar
+    const shopRefresh = await ctx
+      .http()
+      .post('/api/v1/auth/refresh')
+      .set({
+        'X-Forwarded-For': shop.ip,
+        'X-Auth-Mode': 'cookie',
+        'X-CSRF-Token': shop.csrf,
+        Cookie: jar,
+      })
+      .send({});
+    expect(shopRefresh.status).toBe(200);
+    const adminRefresh = await ctx
+      .http()
+      .post('/api/v1/auth/refresh')
+      .set({
+        'X-Forwarded-For': ip,
+        'X-Auth-Mode': 'cookie-admin',
+        'X-CSRF-Token': adminCsrf,
+        Cookie: jar,
+      })
+      .send({});
+    expect(adminRefresh.status).toBe(200);
+    expect(jwtPayload(adminRefresh.body.data.accessToken).sub).not.toBe(
+      jwtPayload(shopRefresh.body.data.accessToken).sub,
+    );
+    // signing out of the console clears only the console's cookies
+    const out = await ctx
+      .http()
+      .post('/api/v1/auth/logout')
+      .set({
+        Authorization: `Bearer ${adminRefresh.body.data.accessToken}`,
+        'X-Forwarded-For': ip,
+        'X-Auth-Mode': 'cookie-admin',
+      });
+    expect(out.status).toBe(200);
+    const cleared = out.headers['set-cookie'] as unknown as string[];
+    expect(
+      cleared.every(
+        (c) =>
+          c.startsWith('yalli_rt_admin=') || c.startsWith('yalli_csrf_admin='),
+      ),
+    ).toBe(true);
+  });
+
   it('without "keep me signed in" both cookies are browser-session cookies (no Expires), and stay so after a refresh', async () => {
     for (const body of [{}, { remember: false }]) {
       const c = await cookieLogin(body);

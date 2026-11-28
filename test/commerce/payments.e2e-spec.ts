@@ -375,6 +375,36 @@ describe('amount integrity', () => {
     });
   });
 
+  it('a wrong-amount capture is reported ONCE: reconciliation does not re-report it every pass for 48 hours', async () => {
+    const { order, init } = await pending(59_000);
+    ctx.razorpay.pay(init.providerOrderId, 'captured', { amount: 100 }); // no webhook: the worker finds it
+    const age = () =>
+      ctx.prisma.payment.updateMany({
+        where: { orderId: order.id },
+        data: { updatedAt: new Date(Date.now() - 10 * 60_000) },
+      });
+    await age();
+    await ctx.worker.reconcilePayments();
+    const payment = (await shop.dbOrder(order.id)).payments[0]!;
+    expect(payment).toMatchObject({
+      status: 'PENDING',
+      failureCode: 'AMOUNT_MISMATCH',
+    });
+    await age();
+    await ctx.worker.reconcilePayments(); // the next passes leave it alone
+    await ctx.worker.reconcilePayments();
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'payment.amount_mismatch', resourceId: payment.id },
+      }),
+    ).toBe(1);
+    expect(
+      await ctx.prisma.paymentEvent.count({
+        where: { paymentId: payment.id, type: 'payment.amount_mismatch' },
+      }),
+    ).toBe(1);
+  });
+
   it('a capture in a different currency is rejected the same way', async () => {
     const { order, init } = await pending();
     const usd = ctx.razorpay.pay(init.providerOrderId, 'captured', {
@@ -653,6 +683,41 @@ describe('failures, retries and out-of-order delivery', () => {
     await ctx.worker.reconcilePayments();
     expect(ctx.razorpay.payments.get(auth.id)!.status).toBe('captured');
     expect(await status(order.id)).toBe('PAID');
+  });
+
+  it('an authorization the provider never lets us capture does not keep its order open for days', async () => {
+    const { order, variant, init } = await pending();
+    for (let i = 0; i < 20; i++)
+      ctx.razorpay.failNext.push({ match: '/capture', mode: 'reject' });
+    const auth = ctx.razorpay.pay(init.providerOrderId, 'authorized');
+    await shop.webhook(ctx.razorpay.paymentWebhook('payment.authorized', auth));
+    expect(await status(order.id)).toBe('PAYMENT_PENDING');
+    const windowEnded = (minutesAgo: number) =>
+      ctx.prisma.order.update({
+        where: { id: order.id },
+        data: { paymentExpiresAt: new Date(Date.now() - minutesAgo * 60_000) },
+      });
+    const release = () =>
+      ctx.prisma.payment.updateMany({
+        where: { orderId: order.id },
+        data: { captureStartedAt: null },
+      });
+    // just after the window: it still waits for the capture
+    await windowEnded(10);
+    await release();
+    await ctx.worker.expireUnpaidOrders();
+    expect(await status(order.id)).toBe('PAYMENT_PENDING');
+    // an hour after the window: cancelled like any unpaid order, stock back on the shelf, no capture any more
+    await windowEnded(61);
+    await release();
+    await ctx.worker.expireUnpaidOrders();
+    expect(await status(order.id)).toBe('CANCELLED');
+    expect((await shop.dbOrder(order.id)).payments[0]!.status).toBe(
+      'CANCELLED',
+    );
+    expect(await shop.stock(variant.id)).toMatchObject({ reserved: 0 });
+    expect(ctx.razorpay.payments.get(auth.id)!.status).toBe('authorized');
+    ctx.razorpay.failNext.length = 0;
   });
 
   it('NO DOUBLE CHARGE: after a capture that timed out but worked, a second authorization is never captured', async () => {

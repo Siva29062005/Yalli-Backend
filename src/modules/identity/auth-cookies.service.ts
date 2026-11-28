@@ -6,12 +6,14 @@ import {
   AUTH_MODE_HEADER,
   REFRESH_COOKIE_PATH,
   cookieNames,
+  type CookieScope,
 } from '../../common/constants/auth.js';
 import type { Env } from '../../config/env.js';
 import { generateToken } from './crypto/token-utils.js';
 
 /**
- * Cookie-mode delivery for browsers (opt-in via `X-Auth-Mode: cookie`).
+ * Cookie-mode delivery for browsers (opt-in via `X-Auth-Mode: cookie`, or `cookie-admin` for the staff console, which
+ * gets its own cookie pair).
  * - refresh token: HttpOnly, Secure, SameSite=Strict, path-scoped; JavaScript can never read it.
  * - CSRF token: double-submit. The client gets it in the response body and echoes it in `X-CSRF-Token`;
  *   the server compares it with this cookie. A cross-site attacker can make the browser SEND the cookies but can
@@ -20,23 +22,29 @@ import { generateToken } from './crypto/token-utils.js';
 @Injectable()
 export class AuthCookies {
   private readonly secure: boolean;
-  readonly names: { refresh: string; csrf: string };
 
   constructor(config: ConfigService<Env, true>) {
     this.secure = config.get('COOKIE_SECURE', { infer: true });
-    this.names = cookieNames(this.secure);
   }
 
   isCookieMode(req: Request): boolean {
-    return req.headers[AUTH_MODE_HEADER] === 'cookie';
+    const mode = req.headers[AUTH_MODE_HEADER];
+    return mode === 'cookie' || mode === 'cookie-admin';
+  }
+
+  /** Which cookie pair a request speaks for: the console's or the storefront's (also without the header). */
+  names(req: Request): { refresh: string; csrf: string } {
+    const scope: CookieScope =
+      req.headers[AUTH_MODE_HEADER] === 'cookie-admin' ? 'admin' : 'shop';
+    return cookieNames(this.secure, scope);
   }
 
   readRefresh(req: Request): string | undefined {
-    return this.parse(req)[this.names.refresh];
+    return this.parse(req)[this.names(req).refresh];
   }
 
   readCsrf(req: Request): string | undefined {
-    return this.parse(req)[this.names.csrf];
+    return this.parse(req)[this.names(req).csrf];
   }
 
   /**
@@ -44,6 +52,7 @@ export class AuthCookies {
    * always for staff): no Expires, so the browser drops them when it closes; the server-side expiry still applies.
    */
   issue(
+    req: Request,
     res: Response,
     refreshToken: string,
     expiresAt: Date,
@@ -56,6 +65,7 @@ export class AuthCookies {
       keepCsrf && /^[A-Za-z0-9_-]{16,128}$/.test(keepCsrf)
         ? keepCsrf
         : generateToken(24);
+    const names = this.names(req);
     const common = {
       secure: this.secure,
       sameSite: 'strict' as const,
@@ -64,7 +74,7 @@ export class AuthCookies {
     res.append(
       'Set-Cookie',
       stringifySetCookie({
-        name: this.names.refresh,
+        name: names.refresh,
         value: refreshToken,
         httpOnly: true,
         path: REFRESH_COOKIE_PATH,
@@ -74,7 +84,7 @@ export class AuthCookies {
     res.append(
       'Set-Cookie',
       stringifySetCookie({
-        name: this.names.csrf,
+        name: names.csrf,
         value: csrf,
         httpOnly: false,
         path: REFRESH_COOKIE_PATH,
@@ -84,7 +94,8 @@ export class AuthCookies {
     return csrf;
   }
 
-  clear(res: Response): void {
+  clear(req: Request, res: Response): void {
+    const names = this.names(req);
     const expired = {
       secure: this.secure,
       sameSite: 'strict' as const,
@@ -95,7 +106,7 @@ export class AuthCookies {
     res.append(
       'Set-Cookie',
       stringifySetCookie({
-        name: this.names.refresh,
+        name: names.refresh,
         value: '',
         httpOnly: true,
         ...expired,
@@ -103,7 +114,7 @@ export class AuthCookies {
     );
     res.append(
       'Set-Cookie',
-      stringifySetCookie({ name: this.names.csrf, value: '', ...expired }),
+      stringifySetCookie({ name: names.csrf, value: '', ...expired }),
     );
   }
 

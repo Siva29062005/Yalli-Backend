@@ -13,7 +13,8 @@ import {
 } from '../../common/http/pagination.js';
 import type { Env } from '../../config/env.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
-import type { OrderStatus, Prisma } from '../../generated/prisma/client.js';
+import type { OrderStatus } from '../../generated/prisma/client.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, type RequestContext } from '../audit/audit.service.js';
 import { CouponService } from '../coupons/coupon.service.js';
@@ -601,10 +602,27 @@ export class OrderService {
     userId: string,
     productId: string,
   ): Promise<boolean> {
-    const hit = await this.prisma.orderItem.findFirst({
-      where: { productId, order: { userId, deliveredAt: { not: null } } },
-      select: { id: true },
-    });
-    return hit !== null;
+    return (await this.customersWhoKept(productId, [userId])).has(userId);
+  }
+
+  /**
+   * Of `userIds`, the customers who received `productId` in a delivered order and did not send every unit back for a
+   * refund (a REFUNDED return): the basis of "verified purchase". One query for a whole page of reviews.
+   */
+  async customersWhoKept(
+    productId: string,
+    userIds: readonly string[],
+  ): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set();
+    const rows = await this.prisma.$queryRaw<{ user_id: string }[]>`
+      SELECT DISTINCT o.user_id::text AS user_id
+      FROM order_items oi JOIN orders o ON o.id = oi.order_id
+      WHERE oi.product_id = ${productId}::uuid
+        AND o.user_id IN (${Prisma.join(userIds.map((u) => Prisma.sql`${u}::uuid`))})
+        AND o.delivered_at IS NOT NULL
+        AND oi.quantity > COALESCE((
+          SELECT SUM(r.quantity) FROM return_requests r
+          WHERE r.order_item_id = oi.id AND r.status = 'REFUNDED'), 0)`;
+    return new Set(rows.map((r) => r.user_id));
   }
 }

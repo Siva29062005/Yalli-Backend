@@ -5,6 +5,7 @@ const base = process.env.FRONTEND_URL || 'http://localhost:3001';
 const page = await browser.newPage();
 let mode = 'staff';
 let expired = false;
+const authModes = new Set(); // X-Auth-Mode on the console's sign-in calls: always its own cookie pair
 await page.route('**/api/v1/**', async (route) => {
   const request = route.request();
   const path = new URL(request.url()).pathname.replace('/api/v1', '');
@@ -12,6 +13,7 @@ await page.route('**/api/v1/**', async (route) => {
   if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
   if (expired && path === '/admin/categories') return route.fulfill({ status: 401, headers, json: { success: false, message: 'Authentication required', error: { code: 'ACCESS_TOKEN_INVALID' } } });
   let data = [];
+  if (path === '/auth/login' || path === '/auth/mfa/verify' || path === '/auth/refresh' || path === '/auth/logout') authModes.add(request.headers()['x-auth-mode'] ?? 'none');
   if (path === '/auth/login') data = mode === 'no-mfa' ? { mfaRequired: false, accessToken: 'test-token' } : { mfaRequired: true, mfaToken: 'challenge' };
   if (path === '/auth/mfa/verify') data = { accessToken: 'test-token' };
   if (path === '/me') data = { email: 'staff@example.test', roles: [mode === 'customer' ? 'CUSTOMER' : 'ADMIN'], mfaEnabled: true };
@@ -64,6 +66,7 @@ try {
   await page.setViewportSize({ width: 375, height: 900 });
   await page.getByRole('button', { name: 'Open menu', exact: true }).click();
   assert.equal(await page.locator('a[href^="/admin"]').count(), 0);
+  assert.deepEqual([...authModes], ['cookie-admin'], 'the console signs in and out with its own cookie pair (X-Auth-Mode: cookie-admin)');
   console.log('PASS: all 11 admin screens locked, password + MFA required, customers rejected, session expiry and sign-out lock workspace, no public admin links.');
 } finally {
   await browser.close();

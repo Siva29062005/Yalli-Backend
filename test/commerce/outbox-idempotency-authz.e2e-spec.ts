@@ -126,6 +126,47 @@ describe('transactional outbox', () => {
     );
   });
 
+  it('a failed event holds back the LATER events of its own aggregate only (per-aggregate order), others carry on', async () => {
+    const slow = randomUUID();
+    const other = randomUUID();
+    const t0 = Date.now() - 60_000;
+    const make = (aggregateId: string, eventType: string, offset: number) =>
+      ctx.prisma.outboxEvent.create({
+        data: {
+          aggregateType: 'test',
+          aggregateId,
+          eventType,
+          payload: {},
+          createdAt: new Date(t0 + offset),
+        },
+      });
+    const head = await make(slow, 'test.first', 0);
+    await make(slow, 'test.second', 1);
+    await make(slow, 'test.third', 2);
+    await make(other, 'test.other', 3);
+    // the head failed earlier and is backing off (what a failed publish leaves behind)
+    await ctx.prisma.outboxEvent.update({
+      where: { id: head.id },
+      data: { attempts: 1, nextAttemptAt: new Date(Date.now() + 60_000) },
+    });
+    const types = () =>
+      ctx.bus.published
+        .filter((e) => e.aggregateId === slow || e.aggregateId === other)
+        .map((e) => e.type);
+    ctx.bus.clear();
+    await ctx.drainOutbox();
+    // the other aggregate went out; the slow one's later events did NOT overtake its failed head
+    expect(types()).toEqual(['test.other']);
+    // when the head's backoff is over, the aggregate goes out in order
+    await ctx.prisma.outboxEvent.update({
+      where: { id: head.id },
+      data: { nextAttemptAt: new Date() },
+    });
+    ctx.bus.clear();
+    await ctx.drainOutbox();
+    expect(types()).toEqual(['test.first', 'test.second', 'test.third']);
+  });
+
   it('two relay instances never publish the same event twice (claim lease with SKIP LOCKED)', async () => {
     const { variant } = await shop.fx.product({ stock: 9 });
     const users: Cust[] = await Promise.all([

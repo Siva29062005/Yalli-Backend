@@ -7,6 +7,10 @@ import {
   DiscoveryModule,
 } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
+import {
+  LOG_REDACT_PATHS,
+  serializeError,
+} from './common/logging/log-safety.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor.js';
 import { resolveRequestId } from './common/middleware/request-id.middleware.js';
@@ -39,24 +43,7 @@ import { CacheModule } from './infrastructure/cache/cache.module.js';
 import { DatabaseModule } from './infrastructure/database/database.module.js';
 import { ConfigService } from '@nestjs/config';
 
-/** Values that must never reach the logs. */
-export const LOG_REDACT_PATHS = [
-  'req.headers.authorization',
-  'req.headers.cookie',
-  'req.headers["x-csrf-token"]',
-  'req.headers["x-api-key"]',
-  'res.headers["set-cookie"]',
-  '*.password',
-  '*.currentPassword',
-  '*.newPassword',
-  '*.token',
-  '*.accessToken',
-  '*.refreshToken',
-  '*.otp',
-  '*.code',
-  '*.cardNumber',
-  '*.cvv',
-];
+export { LOG_REDACT_PATHS } from './common/logging/log-safety.js';
 
 @Module({
   imports: [
@@ -76,6 +63,7 @@ export const LOG_REDACT_PATHS = [
             genReqId: (req, res) => resolveRequestId(req, res),
             // Log method/url/status only; headers are redacted above and bodies are never logged.
             serializers: {
+              err: serializeError,
               req: (req: { id: string; method: string; url: string }) => ({
                 id: req.id,
                 method: req.method,

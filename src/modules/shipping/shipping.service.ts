@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -6,6 +7,7 @@ import {
 import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../infrastructure/database/prisma.service.js';
+import { Permission } from '../access/permissions.js';
 import { AuditAction } from '../audit/audit-actions.js';
 import { AuditService, type RequestContext } from '../audit/audit.service.js';
 import {
@@ -97,6 +99,7 @@ export class ShippingService {
     ctx: RequestContext,
   ) {
     this.assertEta(input.etaMinDays, input.etaMaxDays);
+    this.assertMaySetFees(actor); // a new method is a new delivery fee
     try {
       const m = await this.prisma.shippingMethod.create({
         data: {
@@ -132,6 +135,15 @@ export class ShippingService {
     }
   }
 
+  private assertMaySetFees(actor: AuthPrincipal): void {
+    if (!actor.permissions.has(Permission.PricingUpdate))
+      throw new ForbiddenException({
+        message:
+          'Delivery fees and active methods require the pricing.update permission',
+        code: 'FORBIDDEN',
+      });
+  }
+
   async updateMethod(
     actor: AuthPrincipal,
     id: string,
@@ -142,6 +154,16 @@ export class ShippingService {
       where: { id },
     });
     if (!current) throw new NotFoundException('Shipping method not found');
+    // What a customer pays for delivery is a price: the fee, the free-above threshold and switching a method on or off
+    // (with none active, delivery is free) need pricing.update. A field sent with its current value is no change.
+    if (
+      (input.baseMinor !== undefined &&
+        input.baseMinor !== current.baseMinor) ||
+      (input.freeAboveMinor !== undefined &&
+        input.freeAboveMinor !== current.freeAboveMinor) ||
+      (input.isActive !== undefined && input.isActive !== current.isActive)
+    )
+      this.assertMaySetFees(actor);
     this.assertEta(
       input.etaMinDays ?? current.etaMinDays,
       input.etaMaxDays ?? current.etaMaxDays,
@@ -264,6 +286,25 @@ export class ShippingService {
     if (at.getTime() > Date.now() + 5 * 60_000)
       throw new ConflictException({
         message: 'occurredAt cannot be in the future',
+        code: 'VALIDATION_FAILED',
+      });
+    // Never before the shipment left or before its latest update: a backdated delivery would close the customer's
+    // return window early (it runs from deliveredAt) or put delivery before shipping.
+    const latest = await tx.shipmentEvent.findFirst({
+      where: { shipmentId: shipment.id },
+      orderBy: { occurredAt: 'desc' },
+      select: { occurredAt: true },
+    });
+    const latestAt = Math.max(
+      shipment.shippedAt.getTime(),
+      latest?.occurredAt.getTime() ?? 0,
+    );
+    // at minute precision: the console's time field has no seconds, so "now" right after shipping must be accepted
+    const floor = Math.floor(latestAt / 60_000) * 60_000;
+    if (at.getTime() < floor)
+      throw new ConflictException({
+        message:
+          'occurredAt cannot be earlier than the shipment date or its latest tracking update',
         code: 'VALIDATION_FAILED',
       });
     await tx.shipmentEvent.create({

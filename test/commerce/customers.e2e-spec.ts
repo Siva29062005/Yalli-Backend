@@ -324,6 +324,19 @@ describe('account deletion (right to erasure)', () => {
       lastName: 'User',
     });
     expect(row.addresses).toHaveLength(0);
+    // session rows remain (revoked) without device or network details
+    const sessions = await ctx.prisma.userSession.findMany({
+      where: { userId: u.userId },
+      select: { ip: true, userAgent: true, deviceLabel: true, revokedAt: true },
+    });
+    expect(sessions.length).toBeGreaterThan(0);
+    for (const sess of sessions)
+      expect(sess).toMatchObject({
+        ip: null,
+        userAgent: null,
+        deviceLabel: null,
+      });
+    expect(sessions.every((x) => x.revokedAt !== null)).toBe(true);
     // Legal evidence is retained.
     expect(
       await ctx.prisma.consent.count({ where: { userId: u.userId } }),

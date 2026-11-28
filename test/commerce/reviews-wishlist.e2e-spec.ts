@@ -105,6 +105,50 @@ describe('who may review', () => {
     expect(ok.body.data.status).toBe('PENDING');
   });
 
+  it('"verified purchase" means they kept it: a fully returned and refunded item no longer qualifies or shows the badge', async () => {
+    const { product, variant, u, order } = await buyer();
+    await approved(u, product.slug);
+    const badge = async () =>
+      (await ctx.http().get(reviewsUrl(product.slug))).body.data.find(
+        (r: { reviewer: string }) => r.reviewer === 'Asha K.',
+      )?.verifiedPurchase;
+    expect(await badge()).toBe(true);
+    // the customer sent every unit back and was refunded (the return flow itself is tested elsewhere)
+    const item = await ctx.prisma.orderItem.findFirstOrThrow({
+      where: { orderId: order.id },
+    });
+    await ctx.prisma.returnRequest.create({
+      data: {
+        orderId: order.id,
+        orderItemId: item.id,
+        userId: u.userId,
+        quantity: item.quantity,
+        reason: 'FAULTY',
+        opened: false,
+        status: 'REFUNDED',
+      },
+    });
+    expect(await badge()).toBe(false); // the review stays, the badge goes
+    // someone else who returned everything cannot write a new review
+    const other = await anotherBuyer(variant.id);
+    const otherOrder = await ctx.prisma.order.findFirstOrThrow({
+      where: { userId: other.userId },
+      include: { items: true },
+    });
+    await ctx.prisma.returnRequest.create({
+      data: {
+        orderId: otherOrder.id,
+        orderItemId: otherOrder.items[0]!.id,
+        userId: other.userId,
+        quantity: otherOrder.items[0]!.quantity,
+        reason: 'FAULTY',
+        opened: false,
+        status: 'REFUNDED',
+      },
+    });
+    expect((await post(other, product.slug, goodReview())).status).toBe(403);
+  });
+
   it('anonymous callers cannot post, and drafts do not exist publicly', async () => {
     const { product } = await buyer();
     expect(

@@ -12,12 +12,15 @@ let ctx: TestContext;
 let s: Scenario;
 let shop: Shop;
 let manager: Awaited<ReturnType<Scenario['staff']>>;
+/** Delivery fees are prices: creating methods and changing fees needs pricing.update (ADMIN has both permissions). */
+let pricer: Awaited<ReturnType<Scenario['staff']>>;
 beforeAll(async () => {
   Logger.overrideLogger(false);
   ctx = await createTestApp();
   s = new Scenario(ctx);
   shop = new Shop(ctx, s);
   manager = await s.staff('ORDER_MANAGER');
+  pricer = await s.staff('ADMIN');
 });
 afterAll(() => ctx.close());
 // Shipping methods are global configuration: every test starts from "nothing configured".
@@ -35,10 +38,7 @@ const method = (over: Record<string, unknown> = {}) => ({
   etaMaxDays: 6,
   ...over,
 });
-const createMethod = (
-  body: Record<string, unknown>,
-  actor: Session = manager,
-) =>
+const createMethod = (body: Record<string, unknown>, actor: Session = pricer) =>
   ctx
     .http()
     .post('/api/v1/admin/shipping-methods')
@@ -92,7 +92,7 @@ describe('nothing configured', () => {
 });
 
 describe('admin shipping methods', () => {
-  it('an order manager creates, lists and updates methods (audited)', async () => {
+  it('a manager with pricing.update creates, lists and updates methods (audited)', async () => {
     const created = await createMethod(method());
     expect(created.status).toBe(201);
     expect(created.body.data).toMatchObject({
@@ -102,12 +102,12 @@ describe('admin shipping methods', () => {
     const list = await ctx
       .http()
       .get('/api/v1/admin/shipping-methods')
-      .set(authed(manager));
+      .set(authed(pricer));
     expect(list.body.data).toHaveLength(1);
     const upd = await ctx
       .http()
       .patch(`/api/v1/admin/shipping-methods/${created.body.data.id}`)
-      .set(authed(manager))
+      .set(authed(pricer))
       .send({ baseMinor: 7_000, isActive: false });
     expect(upd.status).toBe(200);
     expect(upd.body.data).toMatchObject({ baseMinor: 7000, isActive: false });
@@ -117,6 +117,41 @@ describe('admin shipping methods', () => {
       },
     });
     expect(audits.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('an order manager edits names and delivery times, but fees and switching methods need pricing.update', async () => {
+    expect((await createMethod(method(), manager)).status).toBe(403);
+    const created = await createMethod(method());
+    const id = created.body.data.id as string;
+    const patch = (body: Record<string, unknown>) =>
+      ctx
+        .http()
+        .patch(`/api/v1/admin/shipping-methods/${id}`)
+        .set(authed(manager))
+        .send(body);
+    // the console sends every field: unchanged fees are not a price change
+    const ok = await patch({
+      name: 'Standard (renamed)',
+      etaMaxDays: 7,
+      baseMinor: 6_000,
+      freeAboveMinor: 99_900,
+      isActive: true,
+    });
+    expect(ok.status).toBe(200);
+    for (const body of [
+      { baseMinor: 1 },
+      { freeAboveMinor: null },
+      { isActive: false }, // with no method on, delivery is free
+    ])
+      expect((await patch(body)).status).toBe(403);
+    expect(
+      await ctx.prisma.shippingMethod.findUniqueOrThrow({ where: { id } }),
+    ).toMatchObject({
+      name: 'Standard (renamed)',
+      baseMinor: 6_000,
+      freeAboveMinor: 99_900,
+      isActive: true,
+    });
   });
 
   it('rejects duplicates, unknown fields, bad codes, negative money and inverted ETAs', async () => {
@@ -471,6 +506,31 @@ describe('shipments and tracking', () => {
       occurredAt: new Date(Date.now() + 86_400_000).toISOString(),
     });
     expect(future.status).toBe(409);
+  });
+
+  it('refuses a tracking time before the shipment or before its latest update (no backdated delivery)', async () => {
+    const { order } = await shippedOrder('DT-TRK-1016');
+    const sh = await ctx.prisma.shipment.findUniqueOrThrow({
+      where: { orderId: order.id },
+    });
+    const beforeShipping = await admin(order.id, 'tracking', {
+      status: 'DELIVERED',
+      occurredAt: new Date(sh.shippedAt.getTime() - 86_400_000).toISOString(),
+    });
+    expect(beforeShipping.status).toBe(409);
+    const out = await admin(order.id, 'tracking', {
+      status: 'OUT_FOR_DELIVERY',
+    });
+    expect(out.status).toBe(200);
+    const beforeLatest = await admin(order.id, 'tracking', {
+      status: 'DELIVERED',
+      occurredAt: new Date(Date.now() - 60 * 60_000).toISOString(), // after shipping, before "out for delivery"
+    });
+    expect(beforeLatest.status).toBe(409);
+    expect((await shop.dbOrder(order.id)).deliveredAt).toBeNull();
+    expect(
+      (await admin(order.id, 'tracking', { status: 'DELIVERED' })).status,
+    ).toBe(200);
   });
 
   it('a tracking number can belong to one shipment only', async () => {

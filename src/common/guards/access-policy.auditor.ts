@@ -47,10 +47,11 @@ export class AccessPolicyAuditor implements OnApplicationBootstrap {
             OPTIONAL_AUTH_KEY,
             targets,
           ) ||
-          this.reflector.getAllAndOverride<string[] | undefined>(
+          // an EMPTY permission list is not a policy (it would mean "any signed-in user")
+          (this.reflector.getAllAndOverride<string[] | undefined>(
             PERMISSIONS_KEY,
             targets,
-          ) !== undefined;
+          )?.length ?? 0) > 0;
         if (!hasPolicy) unprotected.push(`${wrapper.metatype.name}.${name}`);
       }
     }

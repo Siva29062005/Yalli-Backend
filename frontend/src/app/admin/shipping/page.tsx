@@ -27,7 +27,10 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something w
 const eta = (m: ShippingMethod) => (m.etaMinDays === m.etaMaxDays ? `${m.etaMinDays} day${m.etaMinDays === 1 ? '' : 's'}` : `${m.etaMinDays}–${m.etaMaxDays} days`);
 
 export default function AdminShippingPage() {
-  const { withStepUp } = useAdminSession();
+  const { withStepUp, can } = useAdminSession();
+  // What delivery costs is a price: adding a method, its fee, "free above" and switching it on or off need
+  // pricing.update (the server checks; this only hides what would be refused).
+  const canPrice = can('pricing.update');
   const [editing, setEditing] = useState<'new' | ShippingMethod | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -56,7 +59,7 @@ export default function AdminShippingPage() {
       eyebrow="Operations"
       title="Shipping methods"
       subtitle="Set what delivery costs and where it goes. The fee is always worked out on the server from the method the customer picks."
-      actions={<button className={`${adminButton} inline-flex items-center gap-1.5`} onClick={() => setEditing('new')}><Plus className="h-4 w-4" /> Add method</button>}
+      actions={canPrice ? <button className={`${adminButton} inline-flex items-center gap-1.5`} onClick={() => setEditing('new')}><Plus className="h-4 w-4" /> Add method</button> : undefined}
     >
       {error && <Alert kind="error">{error}</Alert>}
       {notice && <Alert kind="success">{notice}</Alert>}
@@ -67,6 +70,7 @@ export default function AdminShippingPage() {
         <MethodForm
           key={editing === 'new' ? 'new' : editing.id}
           method={editing === 'new' ? null : editing}
+          canPrice={canPrice}
           run={withStepUp}
           onClose={() => setEditing(null)}
           onSaved={(message) => {
@@ -91,7 +95,7 @@ export default function AdminShippingPage() {
                 </div>
                 <div className="flex gap-2">
                   <button className={adminGhostButton} onClick={() => setEditing(m)}>Edit</button>
-                  <button className={adminGhostButton} disabled={busyId === m.id} onClick={() => void toggle(m)}>{m.isActive ? 'Turn off' : 'Turn on'}</button>
+                  {canPrice && <button className={adminGhostButton} disabled={busyId === m.id} onClick={() => void toggle(m)}>{m.isActive ? 'Turn off' : 'Turn on'}</button>}
                 </div>
               </li>
             ))}
@@ -104,11 +108,13 @@ export default function AdminShippingPage() {
 
 function MethodForm({
   method,
+  canPrice,
   run,
   onClose,
   onSaved,
 }: {
   method: ShippingMethod | null;
+  canPrice: boolean;
   run: <T>(call: () => Promise<T>) => Promise<T>;
   onClose: () => void;
   onSaved: (message: string) => void;
@@ -165,7 +171,7 @@ function MethodForm({
           <input required={isNew} disabled={!isNew} pattern="[A-Z0-9_]{2,30}" maxLength={30} className={`${adminInput} font-mono`} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} />
         </Field>
         <Field label="Name shown to customers"><input required minLength={2} maxLength={80} className={adminInput} value={name} onChange={(e) => setName(e.target.value)} /></Field>
-        <Field label="Delivery fee (₹)" hint="Use 0 for free delivery."><input required inputMode="decimal" className={adminInput} value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
+        <Field label="Delivery fee (₹)" hint={canPrice ? 'Use 0 for free delivery.' : 'Changing the fee needs the pricing permission.'}><input required disabled={!canPrice} inputMode="decimal" className={adminInput} value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
         {(rupeesToPaise(fee) ?? 0) > 0 && (
           <div className="sm:col-span-2">
             <Alert kind="success">
@@ -173,7 +179,7 @@ function MethodForm({
             </Alert>
           </div>
         )}
-        <Field label="Free above order value (₹, optional)" hint="Delivery becomes free once the items total reaches this."><input inputMode="decimal" className={adminInput} value={freeAbove} onChange={(e) => setFreeAbove(e.target.value)} /></Field>
+        <Field label="Free above order value (₹, optional)" hint="Delivery becomes free once the items total reaches this."><input disabled={!canPrice} inputMode="decimal" className={adminInput} value={freeAbove} onChange={(e) => setFreeAbove(e.target.value)} /></Field>
         <Field label="Quickest delivery (days)"><input required inputMode="numeric" className={adminInput} value={etaMin} onChange={(e) => setEtaMin(e.target.value)} /></Field>
         <Field label="Longest delivery (days)"><input required inputMode="numeric" className={adminInput} value={etaMax} onChange={(e) => setEtaMax(e.target.value)} /></Field>
         <Field label="Display order" hint="Smaller numbers are shown first."><input inputMode="numeric" className={adminInput} value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} /></Field>
@@ -191,7 +197,7 @@ function MethodForm({
           ))}
         </div>
       </fieldset>
-      <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Turned on (customers can choose it)</label>
+      <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" disabled={!canPrice} checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Turned on (customers can choose it)</label>
       <div className="flex justify-end gap-3">
         <button type="button" className={adminGhostButton} disabled={busy} onClick={onClose}>Cancel</button>
         <button className={adminButton} disabled={busy}>{busy ? 'Saving…' : isNew ? 'Add method' : 'Save changes'}</button>

@@ -57,6 +57,6 @@ ensure COOKIE_SECURE false
 ensure CAPTCHA_PROVIDER none
 ensure HIBP_ENABLED false
 ensure NOTIFICATIONS_DRIVER console
-ensure FRONTEND_BASE_URL http://localhost:5173
+ensure FRONTEND_BASE_URL http://localhost:3001
 ensure LOG_PRETTY true
 echo ".env is up to date."

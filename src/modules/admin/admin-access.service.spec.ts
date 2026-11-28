@@ -153,3 +153,110 @@ describe('AdminAccessService.revokeRole (SUPER_ADMIN safety)', () => {
     expect(Permission.UsersManage).toBe('users.manage');
   });
 });
+
+describe('AdminAccessService.setStatus (SUPER_ADMIN safety)', () => {
+  function buildStatus(opts: {
+    actorStatus?: string;
+    otherActiveSuperAdmins: number;
+    targetIsSuperAdmin: boolean;
+    txError?: unknown;
+  }) {
+    const update = vi.fn().mockResolvedValue({});
+    const tx = {
+      user: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValue({ status: opts.actorStatus ?? 'ACTIVE' }),
+        update,
+      },
+      userRole: {
+        count: vi
+          .fn()
+          .mockImplementation((args: { where: { userId?: unknown } }) =>
+            Promise.resolve(
+              typeof args.where.userId === 'string'
+                ? opts.targetIsSuperAdmin
+                  ? 1
+                  : 0
+                : opts.otherActiveSuperAdmins,
+            ),
+          ),
+      },
+    };
+    const prisma = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'target',
+          status: 'ACTIVE',
+          roles: [{ role: { rank: 100 } }],
+        }),
+      },
+      $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<void>) => {
+        if (opts.txError) throw opts.txError;
+        return fn(tx);
+      }),
+    };
+    const sessions = { revokeAllForUser: vi.fn() };
+    const svc = new AdminAccessService(
+      prisma as never,
+      { invalidate: vi.fn() } as never,
+      sessions as never,
+      { record: vi.fn() } as never,
+    );
+    return { svc, update, sessions, prisma };
+  }
+  const root = principal('actor', 'SUPER_ADMIN');
+
+  it('refuses to suspend the last ACTIVE SUPER_ADMIN, inside a serializable transaction', async () => {
+    const { svc, update, sessions, prisma } = buildStatus({
+      otherActiveSuperAdmins: 0,
+      targetIsSuperAdmin: true,
+    });
+    await expect(
+      svc.setStatus(root, 'target', 'SUSPENDED', undefined, ctx),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(update).not.toHaveBeenCalled();
+    expect(sessions.revokeAllForUser).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+  });
+
+  it('allows it while another active SUPER_ADMIN remains, and ends the target sessions', async () => {
+    const { svc, update, sessions } = buildStatus({
+      otherActiveSuperAdmins: 1,
+      targetIsSuperAdmin: true,
+    });
+    await svc.setStatus(root, 'target', 'SUSPENDED', 'left', ctx);
+    expect(update).toHaveBeenCalledOnce();
+    expect(sessions.revokeAllForUser).toHaveBeenCalledWith(
+      'target',
+      'SUSPENDED',
+    );
+  });
+
+  it('an actor who was suspended meanwhile cannot suspend anyone', async () => {
+    const { svc, update } = buildStatus({
+      actorStatus: 'SUSPENDED',
+      otherActiveSuperAdmins: 5,
+      targetIsSuperAdmin: false,
+    });
+    await expect(
+      svc.setStatus(root, 'target', 'SUSPENDED', undefined, ctx),
+    ).rejects.toThrow(/permission/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('a serialization conflict (two admins at once) is a clean 409', async () => {
+    const { svc } = buildStatus({
+      otherActiveSuperAdmins: 1,
+      targetIsSuperAdmin: true,
+      txError: Object.assign(new Error('could not serialize'), {
+        code: 'P2034',
+      }),
+    });
+    await expect(
+      svc.setStatus(root, 'target', 'SUSPENDED', undefined, ctx),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+});

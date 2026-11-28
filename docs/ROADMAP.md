@@ -333,6 +333,11 @@ that needs the live store, AWS and the owner (the final export, DNS, the first l
 
 ## Phase 16: after launch (P2, ordered by expected value)
 
+**Status (2026-11-28): started with the open P1 items** (owner's choice: before any new feature, close every "fix soon"
+item of the 2026-11-27 review; they are launch-relevant). All 20 are fixed with tests; record:
+`docs/security/phase-16-p1-fixes.md`. The P2 list below is next.
+
+
 1. Courier integration (e.g. Shiprocket) behind `ShippingService.applyEventInTx`, replacing manual tracking.
 2. Search: stemming and typo tolerance (OpenSearch), recently viewed, related products by behaviour.
 3. Catalogue read caching or denormalised price columns once traffic needs it.

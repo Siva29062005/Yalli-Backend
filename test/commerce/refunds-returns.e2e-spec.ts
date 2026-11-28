@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
+import { RefundService } from '../../src/modules/refunds/refund.service.js';
 import {
   Scenario,
   Shop,
@@ -911,6 +912,29 @@ describe('provider failures: a refund is never sent twice and never silently los
     return { order, payment, finance, refundId: req.body.data.id as string };
   };
 
+  it('a refund REQUEST is audited once (a replay of the same request is not a second one)', async () => {
+    const { order } = await paidOrder(100_000);
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const key = idem();
+    const body = {
+      orderId: order.id,
+      amountMinor: 1_000,
+      reason: 'Audit check',
+    };
+    const first = await requestRefund(support, body, key);
+    expect(first.status).toBe(201);
+    expect((await requestRefund(support, body, key)).status).toBe(201); // replay
+    const rows = await ctx.prisma.auditLog.findMany({
+      where: { action: 'refund.requested', resourceId: first.body.data.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actorId: support.userId });
+    expect(rows[0]!.metadata).toMatchObject({
+      orderId: order.id,
+      amountMinor: 1_000,
+    });
+  });
+
   it('TIMEOUT AFTER the provider acted: the refund stays PROCESSING; reconciliation finds it by receipt; the provider refunds exactly ONCE', async () => {
     const { order, payment, finance, refundId } = await setup();
     ctx.razorpay.failNext.push({
@@ -1047,6 +1071,36 @@ describe('provider failures: a refund is never sent twice and never silently los
         where: { aggregateId: refundId, eventType: 'refund.processed' },
       }),
     ).toBe(1);
+  });
+
+  it('a refund webhook whose work fails is NOT acknowledged as done: the provider retry processes it', async () => {
+    const { order, payment, finance, refundId } = await setup();
+    ctx.razorpay.refundStatus = 'pending';
+    await approve(finance, refundId);
+    const pr = [...ctx.razorpay.refunds.values()].find(
+      (r) => r.payment_id === payment.id,
+    )!;
+    const hook = ctx.razorpay.refundWebhook(
+      'refund.processed',
+      { ...pr, status: 'processed' },
+      { eventId: `evt_${randomBytes(8).toString('hex')}` },
+    );
+    const refunds = ctx.app.get(RefundService);
+    const once = vi
+      .spyOn(refunds, 'applyProviderRefundInTx')
+      .mockRejectedValueOnce(new Error('database hiccup'));
+    try {
+      expect((await shop.webhook(hook)).status).toBeGreaterThanOrEqual(500);
+    } finally {
+      once.mockRestore();
+    }
+    // nothing was recorded, so the retry is real work, not a "duplicate"
+    expect((await shop.webhook(hook)).body.data.outcome).toBe('processed');
+    expect(
+      (await ctx.prisma.refund.findUniqueOrThrow({ where: { id: refundId } }))
+        .status,
+    ).toBe('PROCESSED');
+    expect((await shop.dbOrder(order.id)).status).toBe('PAID');
   });
 
   it('a forged refund webhook is rejected', async () => {

@@ -66,6 +66,9 @@ const STALE_WEBHOOK_SECONDS = 7 * 24 * 3600;
  *    payment is processed once no matter how many times or in what order the signals arrive.
  *  - Money that arrives for an order we can no longer fulfil (cancelled, expired, out of stock) is refunded automatically.
  */
+/** failure_code of a payment the provider reports for another amount: reported once, never reconciled again. */
+export const AMOUNT_MISMATCH = 'AMOUNT_MISMATCH';
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -424,6 +427,17 @@ export class PaymentService {
     return result;
   }
 
+  private async markMismatch(tx: Tx, paymentId: string): Promise<void> {
+    await tx.payment.update({
+      where: { id: paymentId },
+      data: {
+        failureCode: AMOUNT_MISMATCH,
+        failureReason:
+          'The payment provider reports another amount than the order: refund it by hand',
+      },
+    });
+  }
+
   private async applyWebhookEvent(
     event: NonNullable<ReturnType<PaymentProvider['parseWebhook']>>,
   ): Promise<{ outcome: string }> {
@@ -434,18 +448,21 @@ export class PaymentService {
 
     // Refund events carry the payment AND the refund entity; they must be handled as refunds, never as payment updates.
     if (event.refund && event.type.startsWith('refund.')) {
-      const outcome = await this.prisma.$transaction(async (tx) => {
+      // ONE transaction: the event id and the work commit together, so a failure rolls the id back too and the
+      // provider's retry is processed for real (not acknowledged as a duplicate).
+      const refund = event.refund;
+      const done = await this.prisma.$transaction(async (tx) => {
         if (!(await this.recordInbox(tx, event.id, event.type, 'processing')))
-          return 'duplicate';
-        return 'recorded';
+          return { result: 'duplicate' as const, mismatchRefundId: undefined };
+        const r = await this.refunds.applyProviderRefundInTx(tx, refund);
+        await tx.webhookInbox.updateMany({
+          where: { provider: this.provider.name, providerEventId: event.id },
+          data: { outcome: r.result },
+        });
+        return r;
       });
-      if (outcome === 'duplicate') return { outcome };
-      const result = await this.refunds.applyProviderRefund(event.refund);
-      await this.prisma.webhookInbox.updateMany({
-        where: { provider: this.provider.name, providerEventId: event.id },
-        data: { outcome: result },
-      });
-      return { outcome: result };
+      await this.refunds.auditMismatch(done.mismatchRefundId);
+      return { outcome: done.result };
     }
 
     if (event.payment) {
@@ -674,11 +691,13 @@ export class PaymentService {
           facts.amountMinor !== payment.amountMinor ||
           facts.currency !== payment.currency
         ) {
+          if (payment.failureCode === AMOUNT_MISMATCH) return 'mismatch'; // reported once already
           await record('payment.amount_mismatch', payment.status, null, {
             expectedMinor: payment.amountMinor,
             currency: facts.currency,
             stage: 'authorized',
           });
+          await this.markMismatch(tx, payment.id);
           return 'mismatch';
         }
         // Still authorized but not captured (an earlier capture call failed): report it again so the caller retries
@@ -800,10 +819,15 @@ export class PaymentService {
       facts.amountMinor !== payment.amountMinor ||
       facts.currency !== payment.currency
     ) {
+      // Reported ONCE (event, audit, alarm log line); the payment is marked so reconciliation stops asking about it.
+      // The captured money is refunded by a person (docs/ops/incident-runbooks.md): an automatic refund would bypass
+      // the refund-capacity and approval rules.
+      if (payment.failureCode === AMOUNT_MISMATCH) return 'mismatch';
       await record('payment.amount_mismatch', payment.status, null, {
         expectedMinor: payment.amountMinor,
         currency: facts.currency,
       });
+      await this.markMismatch(tx, payment.id);
       await this.audit.recordInTx(tx, {
         action: AuditAction.PaymentAmountMismatch,
         outcome: 'FAILURE',

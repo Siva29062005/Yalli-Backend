@@ -158,6 +158,16 @@ export function renderEmail(
         ],
         cta: { label: 'Sign in', url: `${base}/login` },
       });
+    case 'MFA_LOCKED':
+      return layout('Security alert: wrong sign-in codes', {
+        heading: 'Someone may know your password',
+        paragraphs: [
+          hi,
+          'Someone entered your correct password and then too many wrong two-step verification codes, so we paused code checks on your account for a while.',
+          'If this was not you, change your password now: your two-step verification kept them out.',
+        ],
+        cta: { label: 'Change your password', url: `${base}/account/security` },
+      });
     case 'MFA_ENABLED':
       return layout('Two-step verification turned on', {
         heading: 'Two-step verification is on',

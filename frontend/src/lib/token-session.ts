@@ -21,9 +21,12 @@ export interface TokenSessionOptions {
   csrfKey: string;
   deviceLabel: string;
   expiredEvent: string;
+  /** `cookie-admin` gives the staff console its own refresh/CSRF cookie pair, so it never replaces the storefront's
+   *  session in the same browser (and the other way round). */
+  authMode?: 'cookie' | 'cookie-admin';
 }
 
-export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: TokenSessionOptions) {
+export function createTokenSession({ csrfKey, deviceLabel, expiredEvent, authMode = 'cookie' }: TokenSessionOptions) {
   let accessToken: string | null = null;
   let restoring: Promise<boolean> | null = null;
 
@@ -58,7 +61,7 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
     const call = () =>
       requestApi<TokenResult>('/auth/refresh', {
         method: 'POST',
-        headers: { 'X-Auth-Mode': 'cookie', 'X-CSRF-Token': readCsrf() ?? csrf },
+        headers: { 'X-Auth-Mode': authMode, 'X-CSRF-Token': readCsrf() ?? csrf },
         body: JSON.stringify({}),
       });
     // Tabs of one browser share the refresh cookie: take turns (Web Locks), so a second tab refreshes with the token
@@ -127,7 +130,7 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
     clear();
     const result = await requestApi<LoginResult & { csrfToken?: string }>('/auth/login', {
       method: 'POST',
-      headers: { 'X-Auth-Mode': 'cookie' },
+      headers: { 'X-Auth-Mode': authMode },
       // `remember` decides whether the server gives the refresh cookie an expiry (it never does for staff).
       body: JSON.stringify({ email, password, deviceLabel, remember: persistent }),
     });
@@ -143,7 +146,7 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
   ) {
     const result = await requestApi<TokenResult>('/auth/mfa/verify', {
       method: 'POST',
-      headers: { 'X-Auth-Mode': 'cookie' },
+      headers: { 'X-Auth-Mode': authMode },
       body: JSON.stringify({ mfaToken, ...factor, remember: persistent }),
     });
     accessToken = result.accessToken;
@@ -160,7 +163,8 @@ export function createTokenSession({ csrfKey, deviceLabel, expiredEvent }: Token
 
   async function logout() {
     try {
-      if (accessToken || (await restore())) await request('/auth/logout', { method: 'POST' });
+      // the header tells the server WHICH cookie pair to clear (the console's or the storefront's)
+      if (accessToken || (await restore())) await request('/auth/logout', { method: 'POST', headers: { 'X-Auth-Mode': authMode } });
     } finally {
       clear();
     }

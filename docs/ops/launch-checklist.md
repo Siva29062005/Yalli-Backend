@@ -43,7 +43,7 @@ Expected peak: **owner to supply** (orders and visitors per hour on the busiest 
 | 3.4 | OWASP ZAP baseline | `docker run --rm -v "$PWD:/zap/wrk:rw" -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t https://staging… -r zap.html` (passive only; run by the owner, Docker) | | ⬜ |
 | 3.5 | External penetration test (if affordable) | | | ⬜ |
 | 3.6 | Security review record | `docs/security/phase-14-verification.md` | written 2026-11-28 | ✅ |
-| 3.7 | Open P1 security items decided (fix or accept, in writing) | `docs/PENDING.md`, "Security and bug review 2026-11-27: fix soon" | | ⬜ |
+| 3.7 | Open P1 security items decided (fix or accept, in writing) | `docs/PENDING.md`, "Security and bug review 2026-11-27: fix soon" | 2026-11-28: all fixed with tests (`docs/security/phase-16-p1-fixes.md`); the amount-mismatch refund stays manual by decision | ✅ |
 | 3.8 | Secrets only in Secrets Manager; live keys rotated in after testing | AWS console review | | ⬜ |
 
 ## 4. Quality

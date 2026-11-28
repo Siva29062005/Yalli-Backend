@@ -25,8 +25,12 @@ export const OptionalAuth = () => SetMetadata(OPTIONAL_AUTH_KEY, true);
 export const Authenticated = () => SetMetadata(IS_AUTHENTICATED_KEY, true);
 
 /** Requires ALL listed permissions (resolved server-side, never from the token). */
-export const RequirePermissions = (...permissions: string[]) =>
-  SetMetadata(PERMISSIONS_KEY, permissions);
+export const RequirePermissions = (...permissions: string[]) => {
+  // With no names the guard would let ANY signed-in user through: refuse it where it is written (the app cannot start).
+  if (permissions.length === 0 || permissions.some((p) => !p))
+    throw new Error('@RequirePermissions() needs at least one permission name');
+  return SetMetadata(PERMISSIONS_KEY, permissions);
+};
 
 /** Requires an MFA-verified token whose last (re-)authentication is recent. */
 export const RequireStepUp = (maxAgeSeconds = 600) =>

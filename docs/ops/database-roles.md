@@ -19,3 +19,18 @@ and run them as `yalli_migrator`.
 Without `REPORTING_DATABASE_URL`, reports fall back to the app role (acceptable locally, not in production).
 
 Verify: `./scripts/verify-docker.sh` (Phase 7 section) and `test/commerce/analytics.e2e-spec.ts`.
+
+## Repair: append-only tables
+
+The migrations revoke UPDATE/DELETE from `yalli_app` on the append-only tables only if the role exists when they run
+(`IF EXISTS`). A role created later, or a broad `GRANT … ON ALL TABLES`, gives the rights back. The application checks its
+own login at start-up (`DatabasePrivilegeCheck`, `src/infrastructure/database/privilege-check.ts`): **production refuses to
+start** and names the rights it holds; other environments log a warning. Repair as `yalli_migrator`:
+
+```sql
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs, consents, inventory_movements, order_status_history, payment_events,
+  order_items, shipment_events, credit_notes, credit_note_lines FROM yalli_app;
+REVOKE DELETE, TRUNCATE ON orders, payments, refunds, webhook_inbox, shipments, document_counters FROM yalli_app;
+```
+
+Create the three roles BEFORE the first `prisma migrate deploy`, and never `GRANT ALL` to `yalli_app`.

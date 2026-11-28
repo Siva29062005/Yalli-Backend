@@ -129,6 +129,7 @@ export class MfaController {
       ? {
           ...base,
           csrfToken: this.cookies.issue(
+            req,
             res,
             t.refreshToken,
             t.refreshExpiresAt,
