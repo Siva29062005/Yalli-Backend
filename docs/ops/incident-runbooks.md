@@ -11,6 +11,13 @@ hand: fix the cause; the next reconcile pass applies the payment (amount and cur
 401 = signature mismatch → the webhook secret differs (see key-rotation). 5xx/503 = we could not ask Razorpay (their outage or
 our egress): Razorpay retries; no data is lost; the reconcile worker backs it up.
 
+## "Outbox event stuck" (alarm)
+The relay publishes the events of one order (aggregate) strictly in order: an event that keeps failing to publish holds
+back every later event of the same order (other orders are not affected). Usually the broker is down (Amazon MQ: check
+it; the events go out by themselves when it is back). If only one event is stuck, look at its `last_error` in
+`outbox_events` (by `eventId` from the log line). Consumers can still reorder after delivery (retries, the dead-letter
+queue): each consumer de-duplicates by event id and must not assume order beyond what it checks itself.
+
 ## "PAYMENT AMOUNT MISMATCH" (alarm)
 Razorpay reports a payment for another amount than the order (or another currency). The order is NOT marked paid; the
 payment gets `failure_code = AMOUNT_MISMATCH` and is reported ONCE (audit `payment.amount_mismatch`, one log line), then

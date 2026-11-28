@@ -53,7 +53,10 @@ export class DatabasePrivilegeCheck implements OnApplicationBootstrap {
     );
     const rows = await this.prisma.$queryRaw<{ t: string; p: string }[]>`
       SELECT x.t, x.p FROM (VALUES ${pairs}) AS x(t, p)
-      WHERE to_regclass(x.t) IS NOT NULL AND has_table_privilege(current_user, x.t, x.p)`;
+      WHERE to_regclass(x.t) IS NOT NULL
+        AND (has_table_privilege(current_user, x.t, x.p)
+          -- UPDATE can also be granted per COLUMN (GRANT UPDATE (metadata) ON audit_logs): a table check misses that
+          OR (x.p = 'UPDATE' AND has_any_column_privilege(current_user, x.t, 'UPDATE')))`;
     return rows.map((r) => `${r.p} on ${r.t}`);
   }
 

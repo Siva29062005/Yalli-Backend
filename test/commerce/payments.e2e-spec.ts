@@ -405,6 +405,54 @@ describe('amount integrity', () => {
     ).toBe(1);
   });
 
+  it('the usual order (a wrong-amount authorization, then its capture) raises the alarm at BOTH stages, once each', async () => {
+    const { order, init } = await pending(59_000);
+    const auth = ctx.razorpay.pay(init.providerOrderId, 'authorized', {
+      amount: 100,
+    });
+    expect(
+      (
+        await shop.webhook(
+          ctx.razorpay.paymentWebhook('payment.authorized', auth),
+        )
+      ).body.data.outcome,
+    ).toBe('mismatch');
+    const payment = (await shop.dbOrder(order.id)).payments[0]!;
+    expect(payment.failureCode).toBe('AMOUNT_MISMATCH_AUTHORIZED');
+    // Razorpay auto-captures it
+    ctx.razorpay.payments.get(auth.id)!.status = 'captured';
+    const captured = ctx.razorpay.paymentWebhook(
+      'payment.captured',
+      ctx.razorpay.payments.get(auth.id)!,
+    );
+    expect((await shop.webhook(captured)).body.data.outcome).toBe('mismatch');
+    const audits = await ctx.prisma.auditLog.findMany({
+      where: { action: 'payment.amount_mismatch', resourceId: payment.id },
+    });
+    expect(
+      audits.map((x) => (x.metadata as { stage: string }).stage).sort(),
+    ).toEqual(['authorized', 'captured']);
+    expect((await shop.dbOrder(order.id)).payments[0]!.failureCode).toBe(
+      'AMOUNT_MISMATCH',
+    );
+    expect(await status(order.id)).toBe('PAYMENT_PENDING');
+    // repeats stay quiet
+    await shop.webhook(
+      ctx.razorpay.paymentWebhook(
+        'payment.captured',
+        ctx.razorpay.payments.get(auth.id)!,
+        {
+          eventId: `evt_${randomBytes(6).toString('hex')}`,
+        },
+      ),
+    );
+    expect(
+      await ctx.prisma.auditLog.count({
+        where: { action: 'payment.amount_mismatch', resourceId: payment.id },
+      }),
+    ).toBe(2);
+  });
+
   it('a capture in a different currency is rejected the same way', async () => {
     const { order, init } = await pending();
     const usd = ctx.razorpay.pay(init.providerOrderId, 'captured', {

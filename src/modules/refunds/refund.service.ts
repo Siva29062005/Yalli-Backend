@@ -398,16 +398,15 @@ export class RefundService {
   async applyProviderRefund(
     pr: ProviderRefund,
   ): Promise<'processed' | 'failed' | 'pending' | 'unknown'> {
-    const { result, mismatchRefundId } = await this.prisma.$transaction((tx) =>
+    const { result } = await this.prisma.$transaction((tx) =>
       this.applyProviderRefundInTx(tx, pr),
     );
-    await this.auditMismatch(mismatchRefundId);
     return result;
   }
 
   /**
    * The same inside the caller's transaction (the refund webhook records its event id in it). A provider amount that
-   * differs from ours is NOT applied; the caller audits it AFTER the transaction (`auditMismatch`).
+   * differs from ours is NOT applied, and is audited in the same transaction (it commits with the webhook's event id).
    */
   async applyProviderRefundInTx(
     tx: Tx,
@@ -435,6 +434,13 @@ export class RefundService {
         },
         'Provider refund amount mismatch',
       );
+      await this.audit.recordInTx(tx, {
+        action: AuditAction.RefundFailed,
+        outcome: 'FAILURE',
+        resourceType: 'refund',
+        resourceId: refund.id,
+        metadata: { reason: 'amount_mismatch' },
+      });
       return { result: 'unknown', mismatchRefundId: refund.id };
     }
     if (!refund.providerRefundId)
@@ -455,18 +461,6 @@ export class RefundService {
       return { result: 'failed' };
     }
     return { result: 'pending' };
-  }
-
-  /** Audits a provider refund amount mismatch (outside any transaction: never a second connection inside one). */
-  async auditMismatch(refundId: string | undefined): Promise<void> {
-    if (!refundId) return;
-    await this.audit.record({
-      action: AuditAction.RefundFailed,
-      outcome: 'FAILURE',
-      resourceType: 'refund',
-      resourceId: refundId,
-      metadata: { reason: 'amount_mismatch' },
-    });
   }
 
   private async fail(refundId: string, reason: string): Promise<void> {

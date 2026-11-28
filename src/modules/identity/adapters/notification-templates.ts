@@ -160,11 +160,11 @@ export function renderEmail(
       });
     case 'MFA_LOCKED':
       return layout('Security alert: wrong sign-in codes', {
-        heading: 'Someone may know your password',
+        heading: 'Too many wrong sign-in codes',
         paragraphs: [
           hi,
-          'Someone entered your correct password and then too many wrong two-step verification codes, so we paused code checks on your account for a while.',
-          'If this was not you, change your password now: your two-step verification kept them out.',
+          'Too many wrong two-step verification codes were entered on your account, so we paused code checks for a while.',
+          'If this was not you, someone may know your password: change it now (your two-step verification kept them out). Resetting your password also lifts the pause.',
         ],
         cta: { label: 'Change your password', url: `${base}/account/security` },
       });

@@ -67,6 +67,7 @@ export const MFA_FAIL_WINDOW_SECONDS = 15 * 60;
  */
 export const MFA_DAILY_FAIL_LIMIT = 30;
 export const MFA_DAILY_FAIL_WINDOW_SECONDS = 24 * 3600;
+const dayLockKey = (userId: string) => `mfa:lock:day:${userId}`;
 
 @Injectable()
 export class MfaService {
@@ -294,29 +295,17 @@ export class MfaService {
     // must not become an unlimited number of code guesses. Every attempt is counted atomically BEFORE it is checked and the
     // counter is cleared only by a success, so concurrent guesses cannot slip past the limit.
     const failKey = `mfa:fail:${userId}`;
-    const dayKey = `mfa:fail:day:${userId}`;
-    const [win, day] = await Promise.all([
+    const [win, dayLock] = await Promise.all([
       this.store.incr(failKey, MFA_FAIL_WINDOW_SECONDS),
-      this.store.incr(dayKey, MFA_DAILY_FAIL_WINDOW_SECONDS),
+      this.store.get(dayLockKey(userId)),
     ]);
     const overWindow = win.count > MFA_FAIL_LIMIT;
-    const overDay = day.count > MFA_DAILY_FAIL_LIMIT;
+    const dayUntil = dayLock ? Number(dayLock) : 0;
+    const overDay = dayUntil > Date.now();
     if (overWindow || overDay) {
-      // the first refusal of each lock: audited, and the owner is told (correct password + wrong codes = the password
-      // is probably known to someone else)
-      if (
-        (overWindow && win.count === MFA_FAIL_LIMIT + 1) ||
-        (overDay && day.count === MFA_DAILY_FAIL_LIMIT + 1)
-      ) {
-        await this.audit.record({
-          action: AuditAction.MfaLocked,
-          outcome: 'DENIED',
-          actorId: userId,
-          ...ctx,
-          metadata: { scope: overDay ? 'day' : 'window' },
-        });
-        await this.alertOwner(userId);
-      }
+      // the first refusal of the 15-minute lock: audited, and the owner is told
+      if (overWindow && win.count === MFA_FAIL_LIMIT + 1)
+        await this.lockStarted(userId, 'window', ctx);
       throw apiError(
         429,
         ErrorCode.TooManyRequests,
@@ -324,7 +313,7 @@ export class MfaService {
         {
           retryAfterSeconds: Math.max(
             overWindow ? win.ttlSeconds : 0,
-            overDay ? day.ttlSeconds : 0,
+            overDay ? Math.ceil((dayUntil - Date.now()) / 1000) : 0,
           ),
         },
       );
@@ -334,16 +323,58 @@ export class MfaService {
       : factor.recoveryCode
         ? await this.verifyRecoveryCode(userId, factor.recoveryCode, ctx)
         : false;
-    if (ok)
-      await this.store.del(failKey); // the daily count stays: it is a cap on guesses per day, not per streak
-    else
+    if (ok) {
+      await this.store.del(failKey); // only FAILURES count towards the daily cap: a correct code leaves it alone
+    } else {
       await this.audit.record({
         action: AuditAction.MfaChallengeFailed,
         outcome: 'FAILURE',
         actorId: userId,
         ...ctx,
       });
+      const day = await this.store.incr(
+        `mfa:fail:day:${userId}`,
+        MFA_DAILY_FAIL_WINDOW_SECONDS,
+      );
+      if (day.count === MFA_DAILY_FAIL_LIMIT) {
+        // the daily lock starts now and lasts until the day window ends; the marker holds its end for Retry-After
+        await this.store.set(
+          dayLockKey(userId),
+          String(Date.now() + day.ttlSeconds * 1000),
+          day.ttlSeconds,
+        );
+        await this.lockStarted(userId, 'day', ctx);
+      }
+    }
     return ok;
+  }
+
+  /** A lock starts: audited once, and the owner is emailed (wrong codes on their account). */
+  private async lockStarted(
+    userId: string,
+    scope: 'window' | 'day',
+    ctx: RequestContext,
+  ): Promise<void> {
+    await this.audit.record({
+      action: AuditAction.MfaLocked,
+      outcome: 'DENIED',
+      actorId: userId,
+      ...ctx,
+      metadata: { scope },
+    });
+    await this.alertOwner(userId);
+  }
+
+  /**
+   * Clears every code-failure counter and lock. Called when a password reset completes: the mailbox owner is back in
+   * control (and whoever held the old password lost it), so they must not stay locked out of their own account.
+   */
+  async clearFailures(userId: string): Promise<void> {
+    await this.store.del(
+      `mfa:fail:${userId}`,
+      `mfa:fail:day:${userId}`,
+      dayLockKey(userId),
+    );
   }
 
   /** Best-effort security email (never throws): an account-security alert must not break the sign-in answer. */

@@ -252,13 +252,29 @@ export class AdminAccessService {
     try {
       await this.prisma.$transaction(
         async (tx) => {
+          // the acting person must still be active (suspended meanwhile = no more admin actions)
+          const me = await tx.user.findUnique({
+            where: { id: actor.userId },
+            select: { status: true },
+          });
+          if (me?.status !== 'ACTIVE')
+            throw new ForbiddenException(
+              'You do not have permission to perform this action',
+            );
           if (role.name === RoleName.SuperAdmin) {
-            const holders = await tx.userRole.count({
-              where: { roleId: role.id },
+            // ACTIVE holders other than the target: a suspended SUPER_ADMIN cannot run the platform. Reading the users'
+            // status here also makes a concurrent suspension (setStatus) conflict with this revocation, so the two can
+            // never both succeed and leave nobody.
+            const others = await tx.userRole.count({
+              where: {
+                roleId: role.id,
+                userId: { not: target.id },
+                user: { status: 'ACTIVE' },
+              },
             });
-            if (holders <= 1)
+            if (others === 0)
               throw new ConflictException({
-                message: 'The last SUPER_ADMIN cannot be removed',
+                message: 'The last active SUPER_ADMIN cannot be removed',
                 code: ErrorCode.Conflict,
               });
           }

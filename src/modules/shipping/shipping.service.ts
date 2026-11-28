@@ -36,6 +36,16 @@ export interface ShippingMethodInput {
 
 const isUnique = (e: unknown) => (e as { code?: string }).code === 'P2002';
 
+/** How far back staff may date a tracking update (late entries happen; closing a return window early must not). */
+/** The same set of states, in any order and case. */
+const sameStates = (a: readonly string[], b: readonly string[]) => {
+  const norm = (x: readonly string[]) =>
+    [...new Set(x.map((v) => v.trim().toLowerCase()))].sort().join('|');
+  return norm(a) === norm(b);
+};
+
+export const MAX_BACKDATE_MS = 3 * 24 * 3600_000;
+
 @Injectable()
 export class ShippingService {
   constructor(
@@ -154,14 +164,17 @@ export class ShippingService {
       where: { id },
     });
     if (!current) throw new NotFoundException('Shipping method not found');
-    // What a customer pays for delivery is a price: the fee, the free-above threshold and switching a method on or off
-    // (with none active, delivery is free) need pricing.update. A field sent with its current value is no change.
+    // What a customer pays for delivery is a price: the fee, the free-above threshold, switching a method on or off (with
+    // none active, delivery is free) and the states it serves need pricing.update. A field sent with its current value
+    // is no change.
     if (
       (input.baseMinor !== undefined &&
         input.baseMinor !== current.baseMinor) ||
       (input.freeAboveMinor !== undefined &&
         input.freeAboveMinor !== current.freeAboveMinor) ||
-      (input.isActive !== undefined && input.isActive !== current.isActive)
+      (input.isActive !== undefined && input.isActive !== current.isActive) ||
+      // where a method is offered decides what those customers pay (opening a free method to all of India)
+      (input.states !== undefined && !sameStates(input.states, current.states))
     )
       this.assertMaySetFees(actor);
     this.assertEta(
@@ -301,6 +314,13 @@ export class ShippingService {
     );
     // at minute precision: the console's time field has no seconds, so "now" right after shipping must be accepted
     const floor = Math.floor(latestAt / 60_000) * 60_000;
+    // and never more than 3 days back: on a shipment sent long ago, a delivery dated near the ship date would close the
+    // customer's return window (it runs from deliveredAt) before the parcel even arrived
+    if (at.getTime() < Date.now() - MAX_BACKDATE_MS)
+      throw new ConflictException({
+        message: 'occurredAt cannot be more than 3 days in the past',
+        code: 'VALIDATION_FAILED',
+      });
     if (at.getTime() < floor)
       throw new ConflictException({
         message:

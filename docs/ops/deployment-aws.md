@@ -92,7 +92,7 @@ access needed by the task).
    - outbox backlog (`outbox_events` not published after 5 minutes; a metric from the worker log) and the RabbitMQ DLQ
      depth > 0; ElastiCache evictions and CPU;
    - the log lines "Redis commands are failing", "A cancel refund was processed for an order that had shipped",
-     "PAYMENT AMOUNT MISMATCH" (metric filters), and a sudden rise of "CSP violation" (the report endpoint is anonymous,
+     "PAYMENT AMOUNT MISMATCH", "Outbox event stuck" (metric filters), and a sudden rise of "CSP violation" (the report endpoint is anonymous,
      so alarm on a rate, not on one line).
 10. Backups, PITR and the restore drill (docs/ops/backup-restore.md); rotate keys (docs/ops/key-rotation.md).
 11. No CI by the owner's decision (2026-11-19): deploy with `./scripts/deploy.sh <staging|production>` from a machine with

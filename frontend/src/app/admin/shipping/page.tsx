@@ -187,11 +187,11 @@ function MethodForm({
       </div>
       <fieldset>
         <legend className="text-sm font-medium">States served <span className="font-normal text-[#4A5550]">({states.length === 0 ? 'all of India' : `${states.length} selected`})</span></legend>
-        <p className="mb-2 text-xs text-[#4A5550]">Leave every state unticked to deliver everywhere.</p>
+        <p className="mb-2 text-xs text-[#4A5550]">{canPrice ? 'Leave every state unticked to deliver everywhere.' : 'Changing where a method is offered needs the pricing permission.'}</p>
         <div className="grid max-h-56 gap-1 overflow-y-auto rounded-xl border border-[#E6EAE7] p-3 sm:grid-cols-2 lg:grid-cols-3">
           {INDIAN_STATES.map((s) => (
             <label key={s} className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={states.includes(s)} disabled={!states.includes(s) && states.length >= 40} onChange={(e) => setStates((list) => (e.target.checked ? [...list, s] : list.filter((x) => x !== s)))} />
+              <input type="checkbox" checked={states.includes(s)} disabled={!canPrice || (!states.includes(s) && states.length >= 40)} onChange={(e) => setStates((list) => (e.target.checked ? [...list, s] : list.filter((x) => x !== s)))} />
               {s}
             </label>
           ))}

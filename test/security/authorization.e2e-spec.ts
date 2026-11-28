@@ -575,6 +575,30 @@ describe('role management rules', () => {
     ).toBeGreaterThanOrEqual(1);
   });
 
+  it('one SUPER_ADMIN revoking while the other suspends (at once) never leaves no active SUPER_ADMIN', async () => {
+    for (let round = 0; round < 3; round++) {
+      const a = await s.staff('SUPER_ADMIN');
+      const b = await s.staff('SUPER_ADMIN');
+      const results = await Promise.all([
+        ctx
+          .http()
+          .patch(`/api/v1/admin/users/${b.userId}/status`)
+          .set(as(a))
+          .send({ status: 'SUSPENDED' }),
+        ctx
+          .http()
+          .delete(`/api/v1/admin/users/${a.userId}/roles/SUPER_ADMIN`)
+          .set(as(b)),
+      ]);
+      for (const r of results) expect([200, 401, 403, 409]).toContain(r.status);
+      expect(
+        await ctx.prisma.userRole.count({
+          where: { role: { name: 'SUPER_ADMIN' }, user: { status: 'ACTIVE' } },
+        }),
+      ).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   it('validates the input shape: unknown role, bad ids, extra fields (mass assignment)', async () => {
     const root = await s.staff('SUPER_ADMIN');
     const target = await s.session();

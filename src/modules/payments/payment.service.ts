@@ -66,8 +66,13 @@ const STALE_WEBHOOK_SECONDS = 7 * 24 * 3600;
  *    payment is processed once no matter how many times or in what order the signals arrive.
  *  - Money that arrives for an order we can no longer fulfil (cancelled, expired, out of stock) is refunded automatically.
  */
-/** failure_code of a payment the provider reports for another amount: reported once, never reconciled again. */
+/** failure_code of a payment CAPTURED for another amount: reported once, never reconciled again (a person refunds it). */
 export const AMOUNT_MISMATCH = 'AMOUNT_MISMATCH';
+/**
+ * failure_code of an AUTHORIZATION for another amount: reported once. Reconciliation keeps looking, so a capture of it
+ * that follows (the usual Razorpay order: authorized, then captured) is still found and reported as AMOUNT_MISMATCH.
+ */
+export const AMOUNT_MISMATCH_AUTHORIZED = 'AMOUNT_MISMATCH_AUTHORIZED';
 
 @Injectable()
 export class PaymentService {
@@ -427,13 +432,56 @@ export class PaymentService {
     return result;
   }
 
-  private async markMismatch(tx: Tx, paymentId: string): Promise<void> {
+  /** Records a wrong-amount report ONCE per stage: payment event, audit, the alarm log line, and the mark. */
+  private async reportMismatch(
+    tx: Tx,
+    payment: { id: string; amountMinor: number },
+    facts: { id: string; amountMinor: number; currency: string },
+    orderId: string,
+    stage: 'authorized' | 'captured',
+    record: (
+      type: string,
+      from: string | null,
+      to: string | null,
+      data: Record<string, unknown>,
+    ) => Promise<unknown>,
+  ): Promise<void> {
+    await record('payment.amount_mismatch', null, null, {
+      expectedMinor: payment.amountMinor,
+      currency: facts.currency,
+      stage,
+    });
+    await this.audit.recordInTx(tx, {
+      action: AuditAction.PaymentAmountMismatch,
+      outcome: 'FAILURE',
+      resourceType: 'payment',
+      resourceId: payment.id,
+      metadata: {
+        expectedMinor: payment.amountMinor,
+        receivedMinor: facts.amountMinor,
+        orderId,
+        stage,
+        providerPaymentId: facts.id,
+      },
+    });
+    this.logger.error(
+      {
+        paymentId: payment.id,
+        expected: payment.amountMinor,
+        got: facts.amountMinor,
+        stage,
+      },
+      'PAYMENT AMOUNT MISMATCH: order NOT marked paid',
+    );
     await tx.payment.update({
-      where: { id: paymentId },
+      where: { id: payment.id },
       data: {
-        failureCode: AMOUNT_MISMATCH,
+        failureCode:
+          stage === 'captured' ? AMOUNT_MISMATCH : AMOUNT_MISMATCH_AUTHORIZED,
         failureReason:
-          'The payment provider reports another amount than the order: refund it by hand',
+          stage === 'captured'
+            ? 'The payment provider captured another amount than the order: refund it by hand'
+            : 'The payment provider authorized another amount than the order (not captured)',
       },
     });
   }
@@ -461,7 +509,6 @@ export class PaymentService {
         });
         return r;
       });
-      await this.refunds.auditMismatch(done.mismatchRefundId);
       return { outcome: done.result };
     }
 
@@ -691,13 +738,19 @@ export class PaymentService {
           facts.amountMinor !== payment.amountMinor ||
           facts.currency !== payment.currency
         ) {
-          if (payment.failureCode === AMOUNT_MISMATCH) return 'mismatch'; // reported once already
-          await record('payment.amount_mismatch', payment.status, null, {
-            expectedMinor: payment.amountMinor,
-            currency: facts.currency,
-            stage: 'authorized',
-          });
-          await this.markMismatch(tx, payment.id);
+          if (
+            payment.failureCode === AMOUNT_MISMATCH ||
+            payment.failureCode === AMOUNT_MISMATCH_AUTHORIZED
+          )
+            return 'mismatch'; // reported once already
+          await this.reportMismatch(
+            tx,
+            payment,
+            facts,
+            order.id,
+            'authorized',
+            record,
+          );
           return 'mismatch';
         }
         // Still authorized but not captured (an earlier capture call failed): report it again so the caller retries
@@ -759,8 +812,14 @@ export class PaymentService {
       where: { id: payment.id },
       data: {
         status: 'FAILED',
-        failureCode: facts.errorCode,
-        failureReason: facts.errorDescription,
+        // a wrong-amount mark stays (or the next pass would report it again)
+        ...(payment.failureCode === AMOUNT_MISMATCH ||
+        payment.failureCode === AMOUNT_MISMATCH_AUTHORIZED
+          ? {}
+          : {
+              failureCode: facts.errorCode,
+              failureReason: facts.errorDescription,
+            }),
       },
     });
     await record('payment.failed', payment.status, 'FAILED', {
@@ -823,29 +882,13 @@ export class PaymentService {
       // The captured money is refunded by a person (docs/ops/incident-runbooks.md): an automatic refund would bypass
       // the refund-capacity and approval rules.
       if (payment.failureCode === AMOUNT_MISMATCH) return 'mismatch';
-      await record('payment.amount_mismatch', payment.status, null, {
-        expectedMinor: payment.amountMinor,
-        currency: facts.currency,
-      });
-      await this.markMismatch(tx, payment.id);
-      await this.audit.recordInTx(tx, {
-        action: AuditAction.PaymentAmountMismatch,
-        outcome: 'FAILURE',
-        resourceType: 'payment',
-        resourceId: payment.id,
-        metadata: {
-          expectedMinor: payment.amountMinor,
-          receivedMinor: facts.amountMinor,
-          orderId: order.id,
-        },
-      });
-      this.logger.error(
-        {
-          paymentId: payment.id,
-          expected: payment.amountMinor,
-          got: facts.amountMinor,
-        },
-        'PAYMENT AMOUNT MISMATCH: order NOT marked paid',
+      await this.reportMismatch(
+        tx,
+        payment,
+        facts,
+        order.id,
+        'captured',
+        record,
       );
       return 'mismatch';
     }
@@ -1030,7 +1073,14 @@ export class PaymentService {
     );
     let result: ApplyOutcome | 'none' = 'none';
     for (const status of ['captured', 'authorized'] as const) {
-      const p = found.find((x) => x.status === status);
+      // an authorization for the RIGHT amount first: a stray wrong-amount one must not decide the verdict
+      const p =
+        found.find(
+          (x) =>
+            x.status === status &&
+            x.amountMinor === payment.amountMinor &&
+            x.currency === payment.currency,
+        ) ?? found.find((x) => x.status === status);
       if (p) {
         result = await this.applyAndFinish(
           payment.id,

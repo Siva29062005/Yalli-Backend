@@ -34,11 +34,22 @@ export const LOG_REDACT_PATHS = [
  * it) prints the query's ARGUMENTS: personal data, password hashes. Their kind is logged, not their text.
  */
 export function serializeError(err: unknown): unknown {
-  if (!(err instanceof Error)) return err;
-  if (err.name === 'PrismaClientValidationError')
+  // pino-http (nestjs-pino) WRAPS this serializer: it receives the standard serializer's plain object, not the Error.
+  // Both shapes are handled; the test goes through pino-http like the app.
+  const PRISMA_VALIDATION = 'PrismaClientValidationError';
+  const o = (typeof err === 'object' && err !== null ? err : {}) as {
+    type?: unknown;
+    name?: unknown;
+  };
+  const isPrismaValidation =
+    (err instanceof Error && err.name === PRISMA_VALIDATION) ||
+    o.type === PRISMA_VALIDATION ||
+    o.name === PRISMA_VALIDATION;
+  const kind = isPrismaValidation ? PRISMA_VALIDATION : '';
+  if (kind === 'PrismaClientValidationError')
     return {
-      type: err.name,
+      type: kind,
       message: 'Prisma validation error (arguments not logged)',
     };
-  return stdSerializers.err(err);
+  return err instanceof Error ? stdSerializers.err(err) : err;
 }

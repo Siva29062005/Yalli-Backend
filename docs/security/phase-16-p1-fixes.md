@@ -40,6 +40,32 @@ Before any new feature, the owner chose to close every open "fix soon" item from
 | "Verified purchase" stayed after every unit was returned and refunded | Net of REFUNDED returns, both for writing a review and for the public badge | `order.service.ts` (`customersWhoKept`), `reviews.service.ts` | `reviews-wishlist.e2e-spec.ts` |
 | Deleting a variant needed only `products.update`; category counts included products with no active variant | `products.delete`; counts need an active variant (like the listing and brand counts) | `catalog-admin.controller.ts`, `catalog-query.service.ts`, `ProductEditor.tsx` | `catalog.e2e-spec.ts` |
 
+## Review of these fixes (commit 9b3ba2d)
+
+Two independent reviews; all findings confirmed and fixed:
+- **The daily MFA cap counted CORRECT codes too** (high): an owner who signs in and steps up often was locked out for a
+  day, with a false "compromised" email. Now only failures count; the 30th failure sets a lock marker (with its end, for
+  Retry-After); a completed password reset clears every counter and lock; the email no longer claims the password was used.
+- **A wrong-amount capture after a wrong-amount authorization was never reported** (the usual Razorpay order): the marks
+  are now per stage (`AMOUNT_MISMATCH_AUTHORIZED`, then `AMOUNT_MISMATCH`), each stage audits and logs the alarm once,
+  only the captured stage stops reconciliation; a failed attempt keeps the mark; reconciliation prefers an authorization
+  for the right amount.
+- **The Prisma log serializer never ran in the app** (pino-http wraps it and passes the serialized object): it now
+  recognises both shapes; the test goes through pino-http.
+- **A revoke and a suspension at once could still leave no active SUPER_ADMIN**: `revokeRole` counts only ACTIVE holders
+  other than the target (which also makes the two conflict under SERIALIZABLE) and requires an active actor.
+- **Backdating on old shipments**: never more than 3 days back (`MAX_BACKDATE_MS`); the entered time is audited.
+- **States served** changes need `pricing.update` (opening a free method to all of India); the console locks them.
+- **A password reset could lift a concurrent suspension**: the update is conditional on the status read.
+- **Column-level UPDATE grants** are caught by the privilege check (`has_any_column_privilege`); tested with real grants.
+- **Outbox order** now uses the database clock (`clock_timestamp()` default, migration `20261128000100`), and a head that
+  keeps failing logs "Outbox event stuck" (alarm, runbook).
+- **Audits after commit could be lost**: the refund request and the refund-amount mismatch are audited inside their
+  transactions (`recordInTx`).
+- Tests that proved too little: the backdating test now separates the latest-update rule from the ship date and the
+  3-day cap; a concurrency test runs reject + request on one order; the dev compose `app` no longer gets
+  `BOOTSTRAP_ADMIN_*`, the `seed` no longer the reporting password.
+
 ## Residual
 
 - The amount-mismatch refund stays manual by design.

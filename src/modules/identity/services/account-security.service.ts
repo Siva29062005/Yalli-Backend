@@ -21,6 +21,7 @@ import {
   isUniqueViolation,
   normalizeEmail,
 } from './identity-utils.js';
+import { MfaService } from './mfa.service.js';
 import { SessionStateService } from './session-state.service.js';
 import { VerificationService } from './verification.service.js';
 
@@ -42,6 +43,7 @@ export class AccountSecurityService {
     private readonly breached: BreachedPasswordChecker,
     private readonly notifications: NotificationPort,
     private readonly audit: AuditService,
+    private readonly mfa: MfaService,
   ) {}
 
   // ------------------------------------------------------------------------- email verification
@@ -235,8 +237,10 @@ export class AccountSecurityService {
     if (consumed?.id !== peek.id)
       throw apiError(400, ErrorCode.BadRequest, INVALID_TOKEN);
 
-    await this.prisma.user.update({
-      where: { id: user.id },
+    // Conditional on the status read above: an admin who suspends the account meanwhile (during the password checks)
+    // must not be undone by this update.
+    const updated = await this.prisma.user.updateMany({
+      where: { id: user.id, status: user.status },
       data: {
         passwordHash,
         passwordChangedAt: new Date(),
@@ -248,6 +252,9 @@ export class AccountSecurityService {
           : {}),
       },
     });
+    if (updated.count !== 1)
+      throw apiError(400, ErrorCode.BadRequest, INVALID_TOKEN);
+    await this.mfa.clearFailures(user.id); // the mailbox owner is back in control: lift any code lock
     await this.sessions.revokeAllForUser(user.id, 'PASSWORD_RESET');
     await this.audit.record({
       action: AuditAction.PasswordResetCompleted,

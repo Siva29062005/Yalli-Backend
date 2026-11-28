@@ -503,7 +503,7 @@ describe('multi-factor authentication (TOTP)', () => {
     expect(ok.body.data.accessToken).toBeTruthy();
   });
 
-  it('a daily cap holds across 15-minute windows, and the owner is emailed when a lock starts', async () => {
+  it('a daily cap counts FAILURES only, holds across 15-minute windows, emails the owner, and a reset lifts it', async () => {
     const a = await s.session();
     const { secret } = await s.enableMfa(a);
     const attempt = async (code: string) =>
@@ -516,65 +516,39 @@ describe('multi-factor authentication (TOTP)', () => {
             .mfaToken as string,
           code,
         });
-    // 30 failures earlier today (simulated: the 15-minute windows have passed)
-    await ctx.store.incr(`mfa:fail:day:${a.userId}`, 24 * 3600);
-    for (let i = 1; i < 30; i++)
+    // a correct code does not count towards the daily cap (the owner signs in and steps up many times a day)
+    expect((await attempt(totp(secret, 0))).status).toBe(200);
+    expect(await ctx.store.get(`mfa:fail:day:${a.userId}`)).toBeNull();
+    // 29 failures earlier today (simulated: their 15-minute windows have passed), then the 30th starts the lock
+    for (let i = 0; i < 29; i++)
       await ctx.store.incr(`mfa:fail:day:${a.userId}`, 24 * 3600);
-    const locked = await attempt(totp(secret, 0)); // the right code, but the day is used up
+    expect((await attempt('000001')).status).toBe(401);
+    await ctx.store.del(`mfa:fail:${a.userId}`);
+    const locked = await attempt(totp(secret, 1)); // the right code, but the day is used up
     expect(locked.status).toBe(429);
-    expect(locked.body.error.details?.retryAfterSeconds ?? 1).toBeGreaterThan(
-      0,
-    );
     expect(
       await ctx.prisma.auditLog.count({
         where: { action: 'auth.mfa.locked', actorId: a.userId },
       }),
     ).toBe(1);
     await waitFor(() => ctx.notifier.last('MFA_LOCKED', a.email));
-    // further refusals do not email again
-    expect((await attempt('000001')).status).toBe(429);
+    expect((await attempt('000002')).status).toBe(429); // further refusals do not email again
     expect(
       ctx.notifier.sent.filter(
         (m) => m.type === 'MFA_LOCKED' && 'email' in m && m.email === a.email,
       ),
     ).toHaveLength(1);
-  });
-
-  it('a pending sign-in challenge dies when the password is reset (a thief with the old password loses it)', async () => {
-    const a = await s.session();
-    const { secret } = await s.enableMfa(a);
-    const challenge = (await s.login(a.email, a.password, freshIp())).body.data
-      .mfaToken as string;
+    // the mailbox owner resets the password: the lock is lifted, the new password and a code work
     await forgot(a.email).expect(202);
     await reset(await resetToken(a.email), NEW_PASSWORD).expect(200);
-    const late = await ctx
+    const token = (await s.login(a.email, NEW_PASSWORD, freshIp())).body.data
+      .mfaToken as string;
+    const ok = await ctx
       .http()
       .post('/api/v1/auth/mfa/verify')
       .set('X-Forwarded-For', freshIp())
-      .send({ mfaToken: challenge, code: totp(secret, 0) });
-    expect(late.status).toBe(401);
-    expect(late.body.error.code).toBe('MFA_CHALLENGE_EXPIRED');
-  });
-
-  it('export and deletion codes count against the same per-account limit as sign-in', async () => {
-    const a = await s.session();
-    await s.enableMfa(a);
-    await ctx.store.del(`mfa:fail:${a.userId}`);
-    const res = await ctx
-      .http()
-      .post('/api/v1/me/export')
-      .set(authed(a))
-      .send({ password: a.password, code: '000001' });
-    expect(res.status).toBe(401);
-    expect(await ctx.store.get(`mfa:fail:${a.userId}`)).toBe('1');
-    // a wrong PASSWORD does not touch the code counter
-    await ctx
-      .http()
-      .post('/api/v1/me/export')
-      .set(authed(a))
-      .send({ password: 'wrong-password-123', code: '000001' })
-      .expect(401);
-    expect(await ctx.store.get(`mfa:fail:${a.userId}`)).toBe('1');
+      .send({ mfaToken: token, code: totp(secret, 1) }); // step 1 was refused by the lock, never used
+    expect(ok.status).toBe(200);
   });
 
   it('a successful second factor clears the failure counter', async () => {

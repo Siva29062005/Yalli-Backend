@@ -588,7 +588,13 @@ export class OrderService {
       ...ctx,
       resourceType: 'order',
       resourceId: orderId,
-      metadata: { status: input.status },
+      // the time entered by staff (it decides the return window for DELIVERED), next to when they entered it
+      metadata: {
+        status: input.status,
+        ...(input.occurredAt
+          ? { occurredAt: input.occurredAt.toISOString() }
+          : {}),
+      },
     });
     return this.trackingForAdmin(orderId);
   }

@@ -131,6 +131,7 @@ describe('admin shipping methods', () => {
         .send(body);
     // the console sends every field: unchanged fees are not a price change
     const ok = await patch({
+      states: [], // unchanged (no states = all of India)
       name: 'Standard (renamed)',
       etaMaxDays: 7,
       baseMinor: 6_000,
@@ -142,6 +143,7 @@ describe('admin shipping methods', () => {
       { baseMinor: 1 },
       { freeAboveMinor: null },
       { isActive: false }, // with no method on, delivery is free
+      { states: ['Kerala'] }, // where a method is offered decides what those customers pay
     ])
       expect((await patch(body)).status).toBe(403);
     expect(
@@ -510,27 +512,59 @@ describe('shipments and tracking', () => {
 
   it('refuses a tracking time before the shipment or before its latest update (no backdated delivery)', async () => {
     const { order } = await shippedOrder('DT-TRK-1016');
-    const sh = await ctx.prisma.shipment.findUniqueOrThrow({
+    // The shipment record says it left 2 days ago (simulated); its first tracking event ("in transit") is from now and
+    // history cannot be edited. A time from a day ago is therefore AFTER the shipment but BEFORE the latest update.
+    await ctx.prisma.shipment.update({
       where: { orderId: order.id },
+      data: { shippedAt: new Date(Date.now() - 2 * 86_400_000) },
     });
-    const beforeShipping = await admin(order.id, 'tracking', {
-      status: 'DELIVERED',
-      occurredAt: new Date(sh.shippedAt.getTime() - 86_400_000).toISOString(),
-    });
-    expect(beforeShipping.status).toBe(409);
-    const out = await admin(order.id, 'tracking', {
-      status: 'OUT_FOR_DELIVERY',
-    });
-    expect(out.status).toBe(200);
+    const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
     const beforeLatest = await admin(order.id, 'tracking', {
       status: 'DELIVERED',
-      occurredAt: new Date(Date.now() - 60 * 60_000).toISOString(), // after shipping, before "out for delivery"
+      occurredAt: at(86_400_000),
     });
     expect(beforeLatest.status).toBe(409);
-    expect((await shop.dbOrder(order.id)).deliveredAt).toBeNull();
+    // before the shipment as well
     expect(
-      (await admin(order.id, 'tracking', { status: 'DELIVERED' })).status,
+      (
+        await admin(order.id, 'tracking', {
+          status: 'DELIVERED',
+          occurredAt: at(2 * 86_400_000 + 3_600_000),
+        })
+      ).status,
+    ).toBe(409);
+    expect((await shop.dbOrder(order.id)).deliveredAt).toBeNull();
+    // now: accepted, and the entered time is audited
+    expect(
+      (
+        await admin(order.id, 'tracking', {
+          status: 'DELIVERED',
+          occurredAt: new Date().toISOString(),
+        })
+      ).status,
     ).toBe(200);
+    const audit = await ctx.prisma.auditLog.findFirst({
+      where: { resourceId: order.id, action: 'shipment.updated' },
+      orderBy: { occurredAt: 'desc' },
+    });
+    expect(
+      (audit?.metadata as { occurredAt?: string }).occurredAt,
+    ).toBeTruthy();
+  });
+
+  it('never more than 3 days back, even on a shipment sent long ago (the return window runs from delivery)', async () => {
+    const { order } = await shippedOrder('DT-TRK-1017');
+    await ctx.prisma.shipment.update({
+      where: { orderId: order.id },
+      data: { shippedAt: new Date(Date.now() - 10 * 86_400_000) },
+    });
+    const res = await admin(order.id, 'tracking', {
+      status: 'DELIVERED',
+      occurredAt: new Date(Date.now() - 9 * 86_400_000).toISOString(),
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/more than 3 days in the past/); // this rule, not the ship-date one
+    expect((await shop.dbOrder(order.id)).deliveredAt).toBeNull();
   });
 
   it('a tracking number can belong to one shipment only', async () => {

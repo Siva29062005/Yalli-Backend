@@ -793,17 +793,39 @@ export class AdminRefundsController {
         });
         if (!payment)
           throw new NotFoundException('No captured payment for this order');
-        const refund = await this.prisma.$transaction((tx) =>
-          this.refunds.requestInTx(tx, {
+        const refundKey = `admin:${a.userId}:${idemKey}`;
+        // audited IN the refund's transaction: a request is recorded exactly when it is created (a failure afterwards
+        // cannot leave it unaudited; the same key again finds the existing refund and records nothing)
+        const refund = await this.prisma.$transaction(async (tx) => {
+          const existed = await tx.refund.findUnique({
+            where: { idempotencyKey: refundKey },
+            select: { id: true },
+          });
+          const r = await this.refunds.requestInTx(tx, {
             paymentId: payment.id,
             kind: dto.kind,
             amountMinor: dto.amountMinor,
             reason: dto.reason,
             requestedById: a.userId,
             autoApprove: false,
-            idempotencyKey: `admin:${a.userId}:${idemKey}`,
-          }),
-        );
+            idempotencyKey: refundKey,
+          });
+          if (!existed)
+            await this.audit.recordInTx(tx, {
+              action: AuditAction.RefundRequested,
+              outcome: 'SUCCESS',
+              actorId: a.userId,
+              ...ctx,
+              resourceType: 'refund',
+              resourceId: r.id,
+              metadata: {
+                orderId: dto.orderId,
+                kind: dto.kind,
+                amountMinor: r.amountMinor,
+              },
+            });
+          return r;
+        });
         return {
           status: 201,
           body: {
@@ -816,21 +838,6 @@ export class AdminRefundsController {
     );
     setIdempotent(res, r.replayed);
     res.status(r.status);
-    // a replay of the same request is not a new request: audited once, after the transaction (never inside it)
-    if (!r.replayed && r.status === 201)
-      await this.audit.record({
-        action: AuditAction.RefundRequested,
-        outcome: 'SUCCESS',
-        actorId: a.userId,
-        ...ctx,
-        resourceType: 'refund',
-        resourceId: r.body.id,
-        metadata: {
-          orderId: dto.orderId,
-          kind: dto.kind,
-          amountMinor: r.body.amountMinor,
-        },
-      });
     return r.body;
   }
 

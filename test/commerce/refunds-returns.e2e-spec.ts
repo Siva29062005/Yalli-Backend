@@ -912,6 +912,41 @@ describe('provider failures: a refund is never sent twice and never silently los
     return { order, payment, finance, refundId: req.body.data.id as string };
   };
 
+  it('rejecting one refund while another is requested on the same order never deadlocks (both lock the ORDER first)', async () => {
+    const { order } = await paidOrder(100_000);
+    const support = await s.staff('CUSTOMER_SUPPORT');
+    const finance = await s.staff('FINANCE_MANAGER');
+    for (let round = 0; round < 6; round++) {
+      const pending = await requestRefund(support, {
+        orderId: order.id,
+        amountMinor: 1_000,
+        reason: `Round ${round}`,
+      });
+      expect(pending.status).toBe(201);
+      const [rejected, another] = await Promise.all([
+        ctx
+          .http()
+          .post(`/api/v1/admin/refunds/${pending.body.data.id}/reject`)
+          .set(authed(finance))
+          .send({ reason: 'Not this one' }),
+        requestRefund(support, {
+          orderId: order.id,
+          amountMinor: 1_000,
+          reason: `Parallel ${round}`,
+        }),
+      ]);
+      // a deadlock would surface as a 500 (40P01) on one side
+      expect([200, 409]).toContain(rejected.status);
+      expect([201, 409]).toContain(another.status);
+      if (another.status === 201)
+        await ctx
+          .http()
+          .post(`/api/v1/admin/refunds/${another.body.data.id}/reject`)
+          .set(authed(finance))
+          .send({ reason: 'Tidy up' });
+    }
+  });
+
   it('a refund REQUEST is audited once (a replay of the same request is not a second one)', async () => {
     const { order } = await paidOrder(100_000);
     const support = await s.staff('CUSTOMER_SUPPORT');

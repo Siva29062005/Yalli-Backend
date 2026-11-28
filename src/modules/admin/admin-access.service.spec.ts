@@ -18,10 +18,21 @@ const principal = (
 
 const ctx = { ip: null, userAgent: null, correlationId: null };
 
-function build(opts: { holders: number; txError?: unknown }) {
+function build(opts: {
+  holders: number;
+  txError?: unknown;
+  actorStatus?: string;
+}) {
   const deleteMany = vi.fn().mockResolvedValue({ count: 1 });
+  // `holders` = every ACTIVE holder including the target; the service counts the OTHERS
+  const count = vi.fn().mockResolvedValue(opts.holders - 1);
   const tx = {
-    userRole: { count: vi.fn().mockResolvedValue(opts.holders), deleteMany },
+    user: {
+      findUnique: vi
+        .fn()
+        .mockResolvedValue({ status: opts.actorStatus ?? 'ACTIVE' }),
+    },
+    userRole: { count, deleteMany },
   };
   const prisma = {
     user: {
@@ -53,7 +64,7 @@ function build(opts: { holders: number; txError?: unknown }) {
     sessions as never,
     audit as never,
   );
-  return { svc, deleteMany, sessions, authz, audit };
+  return { svc, deleteMany, sessions, authz, audit, count };
 }
 
 describe('AdminAccessService.revokeRole (SUPER_ADMIN safety)', () => {
@@ -151,6 +162,29 @@ describe('AdminAccessService.revokeRole (SUPER_ADMIN safety)', () => {
     ).rejects.toThrow('permission');
     expect(deleteMany).not.toHaveBeenCalled();
     expect(Permission.UsersManage).toBe('users.manage');
+  });
+});
+
+describe('AdminAccessService.revokeRole (active holders, active actor)', () => {
+  const root = principal('actor', 'SUPER_ADMIN');
+  it('counts only ACTIVE holders other than the target (a suspended SUPER_ADMIN does not count)', async () => {
+    const { svc, count } = build({ holders: 2 });
+    await svc.revokeRole(root, 'target', 'SUPER_ADMIN', ctx);
+    expect(count).toHaveBeenCalledWith({
+      where: {
+        roleId: 'r',
+        userId: { not: 'target' },
+        user: { status: 'ACTIVE' },
+      },
+    });
+  });
+
+  it('an actor who was suspended meanwhile cannot revoke anything', async () => {
+    const { svc, deleteMany } = build({ holders: 5, actorStatus: 'SUSPENDED' });
+    await expect(
+      svc.revokeRole(root, 'target', 'SUPER_ADMIN', ctx),
+    ).rejects.toThrow(/permission/);
+    expect(deleteMany).not.toHaveBeenCalled();
   });
 });
 

@@ -78,6 +78,8 @@ services:
       POSTGRES_MIGRATOR_PASSWORD: ""
       POSTGRES_APP_PASSWORD: ""
       POSTGRES_REPORTING_PASSWORD: ""
+      # the seed does not run reports: its own (app) login, never the reporting role's password
+      REPORTING_DATABASE_URL: postgresql://yalli_app:${POSTGRES_APP_PASSWORD}@postgres:5432/yalli
       NODE_ENV: development
       LOG_PRETTY: "false"
       DATABASE_URL: postgresql://yalli_app:${POSTGRES_APP_PASSWORD}@postgres:5432/yalli
@@ -112,6 +114,9 @@ services:
       POSTGRES_MIGRATOR_PASSWORD: ""
       POSTGRES_APP_PASSWORD: ""
       POSTGRES_REPORTING_PASSWORD: ""
+      # the first SUPER_ADMIN's password is for the seed only
+      BOOTSTRAP_ADMIN_EMAIL: ""
+      BOOTSTRAP_ADMIN_PASSWORD: ""
       NODE_ENV: development
       LOG_PRETTY: "false"
       DATABASE_URL: postgresql://yalli_app:${POSTGRES_APP_PASSWORD}@postgres:5432/yalli

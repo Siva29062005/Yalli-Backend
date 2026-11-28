@@ -351,6 +351,12 @@ Catalogue and content
       with no active variant. (Fixed 2026-11-27, Phase 11: the import CLI now checks products.publish for `--publish`
       and inventory.adjust for stock, like the console.)
 
+- [x] (2026-11-28) Review of the Phase 16 P1 fixes (9b3ba2d): daily MFA cap counted successes (fixed: failures only,
+      reset clears it), wrong-amount capture after a wrong-amount authorization unreported (per-stage marks), Prisma log
+      serializer bypassed by pino-http, revoke + suspend race, backdating on old shipments, states vs pricing.update,
+      reset vs suspension race, column-level grants, outbox DB clock + stuck alarm, audits inside transactions, weak
+      tests. Record: `docs/security/phase-16-p1-fixes.md`.
+
 ### Review of the Phase 10 commit (da146bc, 2026-11-27)
 - [x] (2026-11-27) 18 confirmed findings fixed (contact form limits and length, brand counts, contact data in export and
       erasure, multi-tab sign-out, locked filters on /specials and /brands, cart load race, review paging, checkout

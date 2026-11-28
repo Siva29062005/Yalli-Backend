@@ -32,6 +32,9 @@ interface Row {
  * (FOR UPDATE SKIP LOCKED), published outside any transaction, then marked published. A crash between publish and mark
  * re-publishes after the lease expires (at-least-once; consumers de-duplicate on the event id).
  */
+/** After this many failed publishes the head of an aggregate is reported as stuck (alarm line). */
+export const STUCK_AFTER_ATTEMPTS = 5;
+
 @Injectable()
 export class OutboxRelay
   implements OnApplicationBootstrap, OnApplicationShutdown
@@ -108,6 +111,19 @@ export class OutboxRelay
             { eventId: row.id, type: row.event_type, attempts },
             'Outbox publish failed; will retry with backoff',
           );
+          // A head that keeps failing holds back every later event of its aggregate (per-aggregate order): an alarm
+          // line, not just a warning (docs/ops/incident-runbooks.md, "Outbox event stuck").
+          if (attempts >= STUCK_AFTER_ATTEMPTS)
+            this.logger.error(
+              {
+                eventId: row.id,
+                type: row.event_type,
+                aggregateType: row.aggregate_type,
+                aggregateId: row.aggregate_id,
+                attempts,
+              },
+              'Outbox event stuck: later events of its aggregate are held back',
+            );
         }
       }
       return published;
