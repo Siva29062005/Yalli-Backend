@@ -19,6 +19,7 @@ Commands referred to: `npm run check` (the quality gate), `npm run test:browser`
 | 1.4 | Deployed site checks | `npm run verify:site -- --url https://staging…` (also run by `deploy.sh` with `SITE_URL`) | local rehearsal 2026-11-28 over http: 37 checks, 0 failed; https-only checks (HSTS, redirect) need staging | 🟡 |
 | 1.5 | Exit test of Phase 13 on staging | register (email + SMS arrive), pay with Razorpay test mode, ship, return, refund, credit note | | ⬜ |
 | 1.6 | Restore drill on staging | `scripts/dr-drill.sh` (docs/ops/backup-restore.md) | | ⬜ |
+| 1.7 | Old store addresses redirect | `frontend/src/data/legacy-redirects.json` from the final conversion; `npm run verify:redirects -- --site <rehearsal host> --urls old-urls.txt` (docs/ops/go-live.md) | resolver unit-tested; fixed routes checked by `test-static-pages.mjs` and `verify:site` | ⬜ |
 
 ## 2. Load (docs/ops/load-testing.md)
 

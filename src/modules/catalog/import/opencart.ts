@@ -89,8 +89,8 @@ export interface ConvertOptions {
 }
 
 export interface RedirectEntry {
-  kind: 'product' | 'category';
-  /** OpenCart id (product_id, or the category path such as "20_27"). */
+  kind: 'product' | 'category' | 'brand';
+  /** OpenCart id (product_id, manufacturer_id, or the category path such as "20_27"). */
   id: string;
   /** OpenCart SEO keyword, when one exists. */
   keyword: string | null;
@@ -281,6 +281,7 @@ export function convertOpenCart(
       text(m['name'], 80),
     ]),
   );
+  const usedBrands = new Set<string>(); // manufacturers with at least one converted product (they get a brand page)
   const toCats = new Map<string, string[]>();
   for (const r of tables['product_to_category'] ?? []) {
     const list = toCats.get(r['product_id'] ?? '') ?? [];
@@ -444,7 +445,8 @@ export function convertOpenCart(
         ? { descriptionHtml: (d['description'] ?? '').slice(0, 50_000) }
         : {}),
       ...(p['manufacturer_id'] && brands.get(p['manufacturer_id'])
-        ? { brand: brands.get(p['manufacturer_id']) }
+        ? (usedBrands.add(p['manufacturer_id']),
+          { brand: brands.get(p['manufacturer_id']) })
         : {}),
       categoryKeys,
       ...(tags.length ? { tags } : {}),
@@ -498,6 +500,18 @@ export function convertOpenCart(
     redirects.push({ kind: 'product', id, keyword, to: `/products/${slug}` });
   }
   if (!tables['product']?.length) warnings.push('The export has no products');
+  // brand pages: the importer names a brand's page after slugify(name)
+  for (const id of usedBrands) {
+    const name = brands.get(id)!;
+    const slug = slugify(name);
+    if (!slug) continue;
+    redirects.push({
+      kind: 'brand',
+      id,
+      keyword: seo.get(`manufacturer_id=${id}`) ?? null,
+      to: `/brands/${slug}`,
+    });
+  }
   if (needsFallback)
     categories.push({
       key: FALLBACK_CATEGORY.key,

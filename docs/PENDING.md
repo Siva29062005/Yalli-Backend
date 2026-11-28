@@ -100,8 +100,12 @@ Follow-ups found while wiring (P1 unless noted):
 - [x] (2026-11-27, Phase 10: `POST /contact` + form on /contact; emailed to `SUPPORT_INBOX_EMAIL` when set) Contact form: in the old site and the Phase 6 scope, never built. Needs a rate-limited, captcha-guarded
       `POST /contact` (stored + emailed to support) and the form on `/contact`.
 - [x] (2026-11-27, Phase 10) Brand pages (`/brands`, `/brands/[slug]`, 404 for unknown) and a specials page (`/specials`), in the header, footer and sitemap.
-- [ ] 301 redirects from the OpenCart URLs (`index.php?route=product/product&product_id=…`, category and information
+- [x] (2026-11-28, Phase 15: permanent redirects from a catch-all page, map from `convert:opencart`, runbook
+      `docs/ops/go-live.md`) 301 redirects from the OpenCart URLs (`index.php?route=product/product&product_id=…`, category and information
       routes) to the new slugs, generated from the import mapping; without them search rankings are lost at cut-over.
+- [ ] **Owner, Phase 15 cut-over:** the final export and conversion, copy `migration/redirects.json` to
+      `frontend/src/data/legacy-redirects.json` (check the information pages), `old-urls.txt`, the main-hostname decision,
+      DNS, the rehearsal, the first live order, Search Console (docs/ops/go-live.md).
 - [x] (2026-11-27, Phase 13) Frontend production container: `frontend/Dockerfile` (Next standalone, non-root, baked
       `NEXT_PUBLIC_*`/`API_INTERNAL_URL`), hosting plan in `docs/ops/deployment-aws.md` (api, worker, frontend, migrate).
 - [x] (2026-11-27) Stale docs fixed: `production-readiness.md` describes the same-origin proxy, `deployment-aws.md`

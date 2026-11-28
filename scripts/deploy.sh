@@ -189,6 +189,10 @@ else
   npm run check || die "npm run check failed"
 fi
 [[ -f "$FRONTEND_BUILD_ENV" ]] || die "FRONTEND_BUILD_ENV ($FRONTEND_BUILD_ENV) does not exist"
+# Production replaces the OpenCart store: without its redirect map every old link and search result becomes a 404.
+if [[ "$ENVIRONMENT" == production ]] && ! node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.exit(Array.isArray(m)&&m.length>0?0:1)' frontend/src/data/legacy-redirects.json; then
+  die "frontend/src/data/legacy-redirects.json is empty: copy migration/redirects.json there and commit it (docs/ops/go-live.md)"
+fi
 # The business settings of both apps must agree. The backend half comes from a NON-SECRET copy of its settings.
 BACKEND_CHECK="deploy/${ENVIRONMENT}.backend-check.env"
 if [[ -f "$BACKEND_CHECK" ]]; then

@@ -318,6 +318,16 @@ Goal: replace OpenCart without losing orders, customers' trust or search ranking
 
 Exit: live orders paid and shipped; the old store closed and redirecting.
 
+**Status (2026-11-28): code and runbook done, cut-over open.** Built: old OpenCart addresses (`index.php?route=…` for
+products, categories, brands, information, search, account and cart routes, OpenCart 3 and 4, and SEO keyword paths) answer
+with a permanent redirect (308) to their new page from a catch-all page that only sees addresses no page matches;
+unknown ones stay 404. The map is the converter's `redirects.json` (now with brands), copied to
+`frontend/src/data/legacy-redirects.json`; destinations must be plain paths on this site (no open redirect). A production
+deploy refuses an empty map. `npm run verify:redirects` checks a list of old addresses against the new site; `verify:site`
+checks two fixed old routes. The sign-in/sign-up notice about old accounts (`NEXT_PUBLIC_OLD_STORE_NOTICE=1`). Runbook:
+`docs/ops/go-live.md` (decisions, T-14, rehearsal hostname, cut-over order, first 72 hours, rollback). Open: everything
+that needs the live store, AWS and the owner (the final export, DNS, the first live order, Search Console).
+
 ## Phase 16: after launch (P2, ordered by expected value)
 
 1. Courier integration (e.g. Shiprocket) behind `ShippingService.applyEventInTx`, replacing manual tracking.

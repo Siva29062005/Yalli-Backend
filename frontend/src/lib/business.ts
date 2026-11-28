@@ -38,6 +38,13 @@ export const HOME_HERO = {
   alt: clean(process.env.NEXT_PUBLIC_HOME_HERO_ALT) ?? '',
 } as const;
 
+/**
+ * After the move from the old (OpenCart) website: sign-in and sign-up explain that old accounts were not moved
+ * (passwords cannot be carried over safely). Set NEXT_PUBLIC_OLD_STORE_NOTICE=1 for the go-live build only; it is a
+ * statement about the shop, so it stays off until it is true.
+ */
+export const OLD_STORE_NOTICE = process.env.NEXT_PUBLIC_OLD_STORE_NOTICE === '1';
+
 /** Name to print as the seller: the registered legal name when configured, otherwise the trading name. */
 export const sellerName = (): string => BUSINESS.legalName ?? BUSINESS.tradeName;
 

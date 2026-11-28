@@ -328,6 +328,10 @@ describe('OpenCart conversion', () => {
       keyword: 'kitchen-dining',
       to: '/catalog/kitchen-dining',
     });
+    // a manufacturer with converted products gets its brand page (slug as the importer makes it); unused ones do not
+    expect(r.redirects.filter((x) => x.kind === 'brand')).toEqual([
+      { kind: 'brand', id: '5', keyword: null, to: '/brands/yalli' },
+    ]);
     expect(r.taxSheet).toContainEqual([
       'MOMO-3in1',
       '3 in 1 Momos Maker',

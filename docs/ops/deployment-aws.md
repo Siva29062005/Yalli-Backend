@@ -104,7 +104,9 @@ access needed by the task).
     `NEXT_PUBLIC_BUSINESS_WEBSITE_URL`) it ends with `verify-site` (read-only checks of the live site; `--production` on
     production, where a report-only CSP fails) after a deploy; after a rollback a failure is reported but does not undo
     it (an older release may not meet today's checks). **Unverified against AWS: `--dry-run` runs only the local steps.**
-12. Before launch: work through `docs/ops/launch-checklist.md` (Phase 14) and get it signed.
+12. Before launch: work through `docs/ops/launch-checklist.md` (Phase 14) and get it signed; then the cut-over runbook
+    `docs/ops/go-live.md` (Phase 15: main hostname and the 301 from the other one, rehearsal hostname, DNS, redirects).
+    A production deploy refuses an empty OpenCart redirect map.
 
 ## Rollback
 Previous image + its schema: because migrations are additive, the previous image runs on the new schema.

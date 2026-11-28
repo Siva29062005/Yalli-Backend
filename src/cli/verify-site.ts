@@ -16,7 +16,10 @@ import {
  * caching, error bodies, CORS, robots/sitemap, Swagger off, leftover files. It never signs in and never changes data,
  * so it is safe against production. Run after every deploy (scripts/deploy.sh does when SITE_URL is set).
  *
- *   node dist/cli/verify-site.js --url https://staging.yalli.in [--production] [--allow-http]
+ *   node dist/cli/verify-site.js --url https://staging.yalli.in [--production] [--canonical <https://site>] [--allow-http]
+ *
+ * --canonical: the site's real address when checking it under another hostname (the go-live rehearsal on new.yalli.in):
+ * sitemap entries must use that address.
  *
  * --production turns warnings that are acceptable on staging (a report-only CSP) into failures. Swagger is not checked
  * here: it is mounted outside /api/v1, which CloudFront never sends to the API, and production refuses SWAGGER_ENABLED.
@@ -25,7 +28,7 @@ import {
  * Exit code 1 when any check fails. Warnings need a decision but do not fail.
  */
 const USAGE =
-  'Usage: node dist/cli/verify-site.js --url <https://site> [--production] [--allow-http]\n';
+  'Usage: node dist/cli/verify-site.js --url <https://site> [--production] [--canonical <https://site>] [--allow-http]\n';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -147,15 +150,53 @@ async function main(): Promise<number> {
     );
   }
 
-  // 3. robots and sitemap
+  // 3. old OpenCart links (Phase 15): fixed routes that need no data file
+  for (const [from, to] of [
+    ['/index.php?route=information/contact', '/contact'],
+    ['/index.php?route=product/special', '/specials'],
+  ] as const) {
+    const r = await get(at(from));
+    if (!r) {
+      unreachable(`old link ${from}`);
+      continue;
+    }
+    const location = r.headers.get('location') ?? '';
+    let target = '';
+    try {
+      target = new URL(location, origin).pathname;
+    } catch {
+      // reported below
+    }
+    findings.push(
+      [301, 308].includes(r.status) && target === to
+        ? { check: `old link ${from} -> ${to}`, level: 'pass' }
+        : {
+            check: `old link ${from} -> ${to}`,
+            level: 'fail',
+            detail: `answered ${r.status}${location ? ` to ${target}` : ''}`,
+          },
+    );
+  }
+
+  // 4. robots and sitemap
   const robots = await get(at('/robots.txt'));
   if (!robots || robots.status !== 200) unreachable('robots.txt');
   else findings.push(...robotsFindings(robots.body));
   const sitemap = await get(at('/sitemap.xml'));
   if (!sitemap || sitemap.status !== 200) unreachable('sitemap.xml');
-  else findings.push(...sitemapFindings(sitemap.body, origin));
+  else {
+    let canonical = origin;
+    try {
+      const c = arg('canonical');
+      if (c) canonical = new URL(c).origin;
+    } catch {
+      process.stderr.write('--canonical is not a URL\n');
+      return 2;
+    }
+    findings.push(...sitemapFindings(sitemap.body, canonical));
+  }
 
-  // 4. API through the same address (CloudFront -> ALB /api/v1/*)
+  // 5. API through the same address (CloudFront -> ALB /api/v1/*)
   const categories = await get(at('/api/v1/catalog/categories'));
   if (!categories) unreachable('GET /api/v1/catalog/categories');
   else {
@@ -206,7 +247,7 @@ async function main(): Promise<number> {
       }),
     );
 
-  // 5. CORS: a foreign origin is not allowed to call the API with credentials
+  // 6. CORS: a foreign origin is not allowed to call the API with credentials
   const preflight = await get(at('/api/v1/auth/login'), {
     method: 'OPTIONS',
     headers: {
@@ -221,7 +262,7 @@ async function main(): Promise<number> {
       ...corsFindings(preflight.headers, FOREIGN_ORIGIN, 'CORS preflight'),
     );
 
-  // 6. no leftover files (fetch normalises "..", so path traversal cannot be probed from here)
+  // 7. no leftover files (fetch normalises "..", so path traversal cannot be probed from here)
   for (const path of ['/.env', '/.git/config']) {
     const r = await get(at(path));
     if (!r) continue;

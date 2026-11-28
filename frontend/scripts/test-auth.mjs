@@ -83,6 +83,18 @@ await test('visitors are anonymous by default and account pages redirect to logi
   await page.screenshot({ path: `${SHOTS}/login-desktop.png`, fullPage: true });
 });
 
+await test('sign-in and sign-up say that old-website accounts were not moved (go-live notice)', async (context) => {
+  await setup(context);
+  const page = await context.newPage();
+  for (const path of ['/auth/login', '/auth/register']) {
+    await page.goto(`${BASE}${path}`);
+    const notice = page.getByRole('complementary', { name: 'About accounts from our old website' });
+    await notice.getByText('Accounts from our old website were not moved here').waitFor();
+    assert.equal(await notice.getByRole('link', { name: 'create a new account' }).getAttribute('href'), '/auth/register');
+    assert.equal(await notice.getByRole('link', { name: 'contact us' }).getAttribute('href'), '/contact');
+  }
+});
+
 await test('wrong password shows the server error; correct password signs in and honours next', async (context) => {
   const calls = await setup(context);
   const page = await context.newPage();

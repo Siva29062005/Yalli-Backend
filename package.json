@@ -34,6 +34,7 @@
     "import:images": "node dist/cli/import-images.js",
     "check:launch": "node dist/cli/check-launch-config.js",
     "verify:site": "node dist/cli/verify-site.js",
+    "verify:redirects": "node dist/cli/verify-redirects.js",
     "rotate:mfa-key": "node dist/cli/rotate-mfa-key.js"
   },
   "dependencies": {

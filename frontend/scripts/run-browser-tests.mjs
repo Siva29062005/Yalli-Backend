@@ -103,6 +103,8 @@ const buildEnv = {
   API_INTERNAL_URL: mockApi,
   NEXT_PUBLIC_BUSINESS_WEBSITE_URL: SITE_URL,
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+  // the go-live notice on sign-in/sign-up (checked by test-auth.mjs)
+  NEXT_PUBLIC_OLD_STORE_NOTICE: '1',
 };
 
 const mock = start('mock API', process.execPath, ['scripts/test-catalog.mjs', '--mock-api', String(mockPort)], {});

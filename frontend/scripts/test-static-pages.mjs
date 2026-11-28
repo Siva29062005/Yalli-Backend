@@ -102,6 +102,30 @@ try {
   assert.equal(await page.getByText(/at\s.+\.(js|tsx?):\d+/).count(), 0, '404 shows no stack');
   console.log('PASS unknown URL shows the friendly not-found page with a 404 status');
 
+  // ---------------------------------------------------------------------------------------------- old OpenCart links
+  // Routes that need no data file (the test build has an empty map): a permanent redirect with the right target, and
+  // a 404 for an unknown product. The map itself is unit-tested (src/lib/legacy-redirects.spec.ts).
+  for (const [from, to] of [
+    ['/index.php?route=information/contact', '/contact'],
+    ['/index.php?route=product/special', '/specials'],
+    ['/index.php?route=product/search&search=steel%20bottle', '/catalog?q=steel%20bottle'],
+    ['/index.php?route=common/home', '/'],
+    ['/index.php', '/'],
+    ['/en-gb?route=information/contact', '/contact'],
+    ['/delivery', '/shipping'],
+  ]) {
+    const res = await fetch(`${base}${from}`, { redirect: 'manual' });
+    assert.ok([301, 308].includes(res.status), `${from} answered ${res.status}, not a permanent redirect`);
+    assert.equal(new URL(res.headers.get('location'), base).pathname + new URL(res.headers.get('location'), base).search, to, `${from} redirects to ${to}`);
+  }
+  for (const path of ['/index.php?route=product/product&product_id=999999', '/old-keyword-nobody-knows']) {
+    const res = await fetch(`${base}${path}`, { redirect: 'manual' });
+    assert.equal(res.status, 404, `${path} is a 404`);
+  }
+  // an existing page is never shadowed by the catch-all
+  assert.equal((await fetch(`${base}/help`, { redirect: 'manual' })).status, 200);
+  console.log('PASS old OpenCart links: permanent redirects to the new pages, 404 for unknown ones');
+
   // ---------------------------------------------------------------------------------------------- behaviour
   await open('/help');
   const first = page.locator('details').first();
