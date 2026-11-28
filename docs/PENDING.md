@@ -103,6 +103,13 @@ Follow-ups found while wiring (P1 unless noted):
 - [x] (2026-11-28, Phase 15: permanent redirects from a catch-all page, map from `convert:opencart`, runbook
       `docs/ops/go-live.md`) 301 redirects from the OpenCart URLs (`index.php?route=product/product&product_id=…`, category and information
       routes) to the new slugs, generated from the import mapping; without them search rankings are lost at cut-over.
+- [x] (2026-11-28) Review of the Phase 15 commit: all findings fixed (old links answered by a proxy before routing, so
+      unknown addresses stay cheap 404s and malformed ones no longer 500; prototype-key and emoji crashes; `&amp;`,
+      duplicate, zero-padded and `_route_` addresses; destinations limited to real pages; brand redirects only with an
+      enabled product and the importer's slug; the importer no longer merges non-Latin brands; `verify:redirects`
+      follows chains, accepts pages, catches a lost query string, reads sitemap XML and CSV, is throttled; `set:stock`
+      for the cut-over; the runbook's order, rehearsal behind a WAF rule, email links, webhooks, old.yalli.in, DNS,
+      HSTS subdomains and rollback). Record: `docs/security/phase-15-go-live.md`.
 - [ ] **Owner, Phase 15 cut-over:** the final export and conversion, copy `migration/redirects.json` to
       `frontend/src/data/legacy-redirects.json` (check the information pages), `old-urls.txt`, the main-hostname decision,
       DNS, the rehearsal, the first live order, Search Console (docs/ops/go-live.md).

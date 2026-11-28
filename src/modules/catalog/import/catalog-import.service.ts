@@ -3,7 +3,7 @@ import {
   sanitizeRichText,
   stripTags,
 } from '../../../common/utils/sanitize-html.js';
-import { slugify } from '../../../common/utils/slug.js';
+import { slugify, uniqueSlug } from '../../../common/utils/slug.js';
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import { AuditAction } from '../../audit/audit-actions.js';
@@ -166,11 +166,14 @@ export class CatalogImportService {
       if (p.brand)
         names.set(stripTags(p.brand).toLowerCase(), stripTags(p.brand));
     for (const [lower, name] of names) {
+      // The same brand by name, or by slug ("A&B" = "A and B"); a name with no Latin letters or digits gets the
+      // fallback slug, which says nothing about the brand, so it never merges two such brands.
+      const slug = slugify(name);
       const existing = await this.prisma.brand.findFirst({
         where: {
           OR: [
             { name: { equals: name, mode: 'insensitive' } },
-            { slug: slugify(name) },
+            ...(slug === slugify('') ? [] : [{ slug }]),
           ],
         },
         select: { id: true },
@@ -186,7 +189,17 @@ export class CatalogImportService {
         continue;
       }
       const created = await this.prisma.brand.create({
-        data: { name, slug: slugify(name) },
+        data: {
+          name,
+          slug: await uniqueSlug(name, async (s) =>
+            Boolean(
+              await this.prisma.brand.findUnique({
+                where: { slug: s },
+                select: { id: true },
+              }),
+            ),
+          ),
+        },
         select: { id: true },
       });
       ids.set(lower, created.id);

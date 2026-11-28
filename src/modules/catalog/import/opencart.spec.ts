@@ -304,6 +304,27 @@ describe('OpenCart conversion', () => {
     expect(w).toMatch(/Product 45 .*OpenCart options .*NOT imported/);
   });
 
+  it('brand redirects: only brands with an enabled product, slug as the importer makes it, none without Latin letters', () => {
+    const t = structuredClone(tables);
+    t['manufacturer'] = [
+      { manufacturer_id: '5', name: 'Butterfly&amp;reg;' }, // double-encoded: the importer's stripTags decodes it
+      { manufacturer_id: '6', name: 'Draft Only' },
+      { manufacturer_id: '7', name: 'யாழி' },
+    ];
+    t['product'] = t['product']!.map((p) =>
+      p['product_id'] === '43'
+        ? { ...p, manufacturer_id: '6' } // disabled in OpenCart: a draft, no brand page
+        : p['product_id'] === '45'
+          ? { ...p, manufacturer_id: '7', status: '1' }
+          : p,
+    );
+    const out = convertOpenCart(t, { today: '2026-11-27' });
+    expect(out.redirects.filter((x) => x.kind === 'brand')).toEqual([
+      { kind: 'brand', id: '5', keyword: null, to: '/brands/butterfly' },
+    ]);
+    expect(out.warnings.join('\n')).toMatch(/Brand "யாழி": .*not redirected/);
+  });
+
   it('lists images in order (main first), redirects for every product and category, and a tax sheet', () => {
     expect(
       r.images
@@ -328,9 +349,14 @@ describe('OpenCart conversion', () => {
       keyword: 'kitchen-dining',
       to: '/catalog/kitchen-dining',
     });
-    // a manufacturer with converted products gets its brand page (slug as the importer makes it); unused ones do not
+    // a manufacturer with an enabled converted product gets its brand page (slug as the importer makes it)
     expect(r.redirects.filter((x) => x.kind === 'brand')).toEqual([
       { kind: 'brand', id: '5', keyword: null, to: '/brands/yalli' },
+    ]);
+    // OpenCart's stock per SKU, for the cut-over
+    expect(r.stockSheet).toContainEqual([
+      'MOMO-3in1',
+      expect.stringMatching(/^\d+$/),
     ]);
     expect(r.taxSheet).toContainEqual([
       'MOMO-3in1',

@@ -279,6 +279,39 @@ export class InventoryService {
     };
   }
 
+  /**
+   * Sets a variant's on-hand quantity in one warehouse to `onHand` (the go-live stock take, `npm run set:stock`):
+   * the row is locked, the difference goes through `adjustInTx` (ledger row, never below what is reserved). Returns
+   * null when the stock already has that value. Joins the caller's transaction.
+   */
+  async setOnHandInTx(
+    tx: Tx,
+    input: Omit<AdjustInput, 'delta' | 'type'> & { onHand: number },
+  ) {
+    if (!Number.isSafeInteger(input.onHand) || input.onHand < 0)
+      throw new RangeError('onHand must be a non-negative integer');
+    const warehouseId =
+      input.warehouseId ?? (await this.defaultWarehouseId(tx));
+    await this.ensureRowInTx(tx, input.variantId, warehouseId);
+    const [row] = await tx.$queryRaw<{ on_hand: number }[]>`
+      SELECT on_hand FROM inventory
+      WHERE variant_id = ${input.variantId}::uuid AND warehouse_id = ${warehouseId}::uuid
+      FOR UPDATE`;
+    const delta = input.onHand - (row?.on_hand ?? 0);
+    if (delta === 0) return null;
+    return {
+      delta,
+      ...(await this.adjustInTx(tx, {
+        variantId: input.variantId,
+        warehouseId,
+        delta,
+        reason: input.reason,
+        actorId: input.actorId,
+        type: 'ADJUSTMENT',
+      })),
+    };
+  }
+
   /** Puts goods back on the shelf (cancelled paid order, accepted return). Joins the caller's transaction. */
   async restockInTx(
     tx: Tx,

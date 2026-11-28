@@ -1,3 +1,4 @@
+import { stripTags } from '../../../common/utils/sanitize-html.js';
 import { slugify } from '../../../common/utils/slug.js';
 import { GST_SLABS_BPS, IMPORT_LIMITS, decodeEntities } from './import-file.js';
 
@@ -117,10 +118,14 @@ export interface ConvertResult {
   }[];
   redirects: RedirectEntry[];
   taxSheet: string[][];
+  /** sku, quantity: OpenCart's stock, set on the new store at the cut-over (`npm run set:stock`). */
+  stockSheet: string[][];
   warnings: string[];
   /** Problems that make the result unusable as it is: the CLI writes no catalog.json while there are any. */
   blocking: string[];
 }
+
+export const STOCK_SHEET_COLUMNS = ['sku', 'quantity'] as const;
 
 export const TAX_SHEET_COLUMNS = [
   'sku',
@@ -281,7 +286,8 @@ export function convertOpenCart(
       text(m['name'], 80),
     ]),
   );
-  const usedBrands = new Set<string>(); // manufacturers with at least one converted product (they get a brand page)
+  const usedBrands = new Set<string>(); // manufacturers with an enabled converted product (they get a brand page)
+  const stockSheet: string[][] = [];
   const toCats = new Map<string, string[]>();
   for (const r of tables['product_to_category'] ?? []) {
     const list = toCats.get(r['product_id'] ?? '') ?? [];
@@ -436,6 +442,10 @@ export function convertOpenCart(
     ].slice(0, 20);
     const summary = text(d?.['meta_description'], 500);
     const tax = opts.tax?.get(sku.toUpperCase());
+    const stock =
+      Number.isFinite(quantity) && quantity > 0
+        ? Math.min(quantity, 1_000_000)
+        : 0;
     const product: Record<string, unknown> = {
       key: `oc-p${id}`,
       name,
@@ -445,7 +455,8 @@ export function convertOpenCart(
         ? { descriptionHtml: (d['description'] ?? '').slice(0, 50_000) }
         : {}),
       ...(p['manufacturer_id'] && brands.get(p['manufacturer_id'])
-        ? (usedBrands.add(p['manufacturer_id']),
+        ? // a brand page exists only with a PUBLISHED product: only enabled OpenCart products count
+          (p['status'] === '1' && usedBrands.add(p['manufacturer_id']),
           { brand: brands.get(p['manufacturer_id']) })
         : {}),
       categoryKeys,
@@ -465,14 +476,12 @@ export function convertOpenCart(
           sku,
           priceMinor,
           ...(salePriceMinor !== null ? { salePriceMinor, ...saleDates } : {}),
-          stock:
-            Number.isFinite(quantity) && quantity > 0
-              ? Math.min(quantity, 1_000_000)
-              : 0,
+          stock,
         },
       ],
     };
     products.push(product);
+    stockSheet.push([sku, String(stock)]);
     taxSheet.push([
       sku,
       name,
@@ -500,11 +509,17 @@ export function convertOpenCart(
     redirects.push({ kind: 'product', id, keyword, to: `/products/${slug}` });
   }
   if (!tables['product']?.length) warnings.push('The export has no products');
-  // brand pages: the importer names a brand's page after slugify(name)
+  // brand pages: the importer names a NEW brand's page slugify(stripTags(name)) (an existing brand keeps its slug:
+  // verify:redirects finds those)
   for (const id of usedBrands) {
     const name = brands.get(id)!;
-    const slug = slugify(name);
-    if (!slug) continue;
+    const slug = slugify(stripTags(name));
+    if (slug === slugify('')) {
+      warnings.push(
+        `Brand "${name}": its name has no Latin letters or digits, so it gets no page address of its own: its old brand page is not redirected`,
+      );
+      continue;
+    }
     redirects.push({
       kind: 'brand',
       id,
@@ -551,6 +566,7 @@ export function convertOpenCart(
     images,
     redirects,
     taxSheet,
+    stockSheet,
     warnings,
     blocking,
   };

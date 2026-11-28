@@ -29,6 +29,34 @@ const ref = () => ({
 const stockOf = (variantId: string) =>
   ctx.prisma.inventory.findFirstOrThrow({ where: { variantId } });
 
+describe('go-live stock take (setOnHandInTx, npm run set:stock)', () => {
+  it('sets the on-hand quantity through the ledger, does nothing when it already matches, never below what is reserved', async () => {
+    const { variant } = await fx.product({ stock: 10 });
+    const actor = await s.staff('INVENTORY_MANAGER');
+    const set = (onHand: number) =>
+      ctx.prisma.$transaction((tx) =>
+        inv.setOnHandInTx(tx, {
+          variantId: variant.id,
+          onHand,
+          reason: 'opening stock at go-live',
+          actorId: actor.userId,
+        }),
+      );
+    expect(await set(25)).toMatchObject({ delta: 15, onHand: 25 });
+    expect(await set(25)).toBeNull();
+    expect(await set(4)).toMatchObject({ delta: -21, onHand: 4 });
+    const ledger = await ctx.prisma.inventoryMovement.findMany({
+      where: { variantId: variant.id, reason: 'opening stock at go-live' },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(ledger.map((m) => m.onHandDelta)).toEqual([15, -21]);
+    await inv.reserve(ref(), [{ variantId: variant.id, quantity: 3 }], 900);
+    await expect(set(2)).rejects.toThrow(/below the quantity already reserved/);
+    expect(await stockOf(variant.id)).toMatchObject({ onHand: 4, reserved: 3 });
+    await expect(set(-1)).rejects.toThrow(RangeError);
+  });
+});
+
 describe('restocking committed goods', () => {
   it('is single-shot: repeating it (a retry, a second cancel) cannot credit the shelf twice', async () => {
     const { variant } = await fx.product({ stock: 10 });

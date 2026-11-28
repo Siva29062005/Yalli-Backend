@@ -162,13 +162,16 @@ async function main(): Promise<number> {
     }
     const location = r.headers.get('location') ?? '';
     let target = '';
+    let sameSite = false;
     try {
-      target = new URL(location, origin).pathname;
+      const u = new URL(location, origin);
+      target = `${u.pathname}${u.search}`;
+      sameSite = u.origin === origin; // a redirect to another host is a failure, whatever its path
     } catch {
       // reported below
     }
     findings.push(
-      [301, 308].includes(r.status) && target === to
+      [301, 308].includes(r.status) && sameSite && target === to
         ? { check: `old link ${from} -> ${to}`, level: 'pass' }
         : {
             check: `old link ${from} -> ${to}`,

@@ -24,3 +24,6 @@ Figma Design.zip
 # deploy configuration per environment (scripts/deploy.sh); only the example is committed
 deploy/*.env
 !deploy/example.env
+
+# OpenCart migration working files (docs/ops/catalogue-migration.md, docs/ops/go-live.md): business data, never committed
+migration/

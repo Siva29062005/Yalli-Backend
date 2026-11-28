@@ -319,13 +319,16 @@ Goal: replace OpenCart without losing orders, customers' trust or search ranking
 Exit: live orders paid and shipped; the old store closed and redirecting.
 
 **Status (2026-11-28): code and runbook done, cut-over open.** Built: old OpenCart addresses (`index.php?route=…` for
-products, categories, brands, information, search, account and cart routes, OpenCart 3 and 4, and SEO keyword paths) answer
-with a permanent redirect (308) to their new page from a catch-all page that only sees addresses no page matches;
-unknown ones stay 404. The map is the converter's `redirects.json` (now with brands), copied to
-`frontend/src/data/legacy-redirects.json`; destinations must be plain paths on this site (no open redirect). A production
-deploy refuses an empty map. `npm run verify:redirects` checks a list of old addresses against the new site; `verify:site`
-checks two fixed old routes. The sign-in/sign-up notice about old accounts (`NEXT_PUBLIC_OLD_STORE_NOTICE=1`). Runbook:
-`docs/ops/go-live.md` (decisions, T-14, rehearsal hostname, cut-over order, first 72 hours, rollback). Open: everything
+products, categories, brands, information, search, account and cart routes, OpenCart 3 and 4, `_route_`, `&amp;` mistakes,
+and SEO keyword paths) answer with a 301 from `frontend/src/proxy.ts` before routing; pages of the shop are never touched
+and unknown addresses stay the normal 404. The map is the converter's `redirects.json` (now with brands) copied to
+`frontend/src/data/legacy-redirects.json`, plus hand-written entries in `legacy-redirects-extra.json`; destinations must be
+product/category/brand pages or fixed pages (no open redirect, no loop). A production deploy refuses an empty map.
+`npm run verify:redirects` (old address list, sitemap XML or Search Console CSV; follows chains, catches a lost query
+string, `--main` for the other hostname, gentle by default) and `npm run set:stock` (go-live stock take through the
+ledger, from the converter's `stock.csv`). The sign-in/sign-up notice about old accounts (`NEXT_PUBLIC_OLD_STORE_NOTICE=1`).
+Runbook: `docs/ops/go-live.md` (decisions incl. DNS host, certificate and HSTS subdomains, T-14 with a WAF-restricted
+rehearsal hostname, cut-over order, first 72 hours, rollback). Open: everything
 that needs the live store, AWS and the owner (the final export, DNS, the first live order, Search Console).
 
 ## Phase 16: after launch (P2, ordered by expected value)

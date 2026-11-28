@@ -35,6 +35,7 @@
     "check:launch": "node dist/cli/check-launch-config.js",
     "verify:site": "node dist/cli/verify-site.js",
     "verify:redirects": "node dist/cli/verify-redirects.js",
+    "set:stock": "node dist/cli/set-stock.js",
     "rotate:mfa-key": "node dist/cli/rotate-mfa-key.js"
   },
   "dependencies": {

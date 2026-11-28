@@ -39,7 +39,8 @@ Options: `--language-id` (default 1, English), `--customer-group-id` (default 1,
 | `catalog.json` | the import file (categories, products, one variant per product) |
 | `tax-review.csv` | one row per SKU: fill in `gst_rate_percent` (0, 0.25, 3, 5, 12, 18, 28 or 40) and `hsn_code` |
 | `images.json` | the image paths of each product (main image first) |
-| `redirects.json` | each old product, category and brand id and SEO keyword, and its new address: copied to `frontend/src/data/legacy-redirects.json` for the go-live redirects (docs/ops/go-live.md) |
+| `redirects.json` | each old product, category and brand (with an enabled product) id and SEO keyword, and its new address: copied to `frontend/src/data/legacy-redirects.json` for the go-live redirects (docs/ops/go-live.md) |
+| `stock.csv` | `sku,quantity` from OpenCart: set on the new store at the cut-over with `npm run set:stock` (docs/ops/go-live.md) |
 | `warnings.txt` | everything adjusted or left out: read it all |
 
 What the conversion does and does not do:

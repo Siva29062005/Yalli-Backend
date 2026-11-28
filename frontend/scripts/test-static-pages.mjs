@@ -103,8 +103,8 @@ try {
   console.log('PASS unknown URL shows the friendly not-found page with a 404 status');
 
   // ---------------------------------------------------------------------------------------------- old OpenCart links
-  // Routes that need no data file (the test build has an empty map): a permanent redirect with the right target, and
-  // a 404 for an unknown product. The map itself is unit-tested (src/lib/legacy-redirects.spec.ts).
+  // Routes that need no data file (the test build has an empty map): a 301 from the proxy with the right target, and a
+  // 404 for an unknown product. The map itself is unit-tested (src/lib/legacy-redirects.spec.ts).
   for (const [from, to] of [
     ['/index.php?route=information/contact', '/contact'],
     ['/index.php?route=product/special', '/specials'],
@@ -112,19 +112,32 @@ try {
     ['/index.php?route=common/home', '/'],
     ['/index.php', '/'],
     ['/en-gb?route=information/contact', '/contact'],
+    ['/?route=information/contact', '/contact'],
+    ['/index.php?route=product/search&amp;search=lamp', '/catalog?q=lamp'], // &amp; from feeds and exports
     ['/delivery', '/shipping'],
   ]) {
     const res = await fetch(`${base}${from}`, { redirect: 'manual' });
-    assert.ok([301, 308].includes(res.status), `${from} answered ${res.status}, not a permanent redirect`);
+    assert.equal(res.status, 301, `${from} answered ${res.status}, not a 301`);
+    assert.ok(!/^https?:/i.test(res.headers.get('location')), `${from}: the Location is relative (no internal host)`);
     assert.equal(new URL(res.headers.get('location'), base).pathname + new URL(res.headers.get('location'), base).search, to, `${from} redirects to ${to}`);
   }
-  for (const path of ['/index.php?route=product/product&product_id=999999', '/old-keyword-nobody-knows']) {
+  for (const path of [
+    '/index.php?route=product/product&product_id=999999',
+    '/index.php?route=constructor',
+    '/old-keyword-nobody-knows',
+    '/%ZZ', // malformed percent-encoding: a 404, not a 500
+    '/products/no-such-product-anywhere', // its own page's not-found, not a redirect
+    '/_next/static/chunks/no-such-chunk.js',
+  ]) {
     const res = await fetch(`${base}${path}`, { redirect: 'manual' });
-    assert.equal(res.status, 404, `${path} is a 404`);
+    assert.equal(res.status, 404, `${path} answered ${res.status}, not a 404`);
   }
-  // an existing page is never shadowed by the catch-all
+  // pages and the API proxy are never touched by the old-link proxy
   assert.equal((await fetch(`${base}/help`, { redirect: 'manual' })).status, 200);
-  console.log('PASS old OpenCart links: permanent redirects to the new pages, 404 for unknown ones');
+  assert.equal((await fetch(`${base}/brands`, { redirect: 'manual' })).status, 200);
+  const api = await fetch(`${base}/api/v1/catalog/categories`, { redirect: 'manual' });
+  assert.ok(![301, 308].includes(api.status), `the API proxy answered ${api.status}`);
+  console.log('PASS old OpenCart links: 301s to the new pages, 404 for unknown ones, pages and the API untouched');
 
   // ---------------------------------------------------------------------------------------------- behaviour
   await open('/help');

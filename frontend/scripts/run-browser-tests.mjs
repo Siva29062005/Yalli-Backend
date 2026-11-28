@@ -144,6 +144,7 @@ const env = {
   PLAYWRIGHT_MODULE: playwright,
   SCREENSHOT_DIR: shots,
   EXPECT_CAPTCHA: '1',
+  EXPECT_OLD_STORE_NOTICE: '1',
   ...(deadFrontendUrl ? { DEAD_API_FRONTEND_URL: deadFrontendUrl } : {}),
 };
 const results = [];

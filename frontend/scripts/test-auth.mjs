@@ -83,12 +83,20 @@ await test('visitors are anonymous by default and account pages redirect to logi
   await page.screenshot({ path: `${SHOTS}/login-desktop.png`, fullPage: true });
 });
 
-await test('sign-in and sign-up say that old-website accounts were not moved (go-live notice)', async (context) => {
+// The go-live notice exists only in builds with NEXT_PUBLIC_OLD_STORE_NOTICE=1 (`npm run test:browser` builds with it and
+// sets EXPECT_OLD_STORE_NOTICE=1); against any other build it must be absent.
+await test('the old-website accounts notice is shown only when the build asks for it', async (context) => {
   await setup(context);
   const page = await context.newPage();
+  const expected = process.env.EXPECT_OLD_STORE_NOTICE === '1';
   for (const path of ['/auth/login', '/auth/register']) {
     await page.goto(`${BASE}${path}`);
+    await page.getByRole('main').waitFor();
     const notice = page.getByRole('complementary', { name: 'About accounts from our old website' });
+    if (!expected) {
+      assert.equal(await notice.count(), 0, `${path} shows the go-live notice in a build without it`);
+      continue;
+    }
     await notice.getByText('Accounts from our old website were not moved here').waitFor();
     assert.equal(await notice.getByRole('link', { name: 'create a new account' }).getAttribute('href'), '/auth/register');
     assert.equal(await notice.getByRole('link', { name: 'contact us' }).getAttribute('href'), '/contact');

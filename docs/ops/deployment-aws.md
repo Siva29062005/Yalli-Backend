@@ -105,7 +105,9 @@ access needed by the task).
     production, where a report-only CSP fails) after a deploy; after a rollback a failure is reported but does not undo
     it (an older release may not meet today's checks). **Unverified against AWS: `--dry-run` runs only the local steps.**
 12. Before launch: work through `docs/ops/launch-checklist.md` (Phase 14) and get it signed; then the cut-over runbook
-    `docs/ops/go-live.md` (Phase 15: main hostname and the 301 from the other one, rehearsal hostname, DNS, redirects).
+    `docs/ops/go-live.md` (Phase 15: main hostname and the 301 from the other one keeping path and query, DNS host and
+    certificate in us-east-1, every subdomain on HTTPS because of HSTS, rehearsal hostname behind a WAF IP rule, redirects,
+    the stock take).
     A production deploy refuses an empty OpenCart redirect map.
 
 ## Rollback

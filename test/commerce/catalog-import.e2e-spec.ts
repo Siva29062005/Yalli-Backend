@@ -127,6 +127,24 @@ describe('dry run', () => {
 });
 
 describe('apply', () => {
+  it('never merges two brands whose names have no Latin letters (both would get the fallback slug)', async () => {
+    const t = uniq();
+    const file = makeFile(t);
+    const products = file.products as Record<string, unknown>[];
+    products[0] = { ...products[0], brand: 'யாழி' };
+    products[1] = { ...products[1], brand: 'ஓம்' };
+    const report = await run(file);
+    expect(report.brands).toMatchObject({ created: 2 });
+    const brands = await ctx.prisma.brand.findMany({
+      where: { name: { in: ['யாழி', 'ஓம்'] } },
+      select: { name: true, slug: true },
+    });
+    expect(brands).toHaveLength(2);
+    expect(new Set(brands.map((b) => b.slug)).size).toBe(2);
+    const [a, b] = await Promise.all([bySku(`MM-${t}-S`), bySku(`CS-${t}`)]);
+    expect(a.product.brandId).not.toBe(b.product.brandId);
+  });
+
   it('creates categories (parents first), brand, products as DRAFT, exact paise, sanitised text and opening stock through the ledger', async () => {
     const t = uniq();
     const f = makeFile(t);

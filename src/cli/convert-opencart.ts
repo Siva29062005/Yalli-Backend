@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { toCsv } from '../common/utils/csv.js';
 import { parseImportFile } from '../modules/catalog/import/import-file.js';
 import {
+  STOCK_SHEET_COLUMNS,
   TAX_SHEET_COLUMNS,
   convertOpenCart,
   parseTaxSheet,
@@ -29,7 +30,8 @@ const USAGE = `Usage: node dist/cli/convert-opencart.js --in <export.json> --out
 Writes into <folder>:
   catalog.json      the import file (check it with: npm run import:catalog -- --file <folder>/catalog.json)
   images.json       image paths per product, for: npm run import:images
-  redirects.json    old OpenCart ids/keywords -> new addresses (for the go-live 301 redirects)
+  redirects.json    old OpenCart ids/keywords -> new addresses: copy to frontend/src/data/legacy-redirects.json
+  stock.csv         sku,quantity from OpenCart: set at the cut-over with npm run set:stock
   tax-review.csv    one row per SKU: fill in gst_rate_percent (0, 0.25, 3, 5, 12, 18, 28, 40) and hsn_code,
                     then run again with --tax <folder>/tax-review.csv
   warnings.txt      everything adjusted or left out
@@ -117,6 +119,10 @@ function main(): number {
   writeFileSync(
     join(out, 'tax-review.csv'),
     toCsv(TAX_SHEET_COLUMNS, r.taxSheet),
+  );
+  writeFileSync(
+    join(out, 'stock.csv'),
+    toCsv(STOCK_SHEET_COLUMNS, r.stockSheet),
   );
   writeFileSync(
     join(out, 'warnings.txt'),
