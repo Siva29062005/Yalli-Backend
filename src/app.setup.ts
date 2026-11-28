@@ -55,8 +55,9 @@ export function configureApp(app: NestExpressApplication): void {
         },
       },
       referrerPolicy: { policy: 'no-referrer' },
+      // Same header as the storefront. No `preload`: asking browsers to hard-code the domain is the owner's decision.
       hsts: isProd
-        ? { maxAge: 63_072_000, includeSubDomains: true, preload: true }
+        ? { maxAge: 63_072_000, includeSubDomains: true, preload: false }
         : false,
       crossOriginResourcePolicy: { policy: 'same-site' },
     }),
@@ -80,16 +81,23 @@ export function configureApp(app: NestExpressApplication): void {
     maxAge: 600,
   });
 
-  // Small body limits; rawBody is retained for webhook signature verification (Phase 5). Browsers send CSP violation
-  // reports as application/csp-report or application/reports+json (neither can be sent cross-site without a preflight).
-  app.useBodyParser('json', {
-    limit: bodyLimit,
-    type: [
-      'application/json',
-      'application/csp-report',
-      'application/reports+json',
-    ],
-  });
+  // Small body limits; rawBody is retained for webhook signature verification (Phase 5).
+  // Browsers send CSP violation reports themselves as application/csp-report, also from OTHER sites (no preflight), so
+  // that type is parsed for the report route ONLY: every other route keeps "JSON needs application/json".
+  app.use(
+    `/${API_PREFIX}/v${API_DEFAULT_VERSION}/csp-reports`,
+    (
+      req: { headers: Record<string, string | string[] | undefined> },
+      _res: unknown,
+      next: () => void,
+    ) => {
+      const type = req.headers['content-type'];
+      if (typeof type === 'string' && /^application\/csp-report\b/i.test(type))
+        req.headers['content-type'] = 'application/json';
+      next();
+    },
+  );
+  app.useBodyParser('json', { limit: bodyLimit });
   app.useBodyParser('urlencoded', { limit: bodyLimit, extended: false });
 
   app.setGlobalPrefix(API_PREFIX, { exclude: UNPREFIXED_ROUTES });

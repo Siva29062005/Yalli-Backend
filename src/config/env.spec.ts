@@ -179,6 +179,8 @@ describe('validateEnv', () => {
       ['REDIS_URL', 'redis://:pw@cache.internal:6379'],
       ['RABBITMQ_URL', 'amqp://u:pw@mq.internal:5672'],
       ['TURNSTILE_SECRET', '1x0000000000000000000000000000000AA'],
+      // the app role's own credentials would defeat the read-only reporting role
+      ['REPORTING_DATABASE_URL', 'postgresql://app:pw@db.internal:5432/yalli'],
     ])('refuses %s=%s in production', (key, value) => {
       expect(() => validateEnv({ ...complete, [key]: value })).toThrow(
         new RegExp(key),

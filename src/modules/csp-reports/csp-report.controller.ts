@@ -4,7 +4,7 @@ import { Public } from '../../common/decorators/access.decorators.js';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator.js';
 import {
   cspReportSchema,
-  toViolations,
+  toViolation,
   type CspReportBody,
 } from './csp-report.js';
 
@@ -22,9 +22,16 @@ export class CspReportController {
   @Public()
   @Post()
   @HttpCode(204)
-  @RateLimit({ name: 'csp-report-ip', limit: 30, windowSeconds: 60, key: 'ip' })
+  // Its own budget, not the shared per-IP one: a policy mistake that fires on every page must not lock shoppers on the same
+  // IP out of the shop.
+  @RateLimit({
+    name: 'csp-report-ip',
+    limit: 30,
+    windowSeconds: 60,
+    key: 'ip',
+    replacesGlobal: true,
+  })
   receive(@Body({ schema: cspReportSchema }) body: CspReportBody): void {
-    for (const v of toViolations(body).slice(0, 5))
-      this.logger.warn(v, 'CSP violation');
+    this.logger.warn(toViolation(body), 'CSP violation');
   }
 }

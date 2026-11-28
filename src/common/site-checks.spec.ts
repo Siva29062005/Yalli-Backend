@@ -63,6 +63,16 @@ describe('site checks', () => {
       { https: false, where: '/' },
     );
     expect(summarise(fs)).toEqual({ failed: 0, warned: 1 });
+    // on production the same answer is a failure
+    const prod = pageHeaderFindings(
+      headers({
+        ...goodPage,
+        'content-security-policy': '',
+        'content-security-policy-report-only': GOOD_CSP,
+      }),
+      { https: false, where: '/', production: true },
+    );
+    expect(failed(prod)).toEqual(['/: CSP enforced']);
   });
 
   it('fails a weak CSP', () => {

@@ -13,8 +13,10 @@
 //                                                         server render plus its API reads (the root layout's category
 //                                                         fetch) and the shared frontend-server budget (X-Frontend-Key)
 //
-// --rate fixes the request rate (e.g. 3x the expected peak) instead of "as fast as possible"; --max-p99 fails the run
-// when the 99th percentile latency is above that many milliseconds.
+// --rate fixes the request rate (e.g. 3x the expected peak) instead of "as fast as possible"; the run FAILS if the
+// server could not keep up (fewer than 95% of that rate answered: a slow server otherwise looks fast because fewer
+// requests are measured). --max-p99 fails the run when the 99th percentile latency is above that many milliseconds.
+// The storefront scenario also fails on any status that is not 2xx/3xx (a WAF 403 or a limiter 429 is not a pass).
 //
 // --spoof-ip sends a different X-Forwarded-For per request. It only has an effect when the target runs with TRUST_PROXY_HOPS=1
 // (a test environment); without it every request comes from one address, which is exactly what you want for login-flood
@@ -75,8 +77,8 @@ const scenarios = {
         method: 'GET',
         setupRequest: (r) => {
           i += 1;
-          // every third request is a search: never cached, always a full server render
-          const path = i % 3 === 0 ? `/catalog?q=${rnd()}` : pages[i % pages.length];
+          // every third request is a search (never cached); the others walk through EVERY page in turn
+          const path = i % 3 === 0 ? `/catalog?q=${rnd()}` : pages[(i - Math.floor(i / 3) - 1) % pages.length];
           return { ...r, path };
         },
       },
@@ -141,6 +143,15 @@ const codes = Object.fromEntries(
 const serverErrors = Object.entries(codes)
   .filter(([k]) => k.startsWith('5'))
   .reduce((n, [, c]) => n + c, 0);
+// abuse scenarios EXPECT 4xx (the limiters); a page load test does not
+const unexpected =
+  scenario === 'storefront'
+    ? Object.entries(codes)
+        .filter(([k]) => !/^[23]/.test(k))
+        .reduce((n, [, c]) => n + c, 0)
+    : 0;
+const achieved = result.requests.average;
+const rateOk = !rate || achieved >= 0.95 * rate;
 console.log(
   JSON.stringify(
     {
@@ -158,6 +169,8 @@ console.log(
       networkErrors: result.errors,
       timeouts: result.timeouts,
       serverErrors,
+      ...(scenario === 'storefront' ? { unexpectedStatuses: unexpected } : {}),
+      ...(rate ? { targetRate: rate, rateOk } : {}),
       ...(maxP99 ? { maxP99, p99Ok: result.latency.p99 <= maxP99 } : {}),
     },
     null,
@@ -168,6 +181,8 @@ console.log(
 // stayed under the latency budget.
 process.exit(
   serverErrors === 0 &&
+    unexpected === 0 &&
+    rateOk &&
     result.errors === 0 &&
     result.timeouts === 0 &&
     (!maxP99 || result.latency.p99 <= maxP99)

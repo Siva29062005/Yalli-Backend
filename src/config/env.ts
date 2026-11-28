@@ -368,6 +368,16 @@ export const envSchema = z
           message:
             'required in production (the read-only yalli_reporting role)',
         });
+      } else if (
+        new URL(env.REPORTING_DATABASE_URL).username ===
+        new URL(env.DATABASE_URL).username
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['REPORTING_DATABASE_URL'],
+          message:
+            'logs in as the same user as DATABASE_URL: reports must use the read-only yalli_reporting role',
+        });
       }
       // ElastiCache and Amazon MQ are reached over TLS only
       if (!env.REDIS_URL.startsWith('rediss://')) {

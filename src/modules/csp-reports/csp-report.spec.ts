@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cspReportSchema, safeUrl, toViolations } from './csp-report.js';
+import { cspReportSchema, safeUrl, toViolation } from './csp-report.js';
 
 describe('CSP report sanitising', () => {
   it('keeps only origin and path: tokens in query strings never reach the log', () => {
@@ -31,49 +31,36 @@ describe('CSP report sanitising', () => {
         'status-code': 200,
       },
     });
-    expect(toViolations(body)).toEqual([
-      {
-        directive: 'script-src-elem',
-        blocked: 'https://cdn.evil.example/x.js',
-        page: 'https://yalli.in/checkout',
-        source: '-',
-        disposition: 'enforce',
-      },
-    ]);
+    expect(toViolation(body)).toEqual({
+      directive: 'script-src-elem',
+      blocked: 'https://cdn.evil.example/x.js',
+      page: 'https://yalli.in/checkout',
+      source: '-',
+      disposition: 'enforce',
+    });
   });
 
-  it('reads the Reporting API array and ignores other report types', () => {
-    const body = cspReportSchema.parse([
-      {
-        type: 'csp-violation',
-        age: 1,
-        url: 'https://yalli.in/',
-        body: {
-          documentURL: 'https://yalli.in/',
-          blockedURL: 'inline',
-          effectiveDirective: 'script-src-elem',
-          disposition: 'report',
-        },
+  it('accepts the null fields browsers send when they cannot report a value', () => {
+    const body = cspReportSchema.parse({
+      'csp-report': {
+        'document-uri': 'https://yalli.in/',
+        'blocked-uri': null,
+        'source-file': null,
+        'violated-directive': 'script-src-elem https://x',
       },
-      { type: 'deprecation', body: {} },
-    ]);
-    expect(toViolations(body)).toEqual([
-      {
-        directive: 'script-src-elem',
-        blocked: 'inline',
-        page: 'https://yalli.in/',
-        source: '-',
-        disposition: 'report',
-      },
-    ]);
+    });
+    expect(toViolation(body)).toMatchObject({
+      directive: 'script-src-elem',
+      blocked: '-',
+      source: '-',
+    });
   });
 
   it('refuses anything else', () => {
     expect(cspReportSchema.safeParse({ hello: 'world' }).success).toBe(false);
+    // the Reporting API array format is not used by our policy
     expect(
-      cspReportSchema.safeParse(
-        Array.from({ length: 21 }, () => ({ type: 'csp-violation' })),
-      ).success,
+      cspReportSchema.safeParse([{ type: 'csp-violation', body: {} }]).success,
     ).toBe(false);
   });
 });

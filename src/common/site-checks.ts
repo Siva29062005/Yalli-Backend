@@ -73,7 +73,7 @@ export function cspFindings(policy: string, where: string): Finding[] {
 /** Headers every storefront page must carry. */
 export function pageHeaderFindings(
   h: HeaderBag,
-  opts: { https: boolean; where: string },
+  opts: { https: boolean; where: string; production?: boolean },
 ): Finding[] {
   const { where } = opts;
   const out: Finding[] = [];
@@ -82,10 +82,15 @@ export function pageHeaderFindings(
   if (enforced) out.push(...cspFindings(enforced, where));
   else if (reportOnly) {
     out.push(
-      warn(
-        `${where}: CSP enforced`,
-        'report-only (CSP_REPORT_ONLY=1): fine for a first staging build, never for production',
-      ),
+      opts.production
+        ? fail(
+            `${where}: CSP enforced`,
+            'report-only (CSP_REPORT_ONLY=1) on production: nothing is blocked',
+          )
+        : warn(
+            `${where}: CSP enforced`,
+            'report-only (CSP_REPORT_ONLY=1): fine for a first staging build, never for production',
+          ),
     );
     out.push(...cspFindings(reportOnly, where));
   } else out.push(fail(`${where}: CSP enforced`, 'no Content-Security-Policy'));

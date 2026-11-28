@@ -10,7 +10,12 @@ import { AllExceptionsFilter } from './all-exceptions.filter.js';
 
 function run(exception: unknown) {
   const json = vi.fn();
-  const res = { headersSent: false, status: vi.fn().mockReturnThis(), json };
+  const res = {
+    headersSent: false,
+    status: vi.fn().mockReturnThis(),
+    setHeader: vi.fn(),
+    json,
+  };
   const req = { id: 'req-12345678', path: '/x', method: 'GET' };
   const host = {
     getType: () => 'http',
@@ -20,6 +25,10 @@ function run(exception: unknown) {
   return {
     status: res.status.mock.calls[0]?.[0] as number,
     body: json.mock.calls[0]?.[0],
+    headers: Object.fromEntries(res.setHeader.mock.calls) as Record<
+      string,
+      string
+    >,
   };
 }
 
@@ -38,6 +47,8 @@ describe('AllExceptionsFilter', () => {
     const text = JSON.stringify(body);
     expect(text).not.toMatch(/select|10\.0\.0\.5|stack|password/i);
     expect(body.requestId).toBe('req-12345678');
+    // an error is never cached, even on a route that set a public Cache-Control before failing
+    expect(run(new Error('x')).headers['Cache-Control']).toBe('no-store');
   });
 
   it('masks 5xx HttpExceptions raised with internal messages', () => {

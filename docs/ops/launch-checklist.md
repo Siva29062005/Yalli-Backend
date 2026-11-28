@@ -7,7 +7,7 @@ staging · ⬜ open.
 
 Commands referred to: `npm run check` (the quality gate), `npm run test:browser` (fake-backend browser scripts),
 `npm run serve:browser` + `frontend/scripts/test-admin-real.mjs` (real-backend staff run), `npm run verify:site -- --url
-<site>` (read-only checks of a deployed site), `node scripts/load/run.mjs` (load), `./scripts/deploy.sh` (deploy).
+<site> [--production]` (read-only checks of a deployed site; run `npm run build` first, it runs the compiled file), `node scripts/load/run.mjs` (load), `./scripts/deploy.sh` (deploy).
 
 ## 1. Regression
 
@@ -16,7 +16,7 @@ Commands referred to: `npm run check` (the quality gate), `npm run test:browser`
 | 1.1 | Quality gate on the release commit | `npm run check` | 2026-11-28, commit of Phase 14: passed (unit, e2e, build, frontend lint/build/tsc) | 🟡 |
 | 1.2 | Browser scripts (fakes) | `npm run test:browser` | last full run 2026-11-27 (Phase 13): all scripts passed | 🟡 |
 | 1.3 | Real-backend staff run | `serve:browser` + `test-admin-real.mjs` | last run 2026-11-27: every staff screen | 🟡 |
-| 1.4 | Deployed site checks | `npm run verify:site -- --url https://staging…` (also run by `deploy.sh` with `SITE_URL`) | local rehearsal 2026-11-28 over http: 41 checks, 0 failed; https-only checks (HSTS, redirect) need staging | 🟡 |
+| 1.4 | Deployed site checks | `npm run verify:site -- --url https://staging…` (also run by `deploy.sh` with `SITE_URL`) | local rehearsal 2026-11-28 over http: 37 checks, 0 failed; https-only checks (HSTS, redirect) need staging | 🟡 |
 | 1.5 | Exit test of Phase 13 on staging | register (email + SMS arrive), pay with Razorpay test mode, ship, return, refund, credit note | | ⬜ |
 | 1.6 | Restore drill on staging | `scripts/dr-drill.sh` (docs/ops/backup-restore.md) | | ⬜ |
 
@@ -26,7 +26,7 @@ Expected peak: **owner to supply** (orders and visitors per hour on the busiest 
 
 | # | Item | How | Evidence | Status |
 |---|---|---|---|---|
-| 2.1 | Storefront pages at 3× peak, no 5xx, p99 within budget | `run.mjs --url <frontend> --scenario storefront --rate <3× peak> --max-p99 1500` | local baseline 2026-11-28 (dev machine, real app): 711 req/s, p99 47 ms, 0 errors | ⬜ |
+| 2.1 | Storefront pages at 3× peak (≥95% of the rate answered, only 2xx/3xx), p99 within budget | `run.mjs --url <frontend> --scenario storefront --rate <3× peak> --max-p99 1500` | local baseline 2026-11-28 (dev machine, real app, every page incl. home): 883 req/s, p99 30 ms, all 200 | ⬜ |
 | 2.2 | Catalogue API search at 3× peak | `--scenario catalog` against staging | | ⬜ |
 | 2.3 | Limiters engage, nothing else breaks | `--scenario login-flood`, `--scenario register` | in-repo smoke in `npm run check` (`test/load/`) | 🟡 |
 | 2.4 | Database pool and RDS connections stay below the alarm | CloudWatch during 2.1/2.2 | | ⬜ |
@@ -38,7 +38,7 @@ Expected peak: **owner to supply** (orders and visitors per hour on the busiest 
 |---|---|---|---|---|
 | 3.1 | Dependency audit, both apps | `npm audit` in `/` and `frontend/` | 2026-11-28: 0 vulnerabilities in both (the `effect` advisory fixed with an override) | ✅ |
 | 3.2 | Container scan | trivy in `deploy.sh` (HIGH/CRITICAL stop the deploy) | | ⬜ |
-| 3.3 | CSP rolled out: report-only first, then enforced | staging build with `CSP_REPORT_ONLY=1`, a full checkout with real Razorpay and Turnstile, zero "CSP violation" log lines; then an enforcing build | | ⬜ |
+| 3.3 | CSP rolled out: report-only first, then enforced | staging deploy with `CSP_REPORT_ONLY=1` in the frontend env file, a full checkout with real Razorpay and Turnstile, zero "CSP violation" log lines; then remove it and deploy again (a new frontend image: the tag carries the build settings) | | ⬜ |
 | 3.4 | OWASP ZAP baseline | `docker run --rm -v "$PWD:/zap/wrk:rw" -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t https://staging… -r zap.html` (passive only; run by the owner, Docker) | | ⬜ |
 | 3.5 | External penetration test (if affordable) | | | ⬜ |
 | 3.6 | Security review record | `docs/security/phase-14-verification.md` | written 2026-11-28 | ✅ |

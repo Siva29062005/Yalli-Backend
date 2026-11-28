@@ -41,6 +41,17 @@ describe('Cache-Control (nothing personal in a browser or CDN cache)', () => {
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('public, max-age=60');
   });
+
+  it('never lets an error on a cacheable route be cached', async () => {
+    const missing = await ctx
+      .http()
+      .get('/api/v1/catalog/products/no-such-product-slug');
+    expect(missing.status).toBe(404);
+    expect(missing.headers['cache-control']).toBe('no-store');
+    const bad = await ctx.http().get('/api/v1/catalog/compare?slugs=a');
+    expect(bad.status).toBe(400);
+    expect(bad.headers['cache-control']).toBe('no-store');
+  });
 });
 
 describe('CSP violation reports', () => {
@@ -60,27 +71,10 @@ describe('CSP violation reports', () => {
     },
   };
 
-  it('accepts both browser formats anonymously and logs a sanitised line', async () => {
+  it('accepts a report anonymously and logs a sanitised line', async () => {
     const warn = vi.spyOn(Logger.prototype, 'warn');
     try {
       expect((await post(classic, 'application/csp-report')).status).toBe(204);
-      expect(
-        (
-          await post(
-            [
-              {
-                type: 'csp-violation',
-                body: {
-                  documentURL: 'https://shop.example.test/',
-                  blockedURL: 'inline',
-                  effectiveDirective: 'script-src-elem',
-                },
-              },
-            ],
-            'application/reports+json',
-          )
-        ).status,
-      ).toBe(204);
       const logged = JSON.stringify(warn.mock.calls);
       expect(logged).toContain('CSP violation');
       expect(logged).toContain('https://shop.example.test/auth/reset-password');
@@ -88,6 +82,23 @@ describe('CSP violation reports', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('parses application/csp-report on the report route only (other sites can make browsers send it anywhere)', async () => {
+    const res = await ctx
+      .http()
+      .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', freshIp())
+      .set('Content-Type', 'application/csp-report')
+      .send(
+        JSON.stringify({
+          email: 'nobody@example.test',
+          password: 'x'.repeat(12),
+        }),
+      );
+    // the body is not parsed, so the login schema sees nothing
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_FAILED');
   });
 
   it('refuses a body that is not a report, and an oversized one', async () => {
@@ -107,5 +118,16 @@ describe('CSP violation reports', () => {
       statuses.push((await post(classic, 'application/csp-report', ip)).status);
     expect(statuses.slice(0, 30).every((c) => c === 204)).toBe(true);
     expect(statuses.at(-1)).toBe(429);
+  });
+
+  it("does not use up the visitor's shop budget (a CSP mistake must not lock shoppers out)", async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 310; i++)
+      await post(classic, 'application/csp-report', ip);
+    const shop = await ctx
+      .http()
+      .get('/api/v1/catalog/categories')
+      .set('X-Forwarded-For', ip);
+    expect(shop.status).toBe(200);
   });
 });

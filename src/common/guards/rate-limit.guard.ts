@@ -171,7 +171,8 @@ export class IpRateLimitGuard extends BaseRateLimitGuard {
   }
 
   protected rulesFor(declared: RateLimitRule[]): RateLimitRule[] {
-    return [GLOBAL_RULE, ...declared.filter((r) => r.key !== 'principal')];
+    const own = declared.filter((r) => r.key !== 'principal');
+    return declared.some((r) => r.replacesGlobal) ? own : [GLOBAL_RULE, ...own];
   }
 }
 

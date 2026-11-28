@@ -16,12 +16,16 @@ import {
  * caching, error bodies, CORS, robots/sitemap, Swagger off, leftover files. It never signs in and never changes data,
  * so it is safe against production. Run after every deploy (scripts/deploy.sh does when SITE_URL is set).
  *
- *   node dist/cli/verify-site.js --url https://staging.yalli.in [--allow-http]
+ *   node dist/cli/verify-site.js --url https://staging.yalli.in [--production] [--allow-http]
+ *
+ * --production turns warnings that are acceptable on staging (a report-only CSP) into failures. Swagger is not checked
+ * here: it is mounted outside /api/v1, which CloudFront never sends to the API, and production refuses SWAGGER_ENABLED.
+ * (Run `npm run build` first: the command runs the compiled file.)
  *
  * Exit code 1 when any check fails. Warnings need a decision but do not fail.
  */
 const USAGE =
-  'Usage: node dist/cli/verify-site.js --url <https://site> [--allow-http]\n';
+  'Usage: node dist/cli/verify-site.js --url <https://site> [--production] [--allow-http]\n';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -108,7 +112,13 @@ async function main(): Promise<number> {
             detail: `got ${home.status}`,
           },
     );
-    findings.push(...pageHeaderFindings(home.headers, { https, where: '/' }));
+    findings.push(
+      ...pageHeaderFindings(home.headers, {
+        https,
+        where: '/',
+        production: process.argv.includes('--production'),
+      }),
+    );
   }
   const login = await get(at('/auth/login'));
   if (!login) unreachable('/auth/login');
@@ -211,15 +221,8 @@ async function main(): Promise<number> {
       ...corsFindings(preflight.headers, FOREIGN_ORIGIN, 'CORS preflight'),
     );
 
-  // 6. nothing that should not be public
-  for (const path of [
-    '/api/v1/docs',
-    '/docs',
-    '/api/docs',
-    '/.env',
-    '/.git/config',
-    '/api/v1/../.env',
-  ]) {
+  // 6. no leftover files (fetch normalises "..", so path traversal cannot be probed from here)
+  for (const path of ['/.env', '/.git/config']) {
     const r = await get(at(path));
     if (!r) continue;
     findings.push(

@@ -21,10 +21,11 @@ node scripts/load/run.mjs --url https://staging.example --scenario storefront --
 ```
 Catalogue results load in the browser (the API `catalog` scenario covers search), so this measures server renders.
 `--rate` fixes the request rate; `--max-p99` fails the run above that latency. Expected peak comes from the old store's
-busiest day (owner input); Phase 14 tests at 3× that (`docs/ops/launch-checklist.md`, section 2). Through CloudFront the
-WAF rate rule will block a single test machine: run against the ALB from inside the VPC, or allow the test IP for the run.
-Local baseline (2026-11-28, developer machine, real app on embedded PostgreSQL, 10 connections): 711 requests/s, p99 47 ms,
-no errors.
+busiest day (owner input); Phase 14 tests at 3× that (`docs/ops/launch-checklist.md`, section 2). Run through CloudFront
+(the real path, which also shows the cache hit ratio): the WAF rate rule blocks a single test machine, so add a
+temporary WAF allow rule for the test machine's IP address for the duration of the run and remove it afterwards (the ALB
+accepts only CloudFront, so it cannot be targeted directly). The run fails if fewer than 95% of `--rate` were answered or
+if any page answered other than 2xx/3xx (a WAF 403 is not a pass).
 
 Capacity notes: the API pool is 10 connections per instance (`DATABASE_POOL_MAX`); put the catalogue behind a CDN (responses
 are `Cache-Control: public, max-age=30`); search varies by query and is rate limited to 120/min per IP.

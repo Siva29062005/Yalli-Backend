@@ -59,6 +59,8 @@ services:
     build: { context: ., target: migrate }
     environment:
       DATABASE_MIGRATION_URL: postgresql://yalli_migrator:${POSTGRES_MIGRATOR_PASSWORD:?set in .env}@postgres:5432/yalli
+      # the local Postgres has no TLS; the image requires a verified connection everywhere else (AWS)
+      MIGRATE_REQUIRE_VERIFIED_TLS: "0"
     depends_on:
       postgres: { condition: service_healthy }
 

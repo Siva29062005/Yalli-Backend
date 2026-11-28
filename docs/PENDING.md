@@ -162,6 +162,12 @@ Follow-ups found while wiring (P1 unless noted):
 - [x] (2026-11-28) Phase 14 tooling and local evidence: `verify:site`, storefront load scenario, CSP reports and the
       report-only switch, launch checklist (`docs/ops/launch-checklist.md`), record in
       `docs/security/phase-14-verification.md`.
+- [x] (2026-11-28) Review of the Phase 14 commit: 18 findings fixed (migrator TLS really verified, BuildKit check, CSP
+      reports on their own budget and content type on their route only, frontend tag per build settings, load test
+      covers every page and fails when it cannot reach the rate, catalogue errors no-store, verify-site `--production`,
+      reporting role checks, rollback wording, SITE_URL check, docs). Record: `docs/security/phase-14-verification.md`.
+- [ ] **Owner, before the first deploy:** `brew install docker-buildx` on the deploy machine (the root Dockerfile needs
+      BuildKit), then `./scripts/verify-docker.sh`.
 - [ ] **Phase 14 on staging:** work through `docs/ops/launch-checklist.md` (load at 3× peak, ZAP baseline, container
       scan, CSP report-only then enforced, keyboard and screen-reader pass, real phones, Lighthouse) and get it signed.
       Owner input: the expected peak (busiest day of the old store). Rebuild the Docker images (`verify-docker.sh`): the

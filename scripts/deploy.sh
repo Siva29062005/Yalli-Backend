@@ -71,6 +71,11 @@ MIGRATE_CONTAINER="${MIGRATE_CONTAINER:-migrate}"
 for tool in git docker jq node aws; do
   command -v "$tool" >/dev/null || [[ $DRY_RUN == 1 && $tool == aws ]] || die "$tool is not installed"
 done
+# The root Dockerfile uses BuildKit features (ADD --checksum/--chmod): the classic builder refuses them.
+if ! docker buildx version >/dev/null 2>&1; then
+  [[ $DRY_RUN == 1 && -z "$ROLLBACK" ]] && echo "  (docker buildx is not installed: a real deploy needs it, brew install docker-buildx)"
+  [[ $DRY_RUN == 1 || -n "$ROLLBACK" ]] || die "docker buildx is not installed (brew install docker-buildx): the images need BuildKit"
+fi
 REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 say "1. What is deployed"
@@ -95,7 +100,10 @@ if [[ "$ENVIRONMENT" == production ]]; then
 fi
 API_IMAGE="${REGISTRY}/${ECR_REPO_API}:${SHA}"
 MIGRATE_IMAGE="${REGISTRY}/${ECR_REPO_API}:${SHA}-migrate"
-FRONTEND_IMAGE="${REGISTRY}/${ECR_REPO_FRONTEND}:${SHA}-${ENVIRONMENT}"
+# The frontend tag also carries a hash of its build arguments (set below): the same commit built with different
+# NEXT_PUBLIC_* values or CSP_REPORT_ONLY is a different image, never a silently reused one.
+FRONTEND_TAG_PREFIX="${SHA}-${ENVIRONMENT}"
+FRONTEND_IMAGE_PREFIX="${REGISTRY}/${ECR_REPO_FRONTEND}:${FRONTEND_TAG_PREFIX}"
 
 aws_() { aws --region "$AWS_REGION" "$@"; }
 # The task-definition ARN currently used by a service.
@@ -122,31 +130,40 @@ wait_rolled_out() {
 
 # Read-only check of the live site (headers, CSP, caching, error bodies, CORS, robots): SITE_URL in the deploy config.
 verify_site() {
+  local args=(--url "${SITE_URL:-}")
+  [[ "$ENVIRONMENT" == production ]] && args+=(--production)
   if [[ -z "${SITE_URL:-}" ]]; then echo "  SITE_URL is not set in $CONFIG: check the site by hand (npm run verify:site)"; return 0; fi
-  if [[ $DRY_RUN == 1 ]]; then echo "  [dry-run] node dist/cli/verify-site.js --url $SITE_URL"; return 0; fi
+  if [[ $DRY_RUN == 1 ]]; then echo "  [dry-run] node dist/cli/verify-site.js ${args[*]}"; return 0; fi
   [[ -f dist/cli/verify-site.js ]] || npm run build >/dev/null || die "could not build the site check"
-  node dist/cli/verify-site.js --url "$SITE_URL" \
-    || die "the site check failed (above). The new revisions are live: fix forward, or ./scripts/deploy.sh $ENVIRONMENT --rollback <previous commit>"
+  if node dist/cli/verify-site.js "${args[@]}"; then return 0; fi
+  if [[ -n "$ROLLBACK" ]]; then
+    # the checks are today's; an older release may not meet all of them. The rollback itself is complete.
+    printf '\n\033[33mThe rollback is complete, but the site check reported failures (above). An older release may not\nmeet the current checks: decide whether each one matters before rolling forward again.\033[0m\n'
+    return 0
+  fi
+  die "the site check failed (above). The new revisions are live: fix forward, or ./scripts/deploy.sh $ENVIRONMENT --rollback <previous commit>"
 }
 
 if [[ -n "$ROLLBACK" ]]; then
   say "2. Find the earlier task revisions of $SHA"
-  # The newest ACTIVE revision of a family whose container `name` runs exactly `image`.
+  # The newest ACTIVE revision of a family whose container `name` runs exactly `image` (or, for the frontend, an image
+  # whose tag starts with `<sha>-<env>-`: its build-argument hash is not known here).
   revision_with_image() {
-    local family="$1" name="$2" image="$3" arn
+    local family="$1" name="$2" image="$3" arn current
     for arn in $(aws_ ecs list-task-definitions --family-prefix "$family" --status ACTIVE --sort DESC --max-items 100 \
       --query 'taskDefinitionArns[]' --output text); do
-      [[ "$(aws_ ecs describe-task-definition --task-definition "$arn" \
-        --query "taskDefinition.containerDefinitions[?name=='$name'].image | [0]" --output text)" == "$image" ]] \
-        && { echo "$arn"; return 0; }
+      current="$(aws_ ecs describe-task-definition --task-definition "$arn" \
+        --query "taskDefinition.containerDefinitions[?name=='$name'].image | [0]" --output text)"
+      if [[ "$image" == *- ]]; then [[ "$current" == "$image"* ]] && { echo "$arn"; return 0; }
+      elif [[ "$current" == "$image" ]]; then echo "$arn"; return 0; fi
     done
     return 1
   }
   declare -a PLAN=()
   for spec in "$ECS_SERVICE_API|$API_CONTAINER|$API_IMAGE" "$ECS_SERVICE_WORKER|$WORKER_CONTAINER|$API_IMAGE" \
-    "$ECS_SERVICE_FRONTEND|$FRONTEND_CONTAINER|$FRONTEND_IMAGE"; do
+    "$ECS_SERVICE_FRONTEND|$FRONTEND_CONTAINER|${FRONTEND_IMAGE_PREFIX}-"; do
     IFS='|' read -r service name image <<< "$spec"
-    if [[ $DRY_RUN == 1 ]]; then echo "  [dry-run] $service -> the revision running $image"; continue; fi
+    if [[ $DRY_RUN == 1 ]]; then echo "  [dry-run] $service -> the newest revision running $image"; continue; fi
     family="$(family_of "$(service_def "$service")")"
     def="$(revision_with_image "$family" "$name" "$image")" || die "no ACTIVE revision of $family runs $image"
     PLAN+=("$service|$def")
@@ -210,7 +227,16 @@ while IFS= read -r -d '' kv; do BUILD_ARGS+=(--build-arg "$kv"); done < <(node d
 if [[ "$ENVIRONMENT" == production ]] && printf '%s\n' "${BUILD_ARGS[@]}" | grep -qx 'CSP_REPORT_ONLY=1'; then
   die "CSP_REPORT_ONLY=1 is for staging only: production enforces the Content-Security-Policy"
 fi
-build_scan_push "$FRONTEND_IMAGE" "$ECR_REPO_FRONTEND" "${SHA}-${ENVIRONMENT}" "${BUILD_ARGS[@]}" frontend
+# SITE_URL must be THIS environment's site (an unedited copy of the example would check staging after production).
+if [[ -n "${SITE_URL:-}" ]]; then
+  WEBSITE="$(printf '%s\n' "${BUILD_ARGS[@]}" | sed -n 's/^NEXT_PUBLIC_BUSINESS_WEBSITE_URL=//p')"
+  node -e 'const [a,b]=process.argv.slice(1);try{process.exit(new URL(a).origin===new URL(b).origin?0:1)}catch{process.exit(1)}' \
+    "$SITE_URL" "$WEBSITE" || die "SITE_URL in $CONFIG is not the site address NEXT_PUBLIC_BUSINESS_WEBSITE_URL in $FRONTEND_BUILD_ENV"
+fi
+ARGS_HASH="$(printf '%s\n' "${BUILD_ARGS[@]}" | git hash-object --stdin | cut -c1-10)"
+FRONTEND_TAG="${FRONTEND_TAG_PREFIX}-${ARGS_HASH}"
+FRONTEND_IMAGE="${REGISTRY}/${ECR_REPO_FRONTEND}:${FRONTEND_TAG}"
+build_scan_push "$FRONTEND_IMAGE" "$ECR_REPO_FRONTEND" "$FRONTEND_TAG" "${BUILD_ARGS[@]}" frontend
 
 # A new revision of `family` with ONLY container `name` switched to `image`. Prints the new ARN; fails loudly.
 register_with_image() { # family name image

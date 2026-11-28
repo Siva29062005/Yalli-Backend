@@ -77,6 +77,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (res.headersSent) return;
+    // A route may have set a public Cache-Control before it failed (Nest applies @Header before the handler): an error
+    // must never be cached by a browser or CloudFront.
+    res.setHeader('Cache-Control', 'no-store');
     const body: ErrorBody = {
       success: false,
       message,
