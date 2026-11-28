@@ -12,6 +12,7 @@ import {
   readNoFollow,
   resolveInside,
 } from '../modules/catalog/import/image-paths.js';
+import { reencodeImage } from '../modules/catalog/media/image-processing.js';
 import { detectImageType } from '../modules/catalog/media/image-validation.js';
 
 /**
@@ -159,6 +160,10 @@ async function main(): Promise<number> {
         );
         continue;
       }
+      // Check EVERY image of the product first (path, content, a full decode and re-encode as the upload does), and
+      // upload only when all pass: --apply never stops half-way through a product.
+      const ready: { buffer: Buffer; altText?: string }[] = [];
+      const before = report.problems.length;
       for (const img of entry.images) {
         const found = resolveInside(root, img.path);
         if ('error' in found) {
@@ -176,27 +181,48 @@ async function main(): Promise<number> {
           );
           continue;
         }
-        // the same content check as the upload, in the dry run too
-        if (!detectImageType(buffer)) {
+        const type = detectImageType(buffer);
+        if (!type) {
           report.problems.push(
             `${entry.productSlug}: ${img.path}: not a JPEG, PNG or WebP image`,
           );
           continue;
         }
-        if (!apply) continue;
+        try {
+          await reencodeImage(buffer, type);
+        } catch {
+          report.problems.push(
+            `${entry.productSlug}: ${img.path}: the image could not be processed (damaged or too large)`,
+          );
+          continue;
+        }
+        ready.push({
+          buffer,
+          ...(img.altText ? { altText: img.altText } : {}),
+        });
+      }
+      if (report.problems.length > before) {
+        report.problems.push(
+          `${entry.productSlug}: not uploaded (fix the files above, then run again)`,
+        );
+        continue;
+      }
+      if (!apply) continue;
+      for (const img of ready) {
         try {
           await catalog.uploadImage(
             actor!,
             product.id,
-            { buffer, size: buffer.length },
+            { buffer: img.buffer, size: img.buffer.length },
             img.altText ? { altText: img.altText } : {},
             { ip: null, userAgent: 'cli/import-images', correlationId: null },
           );
           report.uploaded += 1;
         } catch (err) {
           report.problems.push(
-            `${entry.productSlug}: ${img.path}: ${(err as Error).message}`,
+            `${entry.productSlug}: ${(err as Error).message}`,
           );
+          break; // the rest would only repeat the failure; the product is reported as partly uploaded on re-run
         }
       }
     }
@@ -211,5 +237,4 @@ async function main(): Promise<number> {
   }
 }
 
-if (process.argv[1]?.endsWith('import-images.js'))
-  process.exitCode = await main();
+process.exitCode = await main();

@@ -9,6 +9,14 @@ CloudFront (caches the catalogue) → ALB (TLS, WAF) → ECS Fargate in private 
   environment because `NEXT_PUBLIC_*` and `API_INTERNAL_URL` are baked in at build time;
 - **migrate** (one-off task): the root `Dockerfile` `migrate` target, the only task with the migrator URL.
 
+Every task definition declares `runtimePlatform: { cpuArchitecture: ARM64, operatingSystemFamily: LINUX }` (Graviton;
+the images are built with `--platform linux/arm64`, `DEPLOY_PLATFORM` in the deploy config; the deploy script refuses a
+task definition that declares another CPU). Container names: `api`, `worker`, `frontend`, `migrate` (configurable);
+other containers in a task (a log router) keep their own image. The worker container has NO health check (it has no
+HTTP server; ECS ignores the image's `HEALTHCHECK`, so do not copy the API's container health check into it). ECR
+repositories use IMMUTABLE tags: a commit's API/migrate images are built and scanned once (on the staging deploy) and the
+same bytes are promoted to production; the frontend image is per environment (`<sha>-<env>`).
+
 Data: RDS PostgreSQL 17 (Multi-AZ, encrypted, private, PITR) · ElastiCache Redis (auth + TLS) · Amazon MQ for RabbitMQ ·
 S3 for product images (`STORAGE_DRIVER=s3`, `S3_BUCKET`, optional `S3_PREFIX`/`S3_KMS_KEY_ID`; a PRIVATE bucket with
 block public access and versioning; objects are written with SSE and `If-None-Match`, so a key is never overwritten;
@@ -22,8 +30,10 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
 
 ## Checklist
 1. Secrets in Secrets Manager (never in the image or repo). Task roles, least privilege: api and worker get SES send,
-   `s3:PutObject`/`GetObject`/`DeleteObject` on `arn:aws:s3:::<bucket>/<prefix>*` (and `kms:GenerateDataKey`/`Decrypt`
-   on the key when `S3_KMS_KEY_ID` is set) and read of their own secrets; frontend reads only `FRONTEND_SERVER_KEY`.
+   `s3:PutObject`/`GetObject`/`DeleteObject` on `arn:aws:s3:::<bucket>/<prefix>*` and `s3:ListBucket` on the bucket
+   with an `s3:prefix` condition (without it a missing object answers 403 instead of 404), `kms:GenerateDataKey`/
+   `Decrypt` on the key when `S3_KMS_KEY_ID` is set, and read of their own secrets; frontend reads only
+   `FRONTEND_SERVER_KEY`. Production also refuses a `MEDIA_BASE_URL` that is not https or points at localhost.
 2. Roles: create `yalli_migrator`, `yalli_app`, `yalli_reporting` (docs/ops/database-roles.md). The API task gets `DATABASE_URL`
    (app) and `REPORTING_DATABASE_URL`; only the migration job gets the migrator URL.
 3. Migrations run as a one-off task BEFORE the new image rolls out; keep them additive (expand → deploy → contract).
@@ -43,8 +53,9 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
    and the business details; runtime secret: `FRONTEND_SERVER_KEY`. Run `npm run check:launch` against the same values. The CSP (next.config.ts) allows Razorpay and Turnstile;
    test a real Razorpay checkout on staging, because the CSP only allows `*.razorpay.com`.
 5. Health: liveness `/health/live`, readiness `/health/ready`. Graceful shutdown is enabled.
-6. Background jobs run in the worker service (`node dist/worker.js`); the API tasks set `BACKGROUND_JOBS_ENABLED=false`
-   so a traffic spike does not slow the sweeper and a sweeper run does not take API connections. Jobs use `SKIP LOCKED` /
+6. Background jobs AND the event consumers run in the worker service (`node dist/worker.js`); the API tasks set
+   `BACKGROUND_JOBS_ENABLED=false` (they only publish) so a traffic spike does not slow the sweeper and a sweeper run
+   does not take API connections. Jobs use `SKIP LOCKED` /
    conditional updates, so more than one worker task is safe.
 6b. Redis outage: every Redis command is bounded (2 s) and a failure answers **503** (sessions, rate limits and challenges
    fail closed); alarm on it (log line "Redis commands are failing").
@@ -60,14 +71,16 @@ notification driver (`NOTIFICATIONS_DRIVER=ses_msg91`), non-local image storage,
      "PAYMENT AMOUNT MISMATCH" (metric filters).
 10. Backups, PITR and the restore drill (docs/ops/backup-restore.md); rotate keys (docs/ops/key-rotation.md).
 11. No CI by the owner's decision (2026-11-19): deploy with `./scripts/deploy.sh <staging|production>` from a machine with
-    Docker, the AWS CLI, jq and trivy. It refuses uncommitted changes (and, for production, anything but `main` and an
-    unconfirmed run), runs `npm run check` and the launch check, builds the three images (tagged with the commit), scans
-    them (HIGH/CRITICAL stop it), pushes to ECR, runs the migration task and requires exit code 0, then registers new
-    task revisions and waits until the services are stable. Configuration: `deploy/<environment>.env` (git-ignored, see
-    `deploy/example.env`). **Unverified until staging exists: rehearse with `--dry-run`.**
+    Docker, the AWS CLI, jq, node and trivy. It refuses uncommitted changes (for production also a commit that is not on
+    `origin/main`, and an unconfirmed run), runs `npm run check` and the launch check, builds the images for the tasks'
+    CPU (or reuses a tag already in ECR), scans them (HIGH/CRITICAL stop it), pushes them, registers ALL new task
+    revisions before changing anything (a failed registration stops it), runs the migration task and requires its
+    `migrate` container to exit 0, then updates the services and verifies each one is really on its new revision (a
+    rollout the circuit breaker reverted is a failure). Configuration: `deploy/<environment>.env` (git-ignored, a plain
+    KEY=value file, see `deploy/example.env`). **Unverified against AWS: `--dry-run` runs only the local steps.**
 
 ## Rollback
-Previous image + its schema: because migrations are additive, the previous image runs on the new schema. Check out the
-previous commit and run `./scripts/deploy.sh <env> --skip-check` (that commit already passed the gate; the script
-rebuilds, scans and pushes its images, and its migrations are already applied). A destructive
+Previous image + its schema: because migrations are additive, the previous image runs on the new schema.
+`./scripts/deploy.sh <env> --rollback <earlier commit>` points the services back at the task revisions that ran that
+commit's images (no build, no scan, no migration: the same bytes that ran before), and verifies the rollout. A destructive
 migration needs a snapshot first and a tested restore.

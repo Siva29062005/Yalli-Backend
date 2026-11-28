@@ -225,3 +225,20 @@ describe('RabbitMqBus', () => {
     expect(channel.consumers.has('yalli.notifications')).toBe(true);
   });
 });
+
+describe('consumers run only where the background jobs run', () => {
+  it('an API task (BACKGROUND_JOBS_ENABLED=false) publishes but binds no consumer', async () => {
+    const api = new RabbitMqBus(
+      new ConfigService({
+        RABBITMQ_URL: 'amqp://u:p@localhost:5672',
+        BACKGROUND_JOBS_ENABLED: false,
+      }) as never,
+    );
+    await api.subscribe('notifications', ['order.paid'], () =>
+      Promise.resolve(),
+    );
+    expect(
+      (api as unknown as { registrations: unknown[] }).registrations,
+    ).toEqual([]);
+  });
+});

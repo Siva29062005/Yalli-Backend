@@ -266,7 +266,8 @@ mode, get the order shipped, return it, and receive a refund and credit note; th
 
 **Status (2026-11-27): code done, AWS and providers open.** Built: the S3 storage adapter, image re-encoding with sharp,
 the worker entrypoint (`node dist/worker.js`), Redis outages answering 503, the frontend standalone container
-(`frontend/Dockerfile`), `scripts/deploy.sh` (dry-run tested) and the alarm list in `docs/ops/deployment-aws.md`. Open:
+(`frontend/Dockerfile`), `scripts/deploy.sh` with a rollback mode (its local steps rehearsed with `--dry-run`; none of
+its AWS calls has run) and the alarm list in `docs/ops/deployment-aws.md`. Open:
 everything that needs AWS access or provider accounts (the hosting, the test-mode providers, the exit test, the DR
 drill on staging); none of the AWS-facing code has run against AWS yet.
 

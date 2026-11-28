@@ -40,8 +40,16 @@ export class RabbitMqBus extends MessageBus implements OnApplicationShutdown {
     boundTo?: ConfirmChannel;
   }[] = [];
 
+  /**
+   * Consumers run where the background jobs run: in production the worker (`node dist/worker.js`) binds them and the
+   * API tasks (BACKGROUND_JOBS_ENABLED=false) only publish. Locally one process does both.
+   */
+  private readonly consumersEnabled: boolean;
+
   constructor(private readonly config: ConfigService<Env, true>) {
     super();
+    this.consumersEnabled =
+      config.get('BACKGROUND_JOBS_ENABLED', { infer: true }) !== false;
   }
 
   private async ensureChannel(): Promise<ConfirmChannel> {
@@ -124,6 +132,13 @@ export class RabbitMqBus extends MessageBus implements OnApplicationShutdown {
     eventTypes: readonly string[],
     handler: EventHandler,
   ): Promise<void> {
+    if (!this.consumersEnabled) {
+      this.logger.log(
+        { consumer },
+        'Consumer not bound here (the worker runs it)',
+      );
+      return;
+    }
     this.registrations.push({ consumer, types: eventTypes, handler });
     try {
       await this.ensureChannel(); // connects (if needed) and binds this registration exactly once

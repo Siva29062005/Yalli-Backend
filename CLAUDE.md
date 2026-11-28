@@ -99,11 +99,12 @@ PostgreSQL (Prisma 7), Redis, RabbitMQ. Approved architecture, schema, threat mo
 - Home page: the hero is the owner's banner (`NEXT_PUBLIC_HOME_HERO_IMAGE`, a file in `frontend/public/`) or a real product photo (`ProductImage fit="contain"`), never a stock photo; no product appears twice; the "on sale" row shows only while something is on sale. `ProductImage` passes `preload` (Next 16 deprecates `priority`).
 
 ## Phase 13 conventions (infrastructure; plan in docs/ops/deployment-aws.md)
-- Images: every upload is re-encoded (`catalog/media/image-processing.ts`, sharp): metadata dropped, ≤2400 px, bombs refused. Test fixtures must be REAL images (make them with sharp), not magic bytes.
+- Images: every upload is re-encoded (`catalog/media/image-processing.ts`, sharp): metadata dropped, ≤2400 px, ≤25 MP input, one image at a time, palette PNGs stay palette (output must stay under `MAX_IMAGE_BYTES`), bombs refused. Test fixtures must be REAL images (make them with sharp), not magic bytes.
 - Storage: `STORAGE_DRIVER=local|s3` (`S3Storage`: private bucket, SSE, `If-None-Match` so keys are never overwritten, keys validated like on disk). Production refuses local.
 - Processes: API `node dist/main.js` (`BACKGROUND_JOBS_ENABLED=false` in production), worker `node dist/worker.js` (same image, jobs always on), migrations as the `migrate` target; frontend `frontend/Dockerfile` (standalone only when `NEXT_OUTPUT_STANDALONE=1`; `next start` stays for tests).
 - Redis failures answer 503 (`EphemeralStoreUnavailable`); callers that treat a cache as optional catch it themselves.
-- Deploys: `./scripts/deploy.sh <staging|production> [--dry-run] [--skip-check]` (no CI): config in git-ignored `deploy/<env>.env` (see `deploy/example.env`), never secrets.
+- Deploys: `./scripts/deploy.sh <staging|production> [--dry-run] [--skip-check]` and `--rollback <commit>` (no CI): config in git-ignored `deploy/<env>.env` (plain KEY=value, never executed, never secrets). Images are ARM64 (`DEPLOY_PLATFORM`), ECR tags immutable, a commit's API image is promoted not rebuilt; frontend build args come from `dist/cli/frontend-build-args.js` (same parser as `check:launch`).
+- Consumers bind only where background jobs run (`RabbitMqBus` checks `BACKGROUND_JOBS_ENABLED`): the worker in production. Re-encoded images stay under `MAX_IMAGE_BYTES`; production refuses a localhost/http `MEDIA_BASE_URL`.
 
 ## Frontend (`frontend/`)
 - Next.js 16.4 / React 19.3 / Tailwind 4.3.5 / zustand. This Next version has breaking changes: read `frontend/node_modules/next/dist/docs/` before writing Next code (see `frontend/AGENTS.md`).

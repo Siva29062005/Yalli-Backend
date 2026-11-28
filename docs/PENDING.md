@@ -152,6 +152,13 @@ Follow-ups found while wiring (P1 unless noted):
 - [x] (2026-11-27, Phase 13) S3 image storage (`STORAGE_DRIVER=s3`, private bucket, SSE, no overwrite) and the local
       deploy script `scripts/deploy.sh` (gates: clean tree, `npm run check`, launch check, trivy scan; migration task;
       rollout). Both UNVERIFIED until staging exists.
+- [x] (2026-11-28) Review of the Phase 13 commit: deploy script builds for the tasks' CPU (ARM64) and checks it, has a
+      rollback mode (previous revisions, no rebuild), stops on any registration failure and registers everything first,
+      verifies the rollout really reached the new revision, reads the frontend env file like the launch check, promotes
+      a commit's API image instead of rebuilding it, updates only the named container, uses mktemp; re-encoded images
+      stay under 5 MB (palette PNGs), 25 MP cap and one image at a time; S3 retry after a lost answer; production refuses
+      a localhost/http MEDIA_BASE_URL; image deletion no longer fails after the row is gone; the image import dry run
+      decodes and a product is uploaded all-or-nothing; API tasks no longer consume events; Redis reply errors stay 500.
 - [ ] **Needs AWS access (Phase 13):** create staging (VPC, ALB+WAF, CloudFront, ECS services api/worker/frontend/migrate,
       RDS, ElastiCache, Amazon MQ, S3, Secrets Manager, CloudWatch alarms from `deployment-aws.md` item 9), then
       `./scripts/deploy.sh staging --dry-run` and a real deploy; build the two Docker images once locally first.

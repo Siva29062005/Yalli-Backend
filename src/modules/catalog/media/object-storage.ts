@@ -1,9 +1,11 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -92,20 +94,41 @@ export class S3Storage extends ObjectStorage {
   }
 
   async put(key: string, bytes: Buffer, contentType: string): Promise<void> {
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: this.key(key),
-        Body: bytes,
-        ContentType: contentType,
-        ContentLength: bytes.length,
-        CacheControl: 'public, max-age=31536000, immutable',
-        IfNoneMatch: '*',
-        ...(this.kmsKeyId
-          ? { ServerSideEncryption: 'aws:kms', SSEKMSKeyId: this.kmsKeyId }
-          : { ServerSideEncryption: 'AES256' }),
-      }),
-    );
+    const sha256 = createHash('sha256').update(bytes).digest('base64');
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: this.key(key),
+          Body: bytes,
+          ContentType: contentType,
+          ContentLength: bytes.length,
+          ChecksumSHA256: sha256,
+          CacheControl: 'public, max-age=31536000, immutable',
+          IfNoneMatch: '*',
+          ...(this.kmsKeyId
+            ? { ServerSideEncryption: 'aws:kms', SSEKMSKeyId: this.kmsKeyId }
+            : { ServerSideEncryption: 'AES256' }),
+        }),
+      );
+    } catch (err) {
+      // The SDK retries a PUT whose answer was lost; if the first attempt WAS stored, the retry meets our own object
+      // (412). Keys are fresh UUIDs, so an object with exactly these bytes there is our upload: success.
+      const name = (err as { name?: string }).name;
+      if (
+        name !== 'PreconditionFailed' &&
+        name !== 'ConditionalRequestConflict'
+      )
+        throw err;
+      const head = await this.client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: this.key(key),
+          ChecksumMode: 'ENABLED',
+        }),
+      );
+      if (head.ChecksumSHA256 !== sha256) throw err;
+    }
   }
 
   async get(key: string): Promise<Buffer | null> {

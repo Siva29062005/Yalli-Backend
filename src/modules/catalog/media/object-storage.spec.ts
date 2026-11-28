@@ -82,4 +82,36 @@ describe('S3Storage', () => {
       );
     expect(send).not.toHaveBeenCalled();
   });
+  it('a retried PUT that meets its own earlier, successful attempt counts as stored; another object does not', async () => {
+    const bytes = Buffer.from('img');
+    const sha = (await import('node:crypto'))
+      .createHash('sha256')
+      .update(bytes)
+      .digest('base64');
+    const conflict = Object.assign(new Error('pre'), {
+      name: 'PreconditionFailed',
+    });
+    const ours = vi
+      .fn()
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ ChecksumSHA256: sha });
+    await expect(
+      new S3Storage(cfg(), { send: ours } as Pick<S3Client, 'send'>).put(
+        KEY,
+        bytes,
+        'image/jpeg',
+      ),
+    ).resolves.toBeUndefined();
+    const theirs = vi
+      .fn()
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ ChecksumSHA256: 'other' });
+    await expect(
+      new S3Storage(cfg(), { send: theirs } as Pick<S3Client, 'send'>).put(
+        KEY,
+        bytes,
+        'image/jpeg',
+      ),
+    ).rejects.toThrow('pre');
+  });
 });

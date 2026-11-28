@@ -174,6 +174,24 @@ describe('validateEnv', () => {
       ).toThrow(/EVENT_BUS_DRIVER/);
       expect(() => validateEnv(prod)).toThrow(/SELLER_GSTIN/);
     });
+    it('refuses a localhost or plain-http MEDIA_BASE_URL in production (image links in every page)', () => {
+      expect(() => validateEnv(prod)).toThrow(/MEDIA_BASE_URL/);
+      for (const url of [
+        'http://cdn.yalli.in/media',
+        'https://localhost/media',
+      ]) {
+        try {
+          validateEnv({ ...prod, MEDIA_BASE_URL: url });
+        } catch (e) {
+          expect(String(e)).toMatch(/MEDIA_BASE_URL/);
+        }
+      }
+      try {
+        validateEnv({ ...prod, MEDIA_BASE_URL: 'https://media.yalli.in' });
+      } catch (e) {
+        expect(String(e)).not.toMatch(/MEDIA_BASE_URL/);
+      }
+    });
     it('refuses TRUST_PROXY_HOPS=0 in production (every client would share the proxy IP)', () => {
       expect(() => validateEnv(prod)).toThrow(/TRUST_PROXY_HOPS/);
       try {

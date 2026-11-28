@@ -43,4 +43,13 @@ describe('Redis outage', () => {
     expect(await store.get('k')).toBe('v');
     expect(await store.incr('k', 60)).toEqual({ count: 3, ttlSeconds: 40 });
   });
+  it('a reply error (a bug, e.g. WRONGTYPE) is not reported as an outage', async () => {
+    const reply = Object.assign(
+      new Error('WRONGTYPE Operation against a key'),
+      { name: 'ReplyError' },
+    );
+    const redis = fake({ get: () => Promise.reject(reply) });
+    await expect(new RedisEphemeralStore(redis).get('k')).rejects.toBe(reply);
+    expect(redis.markFailure).not.toHaveBeenCalled();
+  });
 });

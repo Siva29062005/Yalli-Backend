@@ -351,6 +351,17 @@ export const envSchema = z
             'console driver prints secrets; set NOTIFICATIONS_DRIVER=ses_msg91',
         });
       }
+      // image URLs go into every page, the sitemap and structured data: never localhost or plain http in production
+      if (
+        !env.MEDIA_BASE_URL.startsWith('https://') ||
+        /localhost|127\.0\.0\.1/.test(env.MEDIA_BASE_URL)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MEDIA_BASE_URL'],
+          message: 'must be the public https address images are served from',
+        });
+      }
       if (env.STORAGE_DRIVER === 'local') {
         ctx.addIssue({
           code: 'custom',

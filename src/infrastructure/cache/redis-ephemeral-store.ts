@@ -34,7 +34,9 @@ export class RedisEphemeralStore extends EphemeralStore {
   private async run<T>(op: () => Promise<T>): Promise<T> {
     try {
       return await op();
-    } catch {
+    } catch (err) {
+      // A reply error (WRONGTYPE, a script error) is a bug, not an outage: it stays a 500 and is not counted.
+      if ((err as { name?: string }).name === 'ReplyError') throw err;
       this.redis.markFailure();
       throw new EphemeralStoreUnavailable();
     }

@@ -83,13 +83,36 @@ describe('image re-encoding', () => {
       reencodeImage(jpeg.subarray(0, 60), JPEG),
     ).rejects.toBeInstanceOf(ImageRejected);
     const bomb = await sharp({
-      create: { width: 8000, height: 6000, channels: 3, background: '#000' },
+      create: { width: 6000, height: 4500, channels: 3, background: '#000' },
     })
       .png()
       .toBuffer();
     expect(bomb.length).toBeLessThan(5 * 1024 * 1024); // small on disk…
     await expect(reencodeImage(bomb, PNG)).rejects.toBeInstanceOf(
       ImageRejected,
-    ); // …48 million pixels decoded
+    ); // …27 million pixels decoded
+  });
+
+  it('keeps a palette PNG a palette PNG (re-encoding must not blow it past the size limit)', async () => {
+    const noisy = Buffer.alloc(1500 * 1500 * 3);
+    for (let i = 0; i < noisy.length; i++) noisy[i] = (i * 7919) % 256;
+    const palettePng = await sharp(noisy, {
+      raw: { width: 1500, height: 1500, channels: 3 },
+    })
+      .png({ palette: true })
+      .toBuffer();
+    expect((await sharp(palettePng).metadata()).isPalette).toBe(true);
+    const clean = await reencodeImage(palettePng, PNG);
+    expect((await sharp(clean).metadata()).isPalette).toBe(true);
+    expect(clean.length).toBeLessThanOrEqual(5 * 1024 * 1024);
+  });
+
+  it('handles several uploads at once, one after another', async () => {
+    const img = await phonePhoto();
+    const results = await Promise.all(
+      [1, 2, 3].map(() => reencodeImage(img, JPEG)),
+    );
+    for (const r of results)
+      expect((await sharp(r).metadata()).format).toBe('jpeg');
   });
 });

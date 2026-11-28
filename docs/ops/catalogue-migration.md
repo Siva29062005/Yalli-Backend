@@ -99,8 +99,9 @@ Re-running: a product that already has all its images is skipped. A product that
 an interrupted run) is reported, not uploaded again (that would duplicate its first images): add the rest in the
 console. A product whose address matches but whose SKU does not (made by hand before the migration) is never touched.
 
-Images are stored in the configured storage. The production setting (S3) arrives in Phase 13; until then run the image
-import on a staging server in development mode with local storage.
+Images are stored in the configured storage (`STORAGE_DRIVER=s3` on staging and production, see
+docs/ops/deployment-aws.md). Every file is re-encoded on upload (metadata removed, at most 2400 px, 25 megapixels at
+most in the original), so the dry run's check and the upload agree.
 
 ## 6. Review, then publish
 

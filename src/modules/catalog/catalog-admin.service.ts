@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AuthPrincipal } from '../../common/auth/auth-principal.js';
@@ -48,6 +49,8 @@ const MAX_IMAGES_PER_PRODUCT = 20;
 
 @Injectable()
 export class CatalogAdminService {
+  private readonly logger = new Logger(CatalogAdminService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
@@ -769,8 +772,10 @@ export class CatalogAdminService {
       where: { id: imageId },
     });
     if (!image) throw new NotFoundException('Image not found');
+    // The row goes first (the image disappears from every page at once) and the deletion is audited; the stored file
+    // is removed afterwards. If that fails, the file is orphaned but unreachable (/media serves registered keys only):
+    // it is logged for clean-up instead of failing a deletion that already happened.
     await this.prisma.productImage.delete({ where: { id: imageId } });
-    await this.storage.delete(image.storageKey);
     await this.audit.record({
       action: AuditAction.ProductImageDeleted,
       outcome: 'SUCCESS',
@@ -780,6 +785,14 @@ export class CatalogAdminService {
       resourceId: image.productId,
       metadata: { imageId },
     });
+    await this.storage
+      .delete(image.storageKey)
+      .catch((err: unknown) =>
+        this.logger.error(
+          { imageId, err: (err as Error).name },
+          'Stored image file could not be deleted (orphaned object)',
+        ),
+      );
   }
 
   // ------------------------------------------------------------------------------------ reads
